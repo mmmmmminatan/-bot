@@ -158,29 +158,30 @@ async def payment(ctx):
             "message", check=check, timeout=60
         )
 
-    try:
+        try:
             amount = int(amount_msg.content.strip())
-    except ValueError:
-        await ctx.send("❌ 数字で入力してね。")
-        return
+        except ValueError:
+            await ctx.send("❌ 数字で入力してね。")
+            return
 
-    if amount <= 0 or amount > 1_000_000_000:
-        await ctx.send("❌ 1〜1,000,000,000 の範囲で入力してね。")
-        return
+        if amount <= 0 or amount > 1_000_000_000:
+            await ctx.send("❌ 1〜1,000,000,000 の範囲で入力してね。")
+            return
 
-    current = get_balance(target.id)
-    balances[str(target.id)] = current + amount
-    save_balances()
+        current = get_balance(target.id)
+        balances[str(target.id)] = current + amount
+        save_balances()
 
-    await ctx.send(
-        f"✅ **コイン付与完了！**\n"
-        f"対象：{target.mention}\n"
-        f"付与額：**{amount:,} コイン**\n"
-        f"現在の残高：**{balances[str(target.id)]:,} コイン**"
-    )
+        await ctx.send(
+            f"✅ **コイン付与完了！**\n"
+            f"対象：{target.mention}\n"
+            f"付与額：**{amount:,} コイン**\n"
+            f"現在の残高：**{balances[str(target.id)]:,} コイン**"
+        )
 
     except TimeoutError:
         await ctx.send("⌛ 時間切れ！もう一度 `.Payment` を実行してね。")
+
 
 # ボットの起動
 bot.run(os.getenv("DISCORD_TOKEN"))

@@ -2,22 +2,20 @@ import os
 import json
 import random
 from pathlib import Path
+
 import discord
 from discord.ext import commands
 
-# メッセージの内容を読み取る権限を有効化
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
-# 通貨データの保存先
 BALANCE_FILE = Path("balances.json")
 STARTING_BALANCE = 1000
 
 SLOT_EMOJIS = ["🍒", "🍋", "🔔", "⭐", "7️⃣"]
 
-# 3つ同じ絵柄がそろったときの配当倍率
 PAYOUTS = {
     "🍒": 2,
     "🍋": 3,
@@ -30,8 +28,11 @@ PAYOUTS = {
 def load_balances():
     if not BALANCE_FILE.exists():
         return {}
+
     try:
-        data = json.loads(BALANCE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(
+            BALANCE_FILE.read_text(encoding="utf-8")
+        )
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
@@ -42,24 +43,32 @@ balances = load_balances()
 
 def save_balances():
     BALANCE_FILE.write_text(
-        json.dumps(balances, ensure_ascii=False, indent=2),
+        json.dumps(
+            balances,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
 
 
 def get_balance(user_id):
     key = str(user_id)
+
     if key not in balances:
         balances[key] = STARTING_BALANCE
         save_balances()
+
     return int(balances[key])
 
 
 @bot.command(name="balance")
 async def balance(ctx):
     money = get_balance(ctx.author.id)
+
     await ctx.send(
-        f"💰 {ctx.author.mention} の所持金：**{money:,} コイン**"
+        f"💰 {ctx.author.mention} の所持金："
+        f"**{money:,} コイン**"
     )
 
 
@@ -77,39 +86,67 @@ async def slot(ctx, bet: int = None):
         )
         return
 
-    # 賭け金を先に引く
-    balances[str(ctx.author.id)] = money - bet
+    # 3行×3列のスロットを生成
+    reels = [
+        [random.choice(SLOT_EMOJIS) for _ in range(3)]
+        for _ in range(3)
+    ]
 
-    result = [random.choice(SLOT_EMOJIS) for _ in range(3)]
-    payout = 0
+    # 横3マスがそろった行を判定
+    winning_lines = []
 
-    if result[0] == result[1] == result[2]:
-        payout = bet * PAYOUTS[result[0]]
+    for row_index, row in enumerate(reels):
+        if row[0] == row[1] == row[2]:
+            winning_lines.append(
+                (row_index, row[0])
+            )
 
-    balances[str(ctx.author.id)] += payout
+    # 1回のスピンにつき賭け金を1回だけ引く
+    payout = sum(
+        bet * PAYOUTS[symbol]
+        for _, symbol in winning_lines
+    )
+
+    balances[str(ctx.author.id)] = money - bet + payout
     save_balances()
 
-    reels = " | ".join(result)
+    # スロット表示
+    display = "\n".join(
+        "┃ " + " ┃ ".join(row) + " ┃"
+        for row in reels
+    )
 
-    if payout > 0:
-        await ctx.send(
-            f"🎰 **SLOT** 🎰\n\n"
-            f"【 {reels} 】\n"
-            f"🎉 当たり！ **{payout:,} コイン** 獲得！\n"
-            f"💰 残高：**{balances[str(ctx.author.id)]:,} コイン**"
+    if winning_lines:
+        details = "\n".join(
+            f"🎉 {row_index + 1}行目：{symbol} "
+            f"×{PAYOUTS[symbol]} → "
+            f"**{bet * PAYOUTS[symbol]:,} コイン**"
+            for row_index, symbol in winning_lines
+        )
+
+        result_text = (
+            f"🎉 **当たり！**\n"
+            f"{details}\n"
+            f"💰 合計配当：**{payout:,} コイン**"
         )
     else:
-        await ctx.send(
-            f"🎰 **SLOT** 🎰\n\n"
-            f"【 {reels} 】\n"
-            f"❌ ハズレ！ **{bet:,} コイン** 消費！\n"
-            f"💰 残高：**{balances[str(ctx.author.id)]:,} コイン**"
+        result_text = (
+            f"❌ ハズレ！ **{bet:,} コイン** 消費！"
         )
+
+    new_balance = balances[str(ctx.author.id)]
+
+    await ctx.send(
+        f"🎰 **SLOT MACHINE** 🎰\n\n"
+        f"```text\n{display}\n```\n"
+        f"🎲 賭け金：**{bet:,} コイン**\n"
+        f"{result_text}\n"
+        f"💰 残高：**{new_balance:,} コイン**"
+    )
 
 
 @bot.command(name="Payment")
 async def payment(ctx):
-    # ownerロールを確認
     if not isinstance(ctx.author, discord.Member):
         return
 
@@ -117,7 +154,9 @@ async def payment(ctx):
         role.name.lower() == "owner"
         for role in ctx.author.roles
     ):
-        await ctx.send("❌ このコマンドは owner ロール限定だよ。")
+        await ctx.send(
+            "❌ このコマンドは owner ロール限定だよ。"
+        )
         return
 
     await ctx.send(
@@ -133,10 +172,13 @@ async def payment(ctx):
 
     try:
         target_msg = await bot.wait_for(
-            "message", check=check, timeout=60
+            "message",
+            check=check,
+            timeout=60
         )
 
         target = None
+
         if target_msg.mentions:
             target = target_msg.mentions[0]
         else:
@@ -151,11 +193,14 @@ async def payment(ctx):
             return
 
         await ctx.send(
-            f"💰 {target.mention} に何コイン付与する？数字で入力してね。"
+            f"💰 {target.mention} に何コイン付与する？"
+            "数字で入力してね。"
         )
 
         amount_msg = await bot.wait_for(
-            "message", check=check, timeout=60
+            "message",
+            check=check,
+            timeout=60
         )
 
         try:
@@ -165,7 +210,9 @@ async def payment(ctx):
             return
 
         if amount <= 0 or amount > 1_000_000_000:
-            await ctx.send("❌ 1〜1,000,000,000 の範囲で入力してね。")
+            await ctx.send(
+                "❌ 1〜1,000,000,000 の範囲で入力してね。"
+            )
             return
 
         current = get_balance(target.id)
@@ -176,12 +223,14 @@ async def payment(ctx):
             f"✅ **コイン付与完了！**\n"
             f"対象：{target.mention}\n"
             f"付与額：**{amount:,} コイン**\n"
-            f"現在の残高：**{balances[str(target.id)]:,} コイン**"
+            f"現在の残高："
+            f"**{balances[str(target.id)]:,} コイン**"
         )
 
     except TimeoutError:
-        await ctx.send("⌛ 時間切れ！もう一度 `.Payment` を実行してね。")
+        await ctx.send(
+            "⌛ 時間切れ！もう一度 `.Payment` を実行してね。"
+        )
 
 
-# ボットの起動
 bot.run(os.getenv("DISCORD_TOKEN"))

@@ -1,3 +1,4 @@
+import os
 import random
 import discord
 from discord.ext import commands
@@ -11,4 +12,5 @@ async def slot(ctx):
     result = [random.choice(SLOT_EMOJIS) for _ in range(3)]
     await ctx.send("🎰 **SLOT** 🎰\n\n" + " | ".join(result))
 
-bot.run("YOUR_BOT_TOKEN")
+# 環境変数からトークンを読み込む
+bot.run(os.getenv("DISCORD_TOKEN"))

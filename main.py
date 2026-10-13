@@ -9,7 +9,8 @@ from discord.ext import commands
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=".", intents=intents)
+# case_insensitive=True を追加して、大文字・小文字のどちらでも動くようにする
+bot = commands.Bot(command_prefix=".", intents=intents, case_insensitive=True)
 
 BALANCE_FILE = Path("balances.json")
 STARTING_BALANCE = 1000

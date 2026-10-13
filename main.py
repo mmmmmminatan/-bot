@@ -9,8 +9,12 @@ from discord.ext import commands
 intents = discord.Intents.default()
 intents.message_content = True
 
-# case_insensitive=True を追加して、大文字・小文字のどちらでも動くようにする
-bot = commands.Bot(command_prefix=".", intents=intents, case_insensitive=True)
+bot = commands.Bot(
+    command_prefix=".",
+    intents=intents,
+    help_command=None,
+    case_insensitive=True  # 大文字・小文字を区別せずにコマンドを認識する設定
+)
 
 BALANCE_FILE = Path("balances.json")
 STARTING_BALANCE = 1000
@@ -87,22 +91,18 @@ async def slot(ctx, bet: int = None):
         )
         return
 
-    # 3行×3列のスロットを生成
+    # 3行×3列のスロット
     reels = [
         [random.choice(SLOT_EMOJIS) for _ in range(3)]
         for _ in range(3)
     ]
 
-    # 横3マスがそろった行を判定
     winning_lines = []
 
     for row_index, row in enumerate(reels):
         if row[0] == row[1] == row[2]:
-            winning_lines.append(
-                (row_index, row[0])
-            )
+            winning_lines.append((row_index, row[0]))
 
-    # 1回のスピンにつき賭け金を1回だけ引く
     payout = sum(
         bet * PAYOUTS[symbol]
         for _, symbol in winning_lines
@@ -111,7 +111,6 @@ async def slot(ctx, bet: int = None):
     balances[str(ctx.author.id)] = money - bet + payout
     save_balances()
 
-    # スロット表示
     display = "\n".join(
         "┃ " + " ┃ ".join(row) + " ┃"
         for row in reels
@@ -126,8 +125,7 @@ async def slot(ctx, bet: int = None):
         )
 
         result_text = (
-            f"🎉 **当たり！**\n"
-            f"{details}\n"
+            f"🎉 **当たり！**\n{details}\n"
             f"💰 合計配当：**{payout:,} コイン**"
         )
     else:
@@ -147,7 +145,12 @@ async def slot(ctx, bet: int = None):
 
 
 @bot.command(name="Payment")
-async def payment(ctx):
+async def payment(
+    ctx,
+    target: discord.Member = None,
+    amount: int = None
+):
+    # ownerロール限定
     if not isinstance(ctx.author, discord.Member):
         return
 
@@ -160,78 +163,68 @@ async def payment(ctx):
         )
         return
 
+    if target is None or amount is None:
+        await ctx.send(
+            "使い方：`.Payment @相手 500`"
+        )
+        return
+
+    if target.bot:
+        await ctx.send("❌ Botには付与できないよ。")
+        return
+
+    if amount <= 0 or amount > 1_000_000_000:
+        await ctx.send(
+            "❌ 金額は1〜1,000,000,000で指定してね。"
+        )
+        return
+
+    current = get_balance(target.id)
+    balances[str(target.id)] = current + amount
+    save_balances()
+
     await ctx.send(
-        "👑 **コイン付与**\n"
-        "付与する相手をメンションしてね！（60秒以内）"
+        f"✅ **コイン付与完了！**\n"
+        f"対象：{target.mention}\n"
+        f"付与額：**{amount:,} コイン**\n"
+        f"現在の残高："
+        f"**{balances[str(target.id)]:,} コイン**"
     )
 
-    def check(message):
-        return (
-            message.author.id == ctx.author.id
-            and message.channel.id == ctx.channel.id
-        )
 
-    try:
-        target_msg = await bot.wait_for(
-            "message",
-            check=check,
-            timeout=60
-        )
+@bot.command(name="help")
+async def custom_help(ctx):
+    embed = discord.Embed(
+        title="📖 コマンド一覧",
+        description="このBotで使えるコマンドだよ！",
+        color=discord.Color.gold()
+    )
 
-        target = None
+    embed.add_field(
+        name="🎰 .slot 金額",
+        value="指定したコインを賭けてスロットを回す。",
+        inline=False
+    )
 
-        if target_msg.mentions:
-            target = target_msg.mentions[0]
-        else:
-            try:
-                target_id = int(target_msg.content.strip())
-                target = ctx.guild.get_member(target_id)
-            except ValueError:
-                pass
+    embed.add_field(
+        name="💰 .balance",
+        value="自分の所持金を確認する。",
+        inline=False
+    )
 
-        if target is None or target.bot:
-            await ctx.send("❌ 有効なユーザーを指定してね。")
-            return
+    embed.add_field(
+        name="👑 .Payment @相手 金額",
+        value="相手にコインを付与する（ownerロール限定）。",
+        inline=False
+    )
 
-        await ctx.send(
-            f"💰 {target.mention} に何コイン付与する？"
-            "数字で入力してね。"
-        )
+    embed.add_field(
+        name="📖 .help",
+        value="コマンド一覧を表示する。",
+        inline=False
+    )
 
-        amount_msg = await bot.wait_for(
-            "message",
-            check=check,
-            timeout=60
-        )
-
-        try:
-            amount = int(amount_msg.content.strip())
-        except ValueError:
-            await ctx.send("❌ 数字で入力してね。")
-            return
-
-        if amount <= 0 or amount > 1_000_000_000:
-            await ctx.send(
-                "❌ 1〜1,000,000,000 の範囲で入力してね。"
-            )
-            return
-
-        current = get_balance(target.id)
-        balances[str(target.id)] = current + amount
-        save_balances()
-
-        await ctx.send(
-            f"✅ **コイン付与完了！**\n"
-            f"対象：{target.mention}\n"
-            f"付与額：**{amount:,} コイン**\n"
-            f"現在の残高："
-            f"**{balances[str(target.id)]:,} コイン**"
-        )
-
-    except TimeoutError:
-        await ctx.send(
-            "⌛ 時間切れ！もう一度 `.Payment` を実行してね。"
-        )
+    await ctx.send(embed=embed)
 
 
 bot.run(os.getenv("DISCORD_TOKEN"))

@@ -1,3 +1,5 @@
+from flask import Flask
+from threading import Thread
 import os
 import json
 import random
@@ -5,6 +7,24 @@ from pathlib import Path
 
 import discord
 from discord.ext import commands
+
+# --- Renderスリープ防止用のWebサーバー設定 ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# Webサーバーをバックグラウンドで起動
+keep_alive()
+# ---------------------------------------------
 
 intents = discord.Intents.default()
 intents.message_content = True

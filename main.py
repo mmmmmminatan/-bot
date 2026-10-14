@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import os
@@ -11,9 +10,9 @@ import discord
 from discord.ext import commands
 
 
-# =========================
+# ==============================
 # Webサーバー
-# =========================
+# ==============================
 
 app = Flask(__name__)
 
@@ -40,9 +39,9 @@ def keep_alive():
 keep_alive()
 
 
-# =========================
-# Discord Bot
-# =========================
+# ==============================
+# Discord Bot設定
+# ==============================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -55,9 +54,9 @@ bot = commands.Bot(
 )
 
 
-# =========================
+# ==============================
 # データ保存
-# =========================
+# ==============================
 
 BALANCE_FILE = Path("balances.json")
 POSITION_FILE = Path("slot_positions.json")
@@ -71,8 +70,9 @@ def load_json(path, default):
         if path.exists():
             with path.open("r", encoding="utf-8") as file:
                 data = json.load(file)
-                if isinstance(data, type(default)):
-                    return data
+
+            if isinstance(data, type(default)):
+                return data
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -94,8 +94,8 @@ if (
     not isinstance(LANE_POSITIONS, list)
     or len(LANE_POSITIONS) != 3
     or any(
-        type(p) is not int or not 0 <= p < 5
-        for p in LANE_POSITIONS
+        type(pos) is not int or not 0 <= pos < 5
+        for pos in LANE_POSITIONS
     )
 ):
     LANE_POSITIONS = [0, 0, 0]
@@ -131,13 +131,18 @@ def get_balance(user_id):
     return int(balances[key])
 
 
-# =========================
-# スロット設定
-# =========================
+# ==============================
+# スロットの絵柄
+# ==============================
 
 LANE_PATTERNS = [
+    # 左レーン
     ["🍒", "🍋", "⭐️", "🔔", "7️⃣"],
+
+    # 中央レーン
     ["7️⃣", "⭐️", "🍋", "🍒", "🔔"],
+
+    # 右レーン
     ["🔔", "🍒", "7️⃣", "🍋", "⭐️"],
 ]
 
@@ -155,23 +160,31 @@ LANE_NAMES = ["左", "中央", "右"]
 def make_display():
     rows = []
 
+    # 中央の横一列が当たり判定の対象
     for offset in (-1, 0, 1):
         row = []
 
         for lane in range(3):
             pattern = LANE_PATTERNS[lane]
             pos = LANE_POSITIONS[lane]
-            symbol = pattern[(pos + offset) % len(pattern)]
+
+            # 末尾の次は先頭に戻る
+            symbol = pattern[
+                (pos + offset) % len(pattern)
+            ]
+
             row.append(symbol)
 
-        rows.append("┃ " + " ┃ ".join(row) + " ┃")
+        rows.append(
+            "┃ " + " ┃ ".join(row) + " ┃"
+        )
 
     return "\n".join(rows)
 
 
-# =========================
-# 所持金
-# =========================
+# ==============================
+# 所持金確認
+# ==============================
 
 @bot.command(name="balance")
 async def balance(ctx):
@@ -183,9 +196,9 @@ async def balance(ctx):
     )
 
 
-# =========================
+# ==============================
 # スロット
-# =========================
+# ==============================
 
 @bot.command(name="slot")
 async def slot(ctx, bet: int = None):
@@ -196,7 +209,9 @@ async def slot(ctx, bet: int = None):
         return
 
     if bet > 1_000_000_000:
-        await ctx.send("❌ 賭け金は10億コイン以下にしてね。")
+        await ctx.send(
+            "❌ 賭け金は10億コイン以下にしてね。"
+        )
         return
 
     async with SLOT_LOCK:
@@ -208,66 +223,68 @@ async def slot(ctx, bet: int = None):
             )
             return
 
-        # 賭け金を引く
+        # 賭け金を先に引く
         balances[str(ctx.author.id)] = money - bet
         save_balances()
 
-        # 各レーンの移動量は10〜20マス
-        steps = [random.randint(10, 20) for _ in range(3)]
+        # 左・中央・右の移動量を個別に決定
+        steps = [
+            random.randint(10, 20)
+            for _ in range(3)
+        ]
 
-        # 3レーン同時に回転開始
         message = await ctx.send(
             f"🎰 **SLOT MACHINE** 🎰\n\n"
             f"```text\n{make_display()}\n```\n"
             f"🎲 賭け金：**{bet:,} コイン**\n"
-            f"🔄 3レーン回転中..."
+            f"🔄 左レーン回転中..."
         )
 
-        # 短時間で高速回転
-        # 3レーンとも同時に進み、それぞれの停止位置で止まる
-        max_steps = max(steps)
+        # 左 → 中央 → 右の順番で回転
+        for lane in range(3):
 
-        for step in range(1, max_steps + 1):
-            for lane in range(3):
-                if step <= steps[lane]:
-                    LANE_POSITIONS[lane] = (
-                        LANE_POSITIONS[lane] + 1
-                    ) % len(LANE_PATTERNS[lane])
+            # このレーンだけ10〜20マス進める
+            for step in range(steps[lane]):
+                LANE_POSITIONS[lane] = (
+                    LANE_POSITIONS[lane] + 1
+                ) % len(LANE_PATTERNS[lane])
 
-            # 表示更新を減らして高速化
-            if step % 3 == 0 or step == max_steps:
+                # 高速回転の表示
                 await message.edit(
                     content=(
                         f"🎰 **SLOT MACHINE** 🎰\n\n"
                         f"```text\n{make_display()}\n```\n"
                         f"🎲 賭け金：**{bet:,} コイン**\n"
-                        f"🔄 回転中..."
+                        f"🔄 {LANE_NAMES[lane]}レーン回転中..."
                     )
                 )
+
                 await asyncio.sleep(0.06)
 
-        # 各レーンの停止位置を保存
-        save_positions()
+            # レーン停止
+            save_positions()
 
-        # 左→中央→右の順番に停止表示
-        for lane in range(3):
             await message.edit(
                 content=(
                     f"🎰 **SLOT MACHINE** 🎰\n\n"
                     f"```text\n{make_display()}\n```\n"
-                    f"🎲 賭け金：**{bet:,} コイン**\n"
                     f"🛑 {LANE_NAMES[lane]}レーン停止！"
                 )
             )
-            await asyncio.sleep(0.12)
 
-        # 中央の横一列で判定
+            await asyncio.sleep(0.15)
+
+        # 中央の横一列を判定
         center_symbols = [
             LANE_PATTERNS[lane][LANE_POSITIONS[lane]]
             for lane in range(3)
         ]
 
-        if center_symbols[0] == center_symbols[1] == center_symbols[2]:
+        if (
+            center_symbols[0]
+            == center_symbols[1]
+            == center_symbols[2]
+        ):
             symbol = center_symbols[0]
             payout = bet * PAYOUTS[symbol]
 
@@ -285,6 +302,7 @@ async def slot(ctx, bet: int = None):
                 f"**{bet:,} コイン** 消費！"
             )
 
+        # 配当を加算して保存
         balances[str(ctx.author.id)] += payout
         save_balances()
 
@@ -301,9 +319,9 @@ async def slot(ctx, bet: int = None):
         )
 
 
-# =========================
+# ==============================
 # コイン付与（owner限定）
-# =========================
+# ==============================
 
 @bot.command(name="Payment")
 async def payment(
@@ -324,11 +342,15 @@ async def payment(
         return
 
     if target is None or amount is None:
-        await ctx.send("使い方：`.Payment @相手 500`")
+        await ctx.send(
+            "使い方：`.Payment @相手 500`"
+        )
         return
 
     if target.bot:
-        await ctx.send("❌ Botには付与できないよ。")
+        await ctx.send(
+            "❌ Botには付与できないよ。"
+        )
         return
 
     if amount <= 0 or amount > 1_000_000_000:
@@ -350,9 +372,9 @@ async def payment(
     )
 
 
-# =========================
+# ==============================
 # ヘルプ
-# =========================
+# ==============================
 
 @bot.command(name="help")
 async def custom_help(ctx):
@@ -389,9 +411,9 @@ async def custom_help(ctx):
     await ctx.send(embed=embed)
 
 
-# =========================
+# ==============================
 # Bot起動
-# =========================
+# ==============================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 

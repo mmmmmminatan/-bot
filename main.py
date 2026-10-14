@@ -1,3 +1,4 @@
+
 import asyncio
 import json
 import os
@@ -11,7 +12,7 @@ from discord.ext import commands
 
 
 # =========================
-# Webサーバー（24時間稼働・スリープ防止用）
+# Webサーバー
 # =========================
 
 app = Flask(__name__)
@@ -24,26 +25,33 @@ def home():
 
 def run_web():
     port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        threaded=True,
+        use_reloader=False
+    )
 
 
 def keep_alive():
     Thread(target=run_web, daemon=True).start()
 
 
-# Webサーバーを起動
 keep_alive()
 
 
 # =========================
-# Discord Bot設定
+# Discord Bot
 # =========================
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(
-    command_prefix=".", intents=intents, help_command=None, case_insensitive=True
+    command_prefix=".",
+    intents=intents,
+    help_command=None,
+    case_insensitive=True
 )
 
 
@@ -55,34 +63,39 @@ BALANCE_FILE = Path("balances.json")
 POSITION_FILE = Path("slot_positions.json")
 
 STARTING_BALANCE = 1000
-
 SLOT_LOCK = asyncio.Lock()
 
 
 def load_json(path, default):
-    if not path.exists():
-        return default
-
     try:
-        with path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-            return data
+        if path.exists():
+            with path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+                if isinstance(data, type(default)):
+                    return data
     except (json.JSONDecodeError, OSError):
-        return default
+        pass
+
+    return default
 
 
 balances = load_json(BALANCE_FILE, {})
 
-saved_positions = load_json(POSITION_FILE, {"positions": [0, 0, 0]})
+saved_positions = load_json(
+    POSITION_FILE,
+    {"positions": [0, 0, 0]}
+)
 
-LANE_POSITIONS = saved_positions.get("positions", [0, 0, 0])
+LANE_POSITIONS = saved_positions.get(
+    "positions", [0, 0, 0]
+)
 
 if (
     not isinstance(LANE_POSITIONS, list)
     or len(LANE_POSITIONS) != 3
     or any(
-        type(position) is not int or not 0 <= position < 5
-        for position in LANE_POSITIONS
+        type(p) is not int or not 0 <= p < 5
+        for p in LANE_POSITIONS
     )
 ):
     LANE_POSITIONS = [0, 0, 0]
@@ -90,12 +103,22 @@ if (
 
 def save_balances():
     with BALANCE_FILE.open("w", encoding="utf-8") as file:
-        json.dump(balances, file, ensure_ascii=False, indent=2)
+        json.dump(
+            balances,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
 def save_positions():
     with POSITION_FILE.open("w", encoding="utf-8") as file:
-        json.dump({"positions": LANE_POSITIONS}, file, ensure_ascii=False, indent=2)
+        json.dump(
+            {"positions": LANE_POSITIONS},
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
 def get_balance(user_id):
@@ -137,10 +160,8 @@ def make_display():
 
         for lane in range(3):
             pattern = LANE_PATTERNS[lane]
-            position = LANE_POSITIONS[lane]
-
-            symbol = pattern[(position + offset) % len(pattern)]
-
+            pos = LANE_POSITIONS[lane]
+            symbol = pattern[(pos + offset) % len(pattern)]
             row.append(symbol)
 
         rows.append("┃ " + " ┃ ".join(row) + " ┃")
@@ -149,21 +170,22 @@ def make_display():
 
 
 # =========================
-# 所持金確認
+# 所持金
 # =========================
-
 
 @bot.command(name="balance")
 async def balance(ctx):
     money = get_balance(ctx.author.id)
 
-    await ctx.send(f"💰 {ctx.author.mention} の所持金：**{money:,} コイン**")
+    await ctx.send(
+        f"💰 {ctx.author.mention} の所持金："
+        f"**{money:,} コイン**"
+    )
 
 
 # =========================
 # スロット
 # =========================
-
 
 @bot.command(name="slot")
 async def slot(ctx, bet: int = None):
@@ -186,40 +208,49 @@ async def slot(ctx, bet: int = None):
             )
             return
 
-        # 賭け金を先に引く
+        # 賭け金を引く
         balances[str(ctx.author.id)] = money - bet
         save_balances()
 
-        # 各レーンが進むマス数を決める
+        # 各レーンの移動量は10〜20マス
         steps = [random.randint(10, 20) for _ in range(3)]
 
+        # 3レーン同時に回転開始
         message = await ctx.send(
             f"🎰 **SLOT MACHINE** 🎰\n\n"
             f"```text\n{make_display()}\n```\n"
             f"🎲 賭け金：**{bet:,} コイン**\n"
-            f"🔄 左レーン回転中..."
+            f"🔄 3レーン回転中..."
         )
 
-        # 左 → 中央 → 右の順番で回転
-        for lane in range(3):
-            for step in range(1, steps[lane] + 1):
-                LANE_POSITIONS[lane] = (
-                    LANE_POSITIONS[lane] + 1
-                ) % len(LANE_PATTERNS[lane])
+        # 短時間で高速回転
+        # 3レーンとも同時に進み、それぞれの停止位置で止まる
+        max_steps = max(steps)
 
-                if step % 2 == 0 or step == steps[lane]:
-                    await message.edit(
-                        content=(
-                            f"🎰 **SLOT MACHINE** 🎰\n\n"
-                            f"```text\n{make_display()}\n```\n"
-                            f"🎲 賭け金：**{bet:,} コイン**\n"
-                            f"🔄 {LANE_NAMES[lane]}レーン回転中..."
-                        )
+        for step in range(1, max_steps + 1):
+            for lane in range(3):
+                if step <= steps[lane]:
+                    LANE_POSITIONS[lane] = (
+                        LANE_POSITIONS[lane] + 1
+                    ) % len(LANE_PATTERNS[lane])
+
+            # 表示更新を減らして高速化
+            if step % 3 == 0 or step == max_steps:
+                await message.edit(
+                    content=(
+                        f"🎰 **SLOT MACHINE** 🎰\n\n"
+                        f"```text\n{make_display()}\n```\n"
+                        f"🎲 賭け金：**{bet:,} コイン**\n"
+                        f"🔄 回転中..."
                     )
-                    await asyncio.sleep(0.3)
+                )
+                await asyncio.sleep(0.06)
 
-            save_positions()
+        # 各レーンの停止位置を保存
+        save_positions()
 
+        # 左→中央→右の順番に停止表示
+        for lane in range(3):
             await message.edit(
                 content=(
                     f"🎰 **SLOT MACHINE** 🎰\n\n"
@@ -228,11 +259,12 @@ async def slot(ctx, bet: int = None):
                     f"🛑 {LANE_NAMES[lane]}レーン停止！"
                 )
             )
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.12)
 
-        # 中央の横一列で当たり判定
+        # 中央の横一列で判定
         center_symbols = [
-            LANE_PATTERNS[lane][LANE_POSITIONS[lane]] for lane in range(3)
+            LANE_PATTERNS[lane][LANE_POSITIONS[lane]]
+            for lane in range(3)
         ]
 
         if center_symbols[0] == center_symbols[1] == center_symbols[2]:
@@ -246,6 +278,7 @@ async def slot(ctx, bet: int = None):
             )
         else:
             payout = 0
+
             result_text = (
                 f"❌ **ハズレ！**\n"
                 f"中央の出目：{' '.join(center_symbols)}\n"
@@ -272,14 +305,22 @@ async def slot(ctx, bet: int = None):
 # コイン付与（owner限定）
 # =========================
 
-
 @bot.command(name="Payment")
-async def payment(ctx, target: discord.Member = None, amount: int = None):
+async def payment(
+    ctx,
+    target: discord.Member = None,
+    amount: int = None
+):
     if not isinstance(ctx.author, discord.Member):
         return
 
-    if not any(role.name.lower() == "owner" for role in ctx.author.roles):
-        await ctx.send("❌ このコマンドは owner ロール限定だよ。")
+    if not any(
+        role.name.lower() == "owner"
+        for role in ctx.author.roles
+    ):
+        await ctx.send(
+            "❌ このコマンドは owner ロール限定だよ。"
+        )
         return
 
     if target is None or amount is None:
@@ -291,7 +332,9 @@ async def payment(ctx, target: discord.Member = None, amount: int = None):
         return
 
     if amount <= 0 or amount > 1_000_000_000:
-        await ctx.send("❌ 金額は1〜1,000,000,000で指定してね。")
+        await ctx.send(
+            "❌ 金額は1〜1,000,000,000で指定してね。"
+        )
         return
 
     current = get_balance(target.id)
@@ -302,7 +345,8 @@ async def payment(ctx, target: discord.Member = None, amount: int = None):
         f"✅ **コイン付与完了！**\n"
         f"対象：{target.mention}\n"
         f"付与額：**{amount:,} コイン**\n"
-        f"現在の残高：**{balances[str(target.id)]:,} コイン**"
+        f"現在の残高："
+        f"**{balances[str(target.id)]:,} コイン**"
     )
 
 
@@ -310,28 +354,36 @@ async def payment(ctx, target: discord.Member = None, amount: int = None):
 # ヘルプ
 # =========================
 
-
 @bot.command(name="help")
 async def custom_help(ctx):
     embed = discord.Embed(
         title="📖 コマンド一覧",
         description="このBotで使えるコマンドだよ！",
-        color=discord.Color.gold(),
+        color=discord.Color.gold()
     )
 
     embed.add_field(
-        name="🎰 .slot 金額", value="コインを賭けてスロットを回す。", inline=False
+        name="🎰 .slot 金額",
+        value="コインを賭けてスロットを回す。",
+        inline=False
     )
+
     embed.add_field(
-        name="💰 .balance", value="自分の所持金を確認する。", inline=False
+        name="💰 .balance",
+        value="自分の所持金を確認する。",
+        inline=False
     )
+
     embed.add_field(
         name="👑 .Payment @相手 金額",
-        value="コインを付与する（ownerロール限定）。",
-        inline=False,
+        value="コイン付与（ownerロール限定）。",
+        inline=False
     )
+
     embed.add_field(
-        name="📖 .help", value="コマンド一覧を表示する。", inline=False
+        name="📖 .help",
+        value="コマンド一覧を表示する。",
+        inline=False
     )
 
     await ctx.send(embed=embed)
@@ -344,6 +396,8 @@ async def custom_help(ctx):
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
-    raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていないよ！")
+    raise RuntimeError(
+        "環境変数 DISCORD_TOKEN が設定されていないよ！"
+    )
 
 bot.run(TOKEN)

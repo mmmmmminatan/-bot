@@ -57,10 +57,12 @@ def load_json(path, default):
         if path.exists():
             with path.open("r", encoding="utf-8") as file:
                 data = json.load(file)
+
             if isinstance(data, type(default)):
                 return data
     except (json.JSONDecodeError, OSError):
         pass
+
     return default
 
 balances = load_json(BALANCE_FILE, {})
@@ -112,7 +114,8 @@ def get_balance(user_id):
     return int(balances[key])
 
 # =========================
-# スロット設定
+# スロット絵柄
+# 各レーンの並びを別々にする
 # =========================
 LANE_PATTERNS = [
     ["🍒", "🍋", "⭐", "🔔", "7️⃣"],  # 左
@@ -128,32 +131,24 @@ PAYOUTS = {
     "7️⃣": 50,
 }
 
-def make_display():
-    rows = []
+# =========================
+# 3×3盤面を作る
+# =========================
+def make_grid():
+    return [
+        [
+            LANE_PATTERNS[col][
+                (LANE_POSITIONS[col] + offset) % 5
+            ]
+            for col in range(3)
+        ]
+        for offset in (-1, 0, 1)
+    ]
 
-    for offset in (-1, 0, 1):
-        row = []
-
-        for lane in range(3):
-            pattern = LANE_PATTERNS[lane]
-            pos = LANE_POSITIONS[lane]
-
-            row.append(
-                pattern[(pos + offset) % len(pattern)]
-            )
-
-        rows.append("┃ " + " ┃ ".join(row) + " ┃")
-
-    return "\n".join(rows)
-
-def slot_message(bet, status):
-    return (
-        "🎰 **SLOT MACHINE** 🎰\n\n"
-        "```text\n"
-        f"{make_display()}\n"
-        "```\n"
-        f"💰 賭け金：**{bet:,} コイン**\n"
-        f"{status}"
+def format_grid(grid):
+    return "\n".join(
+        "┃ " + " ┃ ".join(row) + " ┃"
+        for row in grid
     )
 
 # =========================
@@ -169,14 +164,21 @@ async def balance(ctx):
     )
 
 # =========================
-# .slot 金額
-# アニメーションなし・結果のみ
+# .slot 賭け金 ライン数
+#
+# 1：真ん中
+# 2：真ん中・上
+# 3：上・真ん中・下
+# 5：横3本・斜め2本
 # =========================
 @bot.command(name="slot")
-async def slot(ctx, bet: int = None):
+async def slot(ctx, bet: int = None, lines: int = 1):
 
     if bet is None or bet <= 0:
-        await ctx.send("使い方：`.slot 100`")
+        await ctx.send(
+            "使い方：`.slot 100 1`\n"
+            "ライン数：1・2・3・5"
+        )
         return
 
     if bet > 1_000_000_000:
@@ -185,69 +187,116 @@ async def slot(ctx, bet: int = None):
         )
         return
 
+    if lines not in (1, 2, 3, 5):
+        await ctx.send(
+            "❌ ライン数は1・2・3・5から選んでね。"
+        )
+        return
+
     async with SLOT_LOCK:
         user_id = str(ctx.author.id)
         money = get_balance(ctx.author.id)
 
-        if bet > money:
+        total_bet = bet * lines
+
+        if total_bet > 1_000_000_000:
             await ctx.send(
-                f"❌ 所持金不足！現在は "
-                f"**{money:,} コイン** だよ。"
+                "❌ 合計賭け金は10億コイン以下にしてね。"
             )
             return
 
-        # 賭け金を先に差し引く
-        balances[user_id] = money - bet
+        if total_bet > money:
+            await ctx.send(
+                f"❌ 所持金不足！\n"
+                f"必要額：**{total_bet:,} コイン**\n"
+                f"現在：**{money:,} コイン**"
+            )
+            return
 
-        # 3レーンの結果をランダムに決定
-        center_symbols = [
-            random.choice(LANE_PATTERNS[lane])
-            for lane in range(3)
+        # 賭け金を差し引く
+        balances[user_id] = money - total_bet
+
+        # 各レーンの停止位置を独立して決める
+        for lane in range(3):
+            LANE_POSITIONS[lane] = random.randrange(5)
+
+        grid = make_grid()
+
+        # 当たり判定ライン
+        all_lines = [
+            ("真ん中", [(1, 0), (1, 1), (1, 2)]),
+            ("上",     [(0, 0), (0, 1), (0, 2)]),
+            ("下",     [(2, 0), (2, 1), (2, 2)]),
+            ("斜め右", [(0, 0), (1, 1), (2, 2)]),
+            ("斜め左", [(2, 0), (1, 1), (0, 2)]),
         ]
 
-        # 結果を表示位置に反映
-        for lane, symbol in enumerate(center_symbols):
-            LANE_POSITIONS[lane] = (
-                LANE_PATTERNS[lane].index(symbol)
-            )
-
-        # 当たり判定
-        if (
-            center_symbols[0]
-            == center_symbols[1]
-            == center_symbols[2]
-        ):
-            symbol = center_symbols[0]
-            multiplier = PAYOUTS[symbol]
-            payout = bet * multiplier
-
-            result_text = (
-                f"🎉 **大当たり！**\n"
-                f"絵柄：{' '.join(center_symbols)}\n"
-                f"倍率：**×{multiplier}**\n"
-                f"配当：**{payout:,} コイン**"
-            )
+        # 指定ラインを有効化
+        if lines == 1:
+            active_lines = [all_lines[0]]
+        elif lines == 2:
+            active_lines = [all_lines[0], all_lines[1]]
+        elif lines == 3:
+            active_lines = all_lines[:3]
         else:
-            payout = 0
+            active_lines = all_lines
 
-            result_text = (
-                f"❌ **ハズレ！**\n"
-                f"中央の出目：{' '.join(center_symbols)}\n"
-                f"**{bet:,} コイン** 消費！"
-            )
+        total_payout = 0
+        win_results = []
+
+        # ラインごとに独立して判定
+        for line_name, coords in active_lines:
+            symbols = [
+                grid[row][col]
+                for row, col in coords
+            ]
+
+            if symbols[0] == symbols[1] == symbols[2]:
+                symbol = symbols[0]
+                multiplier = PAYOUTS[symbol]
+
+                # 配当は1ライン分の賭け金を基準に計算
+                payout = bet * multiplier
+                total_payout += payout
+
+                win_results.append(
+                    f"🎉 **{line_name}ライン当たり！**\n"
+                    f"{' '.join(symbols)}\n"
+                    f"倍率：×{multiplier}\n"
+                    f"配当：**{payout:,} コイン**"
+                )
 
         # 配当を加算
-        balances[user_id] += payout
+        balances[user_id] += total_payout
 
-        # データ保存
+        # データを保存
         save_balances()
         save_positions()
 
-        # 結果だけを1回で送信
+        # 結果表示
+        if win_results:
+            result_text = (
+                "🎊 **当たり！**\n\n"
+                + "\n\n".join(win_results)
+                + f"\n\n💰 合計配当："
+                f"**{total_payout:,} コイン**"
+            )
+        else:
+            result_text = (
+                "❌ **ハズレ！**\n"
+                "有効ラインに当たりはなかったよ。"
+            )
+
         await ctx.send(
-            slot_message(bet, result_text)
-            + f"\n💰 残高："
-            f"**{balances[user_id]:,} コイン**"
+            "🎰 **SLOT MACHINE** 🎰\n\n"
+            "```text\n"
+            f"{format_grid(grid)}\n"
+            "```\n"
+            f"🎯 有効ライン：**{lines}本**\n"
+            f"💰 1ラインの賭け金：**{bet:,} コイン**\n"
+            f"💸 合計賭け金：**{total_bet:,} コイン**\n\n"
+            f"{result_text}\n\n"
+            f"💳 残高：**{balances[user_id]:,} コイン**"
         )
 
 # =========================
@@ -291,15 +340,16 @@ async def payment(
         return
 
     current = get_balance(target.id)
-    balances[str(target.id)] = current + amount
+    new_balance = current + amount
+
+    balances[str(target.id)] = new_balance
     save_balances()
 
     await ctx.send(
         f"✅ **コイン付与完了！**\n"
         f"対象：{target.mention}\n"
         f"付与額：**{amount:,} コイン**\n"
-        f"現在の残高："
-        f"**{balances[str(target.id)]:,} コイン**"
+        f"現在の残高：**{new_balance:,} コイン**"
     )
 
 # =========================
@@ -314,8 +364,13 @@ async def custom_help(ctx):
     )
 
     embed.add_field(
-        name="🎰 .slot 金額",
-        value="コインを賭けてスロットを回す。",
+        name="🎰 .slot 賭け金 ライン数",
+        value=(
+            "`.slot 100 1`：真ん中\n"
+            "`.slot 100 2`：真ん中・上\n"
+            "`.slot 100 3`：横3ライン\n"
+            "`.slot 100 5`：横3＋斜め2ライン"
+        ),
         inline=False
     )
 

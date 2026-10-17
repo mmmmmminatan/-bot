@@ -115,7 +115,6 @@ def get_balance(user_id):
 
 # =========================
 # スロット絵柄
-# 各レーンの並びを別々にする
 # =========================
 LANE_PATTERNS = [
     ["🍒", "🍋", "⭐", "🔔", "7️⃣"],  # 左
@@ -132,7 +131,7 @@ PAYOUTS = {
 }
 
 # =========================
-# 3×3盤面を作る
+# 3×3盤面
 # =========================
 def make_grid():
     return [
@@ -152,9 +151,12 @@ def format_grid(grid):
     )
 
 # =========================
-# .balance 所持金表示
+# .balance
 # =========================
-@bot.command(name="balance")
+@bot.command(
+    name="balance",
+    help="自分の現在の所持金を確認する。"
+)
 async def balance(ctx):
     money = get_balance(ctx.author.id)
 
@@ -165,13 +167,11 @@ async def balance(ctx):
 
 # =========================
 # .slot 賭け金 ライン数
-#
-# 1：真ん中
-# 2：真ん中・上
-# 3：上・真ん中・下
-# 5：横3本・斜め2本
 # =========================
-@bot.command(name="slot")
+@bot.command(
+    name="slot",
+    help="コインを賭けてスロットを回す。"
+)
 async def slot(ctx, bet: int = None, lines: int = 1):
 
     if bet is None or bet <= 0:
@@ -182,9 +182,7 @@ async def slot(ctx, bet: int = None, lines: int = 1):
         return
 
     if bet > 1_000_000_000:
-        await ctx.send(
-            "❌ 賭け金は10億コイン以下にしてね。"
-        )
+        await ctx.send("❌ 賭け金は10億コイン以下にしてね。")
         return
 
     if lines not in (1, 2, 3, 5):
@@ -200,9 +198,7 @@ async def slot(ctx, bet: int = None, lines: int = 1):
         total_bet = bet * lines
 
         if total_bet > 1_000_000_000:
-            await ctx.send(
-                "❌ 合計賭け金は10億コイン以下にしてね。"
-            )
+            await ctx.send("❌ 合計賭け金は10億コイン以下にしてね。")
             return
 
         if total_bet > money:
@@ -222,7 +218,7 @@ async def slot(ctx, bet: int = None, lines: int = 1):
 
         grid = make_grid()
 
-        # 当たり判定ライン
+        # 判定ライン
         all_lines = [
             ("真ん中", [(1, 0), (1, 1), (1, 2)]),
             ("上",     [(0, 0), (0, 1), (0, 2)]),
@@ -231,7 +227,6 @@ async def slot(ctx, bet: int = None, lines: int = 1):
             ("斜め左", [(2, 0), (1, 1), (0, 2)]),
         ]
 
-        # 指定ラインを有効化
         if lines == 1:
             active_lines = [all_lines[0]]
         elif lines == 2:
@@ -244,7 +239,6 @@ async def slot(ctx, bet: int = None, lines: int = 1):
         total_payout = 0
         win_results = []
 
-        # ラインごとに独立して判定
         for line_name, coords in active_lines:
             symbols = [
                 grid[row][col]
@@ -254,8 +248,6 @@ async def slot(ctx, bet: int = None, lines: int = 1):
             if symbols[0] == symbols[1] == symbols[2]:
                 symbol = symbols[0]
                 multiplier = PAYOUTS[symbol]
-
-                # 配当は1ライン分の賭け金を基準に計算
                 payout = bet * multiplier
                 total_payout += payout
 
@@ -269,17 +261,14 @@ async def slot(ctx, bet: int = None, lines: int = 1):
         # 配当を加算
         balances[user_id] += total_payout
 
-        # データを保存
         save_balances()
         save_positions()
 
-        # 結果表示
         if win_results:
             result_text = (
                 "🎊 **当たり！**\n\n"
                 + "\n\n".join(win_results)
-                + f"\n\n💰 合計配当："
-                f"**{total_payout:,} コイン**"
+                + f"\n\n💰 合計配当：**{total_payout:,} コイン**"
             )
         else:
             result_text = (
@@ -303,7 +292,10 @@ async def slot(ctx, bet: int = None, lines: int = 1):
 # .Payment @相手 金額
 # ownerロール限定
 # =========================
-@bot.command(name="Payment")
+@bot.command(
+    name="Payment",
+    help="ownerロール限定で指定したユーザーにコインを付与する。"
+)
 async def payment(
     ctx,
     target: discord.Member = None,
@@ -316,21 +308,15 @@ async def payment(
         role.name.lower() == "owner"
         for role in ctx.author.roles
     ):
-        await ctx.send(
-            "❌ このコマンドは owner ロール限定だよ。"
-        )
+        await ctx.send("❌ このコマンドは owner ロール限定だよ。")
         return
 
     if target is None or amount is None:
-        await ctx.send(
-            "使い方：`.Payment @相手 500`"
-        )
+        await ctx.send("使い方：`.Payment @相手 500`")
         return
 
     if target.bot:
-        await ctx.send(
-            "❌ Botには付与できないよ。"
-        )
+        await ctx.send("❌ Botには付与できないよ。")
         return
 
     if amount <= 0 or amount > 1_000_000_000:
@@ -353,42 +339,69 @@ async def payment(
     )
 
 # =========================
-# .help コマンド一覧
+# .Mbot help
+# コマンド一覧を自動表示
 # =========================
-@bot.command(name="help")
-async def custom_help(ctx):
+@bot.group(
+    name="Mbot",
+    invoke_without_command=True,
+    help="Botのコマンド一覧を表示する。"
+)
+async def mbot(ctx):
+    await show_bot_help(ctx)
+
+@mbot.command(
+    name="help",
+    help="現在使用できるコマンド一覧を表示する。"
+)
+async def mbot_help(ctx):
+    await show_bot_help(ctx)
+
+async def show_bot_help(ctx):
     embed = discord.Embed(
-        title="📖 コマンド一覧",
-        description="このBotで使えるコマンドだよ！",
+        title="📖 Mbot コマンド一覧",
+        description="現在使用できるコマンドと説明だよ！",
         color=discord.Color.gold()
     )
 
-    embed.add_field(
-        name="🎰 .slot 賭け金 ライン数",
-        value=(
-            "`.slot 100 1`：真ん中\n"
-            "`.slot 100 2`：真ん中・上\n"
-            "`.slot 100 3`：横3ライン\n"
-            "`.slot 100 5`：横3＋斜め2ライン"
-        ),
-        inline=False
-    )
+    for command in bot.walk_commands():
+        if command.hidden:
+            continue
 
-    embed.add_field(
-        name="💰 .balance",
-        value="自分の所持金を確認する。",
-        inline=False
-    )
+        # 親グループやサブコマンドを重複表示しない
+        if command.parent is not None:
+            continue
 
-    embed.add_field(
-        name="👑 .Payment @相手 金額",
-        value="コイン付与（ownerロール限定）。",
-        inline=False
-    )
+        description = (
+            command.help
+            or command.short_doc
+            or "説明はまだ設定されていないよ。"
+        )
 
+        if command.name.lower() == "slot":
+            usage = (
+                "`.slot 100 1`：真ん中\n"
+                "`.slot 100 2`：真ん中・上\n"
+                "`.slot 100 3`：横3ライン\n"
+                "`.slot 100 5`：横3＋斜め2ライン"
+            )
+        elif command.name.lower() == "payment":
+            usage = "`.Payment @相手 500`"
+        elif command.name.lower() == "balance":
+            usage = "`.balance`"
+        else:
+            usage = f"`.{command.name}`"
+
+        embed.add_field(
+            name=f"⚙️ {usage}",
+            value=description,
+            inline=False
+        )
+
+    # Mbot help自体も表示
     embed.add_field(
-        name="📖 .help",
-        value="コマンド一覧を表示する。",
+        name="📖 `.Mbot help`",
+        value="現在のコマンド一覧を表示する。",
         inline=False
     )
 

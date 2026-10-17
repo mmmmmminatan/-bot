@@ -43,11 +43,11 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is alive!"
+    return "Bot is alive!", 200
 
 def run_web():
     port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # =========================
 # Discord Bot
@@ -77,13 +77,19 @@ def load_json(path, default):
 balances = load_json(DATA_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
 
+def save_json(path, data):
+    temp = path.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temp.replace(path)
+
 def save_balances():
-    with DATA_FILE.open("w", encoding="utf-8") as f:
-        json.dump(balances, f, ensure_ascii=False, indent=2)
+    save_json(DATA_FILE, balances)
 
 def save_positions():
-    with POSITIONS_FILE.open("w", encoding="utf-8") as f:
-        json.dump(slot_positions, f, ensure_ascii=False, indent=2)
+    save_json(POSITIONS_FILE, slot_positions)
 
 def get_balance(user_id):
     key = str(user_id)
@@ -97,6 +103,27 @@ def get_balance(user_id):
 def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
     save_balances()
+
+# =========================
+# 接続状態の確認
+# =========================
+
+@bot.event
+async def on_ready():
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Game(name=".Mbot help"),
+    )
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"Connected to {len(bot.guilds)} server(s)")
+
+@bot.event
+async def on_disconnect():
+    print("Discord connection disconnected")
+
+@bot.event
+async def on_resumed():
+    print("Discord connection resumed")
 
 # =========================
 # エラー処理
@@ -145,6 +172,7 @@ async def balance(ctx):
 # スロット
 # .slot 賭け金 [ライン数]
 # ライン数：1、2、3、5
+# 演出なし
 # =========================
 
 def make_grid(positions):
@@ -195,7 +223,7 @@ def get_paylines(grid, line_count):
 
 @bot.command(
     name="slot",
-    help="スロットを回す。例：.slot 100 3",
+    help="スロット。例：.slot 100 3",
 )
 async def slot(ctx, bet: int, lines: int = 1):
     if bet <= 0:
@@ -217,13 +245,11 @@ async def slot(ctx, bet: int, lines: int = 1):
         )
         return
 
-    # 賭け金を差し引く
     set_balance(
         ctx.author.id,
         current_balance - total_bet,
     )
 
-    # 各リールの停止位置をランダムに決定
     positions = [
         random.randrange(len(pattern))
         for pattern in LANE_PATTERNS
@@ -329,9 +355,24 @@ async def payment(ctx, member: discord.Member, amount: int):
 )
 async def mbot(ctx, *, args=""):
     if args.strip().lower() == "help":
-        await ctx.send("ウンコブリー 💩")
+        await ctx.send("ウンコブリー")
     else:
         await ctx.send("使い方：`.Mbot help`")
+
+# =========================
+# .help
+# =========================
+
+@bot.command(name="help")
+async def help_command(ctx):
+    await ctx.send(
+        "📘 コマンド一覧\n"
+        "`.balance` 所持金確認\n"
+        "`.slot 100` 1ラインスロット\n"
+        "`.slot 100 3` 3ラインスロット\n"
+        "`.Payment @ユーザー 100` コイン追加（ownerのみ）\n"
+        "`.Mbot help` ウンコブリー"
+    )
 
 # =========================
 # 起動
@@ -344,7 +385,8 @@ async def start_bot():
             "RenderのEnvironmentを確認してね。"
         )
 
-    await bot.start(TOKEN)
+    async with bot:
+        await bot.start(TOKEN)
 
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()

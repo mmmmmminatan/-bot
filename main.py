@@ -129,6 +129,7 @@ async def on_resumed():
 # エラー処理
 # =========================
 
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
@@ -142,8 +143,14 @@ async def on_command_error(ctx, error):
         await ctx.send("⚠️ 入力内容を確認してね！")
         return
 
-    print(f"Command error: {repr(error)}")
-    await ctx.send("⚠️ エラーが発生したよ。")
+    import traceback
+    traceback.print_exception(
+        type(error), error, error.__traceback__
+    )
+
+    await ctx.send(
+        f"⚠️ エラー内容：`{type(error).__name__}`"
+    )
 
 # =========================
 # 所持金確認

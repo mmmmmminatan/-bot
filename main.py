@@ -145,7 +145,7 @@ def set_balance(user_id, amount):
 
 
 # ==================================================
-# Discord Bot・スラッシュコマンド同期
+# Discord Bot
 # ==================================================
 
 intents = discord.Intents.default()
@@ -158,10 +158,7 @@ class CasinoBot(commands.Bot):
 
         try:
             synced = await self.tree.sync()
-
-            print(
-                f"[SYNC OK] Synced {len(synced)} slash commands"
-            )
+            print(f"[SYNC OK] Synced {len(synced)} slash commands")
 
             for command in synced:
                 print(f"[SYNC COMMAND] /{command.name}")
@@ -187,13 +184,8 @@ async def on_ready():
         activity=discord.Game(name=".Mbot help"),
     )
 
-    print(
-        f"[READY] Logged in as {bot.user} "
-        f"(ID: {bot.user.id})"
-    )
-    print(
-        f"[READY] Connected to {len(bot.guilds)} server(s)"
-    )
+    print(f"[READY] Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"[READY] Connected to {len(bot.guilds)} server(s)")
 
 
 @bot.event
@@ -244,11 +236,7 @@ async def on_command_error(ctx, error):
 async def slash_command_error(interaction, error):
     print(
         "[SLASH COMMAND ERROR]",
-        getattr(
-            interaction.command,
-            "qualified_name",
-            "unknown",
-        ),
+        getattr(interaction.command, "qualified_name", "unknown"),
     )
 
     traceback.print_exception(
@@ -291,9 +279,7 @@ async def get_log_channel(guild):
     channel_id = log_configs.get(str(guild.id))
 
     if not channel_id:
-        print(
-            f"[LOG ERROR] No log channel configured: {guild.id}"
-        )
+        print(f"[LOG ERROR] No log channel configured: {guild.id}")
         return None
 
     try:
@@ -309,8 +295,10 @@ async def get_log_channel(guild):
         me = guild.me
 
         if me is None:
-            print("[LOG ERROR] Bot member unavailable")
-            return None
+            if bot.user is None:
+                print("[LOG ERROR] Bot user unavailable")
+                return None
+            me = await guild.fetch_member(bot.user.id)
 
         perms = channel.permissions_for(me)
 
@@ -319,21 +307,27 @@ async def get_log_channel(guild):
             and perms.send_messages
             and perms.embed_links
         ):
-            print("[LOG ERROR] Missing channel permissions")
+            print(
+                "[LOG ERROR] Missing permissions: "
+                f"view={perms.view_channel}, "
+                f"send={perms.send_messages}, "
+                f"embed={perms.embed_links}"
+            )
             return None
 
         return channel
 
     except discord.Forbidden:
-        print("[LOG ERROR] Forbidden")
+        print("[LOG ERROR] Forbidden while retrieving channel")
     except discord.NotFound:
         print("[LOG ERROR] Channel not found")
     except (ValueError, TypeError):
         print("[LOG ERROR] Invalid channel ID")
     except discord.HTTPException:
+        print("[LOG ERROR] Discord HTTP error while retrieving channel")
         traceback.print_exc()
     except Exception:
-        print("[LOG ERROR] Unexpected error")
+        print("[LOG ERROR] Unexpected error while retrieving channel")
         traceback.print_exc()
 
     return None
@@ -357,7 +351,7 @@ async def send_slot_log(guild, data):
 
     if channel is None:
         print("[SLOT LOG] No available log channel")
-        return
+        return False
 
     embed = discord.Embed(
         title="🎰 スロットログ",
@@ -408,13 +402,25 @@ async def send_slot_log(guild, data):
 
     try:
         await channel.send(embed=embed)
-        print("[SLOT LOG] Sent successfully")
+        print(
+            f"[SLOT LOG] Sent successfully "
+            f"guild={guild.id} channel={channel.id}"
+        )
+        return True
 
     except discord.Forbidden:
-        print("[SLOT LOG ERROR] Forbidden")
-
-    except discord.HTTPException:
+        print("[SLOT LOG ERROR] Forbidden: check channel permissions")
+    except discord.HTTPException as error:
+        print(
+            f"[SLOT LOG ERROR] HTTPException "
+            f"status={error.status} code={error.code}"
+        )
         traceback.print_exc()
+    except Exception:
+        print("[SLOT LOG ERROR] Unexpected exception")
+        traceback.print_exc()
+
+    return False
 
 
 # ==================================================
@@ -431,6 +437,12 @@ async def send_coin_log(
     change,
     after,
 ):
+    print(
+        f"[COIN LOG] Starting: guild={getattr(guild, 'id', None)}, "
+        f"user={user_id}, operator={operator_id}, "
+        f"action={action}, change={change}"
+    )
+
     entry = {
         "timestamp": discord.utils.utcnow().isoformat(),
         "guild_id": guild.id if guild else None,
@@ -443,6 +455,7 @@ async def send_coin_log(
         "after": int(after),
     }
 
+    # ファイルへの履歴保存
     coin_logs.append(entry)
 
     if len(coin_logs) > MAX_LOGS:
@@ -450,61 +463,94 @@ async def send_coin_log(
 
     try:
         save_coin_logs()
-    except OSError:
+        print("[COIN LOG] JSON history saved")
+    except Exception:
+        print("[COIN LOG ERROR] Failed to save coin_logs.json")
         traceback.print_exc()
 
-    channel = await get_log_channel(guild)
-
-    if channel is None:
-        print("[COIN LOG] No available log channel")
-        return
-
-    embed = discord.Embed(
-        title="💰 コイン増減ログ",
-        color=(
-            discord.Color.green()
-            if change > 0
-            else discord.Color.red()
-        ),
-        timestamp=discord.utils.utcnow(),
-    )
-
-    embed.add_field(name="操作", value=action, inline=True)
-    embed.add_field(
-        name="対象者",
-        value=f"<@{user_id}> (`{user_id}`)",
-        inline=False,
-    )
-    embed.add_field(
-        name="操作した人",
-        value=f"<@{operator_id}> (`{operator_id}`)",
-        inline=False,
-    )
-    embed.add_field(
-        name="変更前の所持金",
-        value=f"{before:,} コイン",
-        inline=True,
-    )
-    embed.add_field(
-        name="増減",
-        value=f"{change:+,} コイン",
-        inline=True,
-    )
-    embed.add_field(
-        name="変更後の所持金",
-        value=f"{after:,} コイン",
-        inline=True,
-    )
-
+    # Discordへのログ送信
     try:
+        channel = await get_log_channel(guild)
+
+        if channel is None:
+            print(
+                "[COIN LOG ERROR] No available log channel. "
+                "Check /log panel configuration and permissions."
+            )
+            return False
+
+        embed = discord.Embed(
+            title="💰 コイン増減ログ",
+            color=(
+                discord.Color.green()
+                if change > 0
+                else discord.Color.red()
+            ),
+            timestamp=discord.utils.utcnow(),
+        )
+
+        embed.add_field(
+            name="操作",
+            value=action,
+            inline=True,
+        )
+        embed.add_field(
+            name="対象者",
+            value=f"<@{user_id}> (`{user_id}`)",
+            inline=False,
+        )
+        embed.add_field(
+            name="操作した人",
+            value=f"<@{operator_id}> (`{operator_id}`)",
+            inline=False,
+        )
+        embed.add_field(
+            name="変更前の所持金",
+            value=f"{before:,} コイン",
+            inline=True,
+        )
+        embed.add_field(
+            name="増減",
+            value=f"{change:+,} コイン",
+            inline=True,
+        )
+        embed.add_field(
+            name="変更後の所持金",
+            value=f"{after:,} コイン",
+            inline=True,
+        )
+
         await channel.send(embed=embed)
-        print("[COIN LOG] Sent successfully")
+
+        print(
+            f"[COIN LOG] Sent successfully "
+            f"guild={guild.id} channel={channel.id} "
+            f"user={user_id} change={change}"
+        )
+        return True
 
     except discord.Forbidden:
-        print("[COIN LOG ERROR] Forbidden")
-
-    except discord.HTTPException:
+        print(
+            "[COIN LOG ERROR] Forbidden: "
+            "Bot cannot send the coin log to the configured channel"
+        )
         traceback.print_exc()
+
+    except discord.HTTPException as error:
+        print(
+            f"[COIN LOG ERROR] HTTPException "
+            f"status={error.status} code={error.code}"
+        )
+        traceback.print_exc()
+
+    except Exception as error:
+        print(
+            f"[COIN LOG ERROR] Unexpected "
+            f"{type(error).__name__}: {error}"
+        )
+        traceback.print_exc()
+
+    return False
 
 
 # ==================================================
@@ -542,9 +588,7 @@ def make_grid(positions):
 
         for lane in range(3):
             pattern = LANE_PATTERNS[lane]
-            index = (
-                positions[lane] + row - 1
-            ) % len(pattern)
+            index = (positions[lane] + row - 1) % len(pattern)
             current_row.append(pattern[index])
 
         grid.append(current_row)
@@ -553,10 +597,7 @@ def make_grid(positions):
 
 
 def grid_text(grid):
-    return "\n".join(
-        " | ".join(row)
-        for row in grid
-    )
+    return "\n".join(" | ".join(row) for row in grid)
 
 
 def get_paylines(grid, line_count):
@@ -569,12 +610,8 @@ def get_paylines(grid, line_count):
         lines.append(grid[2])
 
     if line_count >= 5:
-        lines.append(
-            [grid[0][0], grid[1][1], grid[2][2]]
-        )
-        lines.append(
-            [grid[2][0], grid[1][1], grid[0][2]]
-        )
+        lines.append([grid[0][0], grid[1][1], grid[2][2]])
+        lines.append([grid[2][0], grid[1][1], grid[0][2]])
 
     return lines
 
@@ -589,15 +626,11 @@ def get_paylines(grid, line_count):
 )
 async def slot(ctx, bet: int, lines: int = 1):
     if bet <= 0 or bet > MAX_BET:
-        await ctx.send(
-            "⚠️ 賭け金は1〜1,000,000,000にしてね。"
-        )
+        await ctx.send("⚠️ 賭け金は1〜1,000,000,000にしてね。")
         return
 
     if lines not in VALID_LINES:
-        await ctx.send(
-            "⚠️ ライン数は1、2、3、5から選んでね。"
-        )
+        await ctx.send("⚠️ ライン数は1、2、3、5から選んでね。")
         return
 
     total_bet = bet * lines
@@ -631,8 +664,7 @@ async def slot(ctx, bet: int, lines: int = 1):
             prize = bet * PAYOUTS[symbol]
             winnings += prize
             hits.append(
-                f"ライン{index}：{symbol} ×3 "
-                f"→ +{prize:,}コイン"
+                f"ライン{index}：{symbol} ×3 → +{prize:,}コイン"
             )
 
     after = before - total_bet + winnings
@@ -658,7 +690,8 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     try:
         record_slot(log_data)
-    except OSError:
+    except Exception:
+        print("[SLOT HISTORY ERROR]")
         traceback.print_exc()
 
     embed = discord.Embed(
@@ -677,11 +710,7 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     embed.add_field(
         name="🎉 当たり！" if hits else "結果",
-        value=(
-            "\n".join(hits)
-            if hits
-            else "今回はハズレ！また挑戦してね。"
-        ),
+        value="\n".join(hits) if hits else "今回はハズレ！また挑戦してね。",
         inline=False,
     )
 
@@ -703,15 +732,22 @@ async def slot(ctx, bet: int, lines: int = 1):
     help="ownerロール専用。コインを追加・減額する",
 )
 async def payment(ctx, member: discord.Member, amount: int):
+    print(
+        f"[PAYMENT] Command received: "
+        f"operator={ctx.author.id}, "
+        f"target={getattr(member, 'id', None)}, "
+        f"amount={amount}, "
+        f"guild={getattr(ctx.guild, 'id', None)}"
+    )
+
     is_owner = any(
         role.name.lower() == OWNER_ROLE_NAME.lower()
         for role in getattr(ctx.author, "roles", [])
     )
 
     if not is_owner:
-        await ctx.send(
-            "⛔ このコマンドはownerロール専用だよ。"
-        )
+        await ctx.send("⛔ このコマンドはownerロール専用だよ。")
+        print("[PAYMENT] Rejected: owner role missing")
         return
 
     if member.bot:
@@ -719,9 +755,7 @@ async def payment(ctx, member: discord.Member, amount: int):
         return
 
     if amount == 0 or abs(amount) > MAX_BET:
-        await ctx.send(
-            "⚠️ 金額は ±1〜1,000,000,000 にしてね。"
-        )
+        await ctx.send("⚠️ 金額は ±1〜1,000,000,000 にしてね。")
         return
 
     before = get_balance(member.id)
@@ -733,30 +767,63 @@ async def payment(ctx, member: discord.Member, amount: int):
         )
         return
 
-    set_balance(member.id, after)
+    # 残高を変更
+    try:
+        set_balance(member.id, after)
+    except Exception:
+        print("[PAYMENT ERROR] Failed to save balance")
+        traceback.print_exc()
+        await ctx.send(
+            "⚠️ 残高の保存に失敗したよ。RenderのLogsを確認してね。"
+        )
+        return
 
-    action = (
-        "コイン追加"
-        if amount > 0
-        else "コイン減額"
-    )
+    action = "コイン追加" if amount > 0 else "コイン減額"
 
-    await send_coin_log(
-        guild=ctx.guild,
-        user_id=member.id,
-        username=str(member),
-        operator_id=ctx.author.id,
-        action=action,
-        before=before,
-        change=amount,
-        after=after,
-    )
+    # ログ送信が失敗しても、残高変更の成功通知は必ず試みる
+    log_sent = False
 
-    await ctx.send(
+    try:
+        log_sent = await send_coin_log(
+            guild=ctx.guild,
+            user_id=member.id,
+            username=str(member),
+            operator_id=ctx.author.id,
+            action=action,
+            before=before,
+            change=amount,
+            after=after,
+        )
+    except Exception:
+        print("[PAYMENT ERROR] send_coin_log raised an exception")
+        traceback.print_exc()
+
+    message = (
         f"✅ {member.mention} の残高を変更したよ！\n"
         f"変更前：**{before:,} コイン**\n"
         f"増減：**{amount:+,} コイン**\n"
         f"変更後：**{after:,} コイン**"
+    )
+
+    if log_sent:
+        message += "\n📋 ログチャンネルへの送信：成功"
+    else:
+        message += (
+            "\n⚠️ 残高変更は完了したけど、"
+            "ログチャンネルへの送信は失敗したよ。"
+            "\nRenderのLogsで `[COIN LOG ERROR]` を確認してね。"
+        )
+
+    try:
+        await ctx.send(message)
+    except discord.HTTPException:
+        print("[PAYMENT ERROR] Failed to send command result")
+        traceback.print_exc()
+
+    print(
+        f"[PAYMENT COMPLETE] target={member.id} "
+        f"before={before} change={amount} after={after} "
+        f"log_sent={log_sent}"
     )
 
 
@@ -811,7 +878,6 @@ class LogChannelSelect(discord.ui.ChannelSelect):
     async def callback(self, interaction: discord.Interaction):
         print("[LOG SELECT] Callback received")
 
-        # 先に応答して、Discordの3秒制限を回避する
         try:
             await interaction.response.defer(
                 ephemeral=True,
@@ -833,89 +899,37 @@ class LogChannelSelect(discord.ui.ChannelSelect):
                 return
 
             if not self.values:
-                print("[LOG SELECT ERROR] No selected channel")
                 await interaction.followup.send(
                     "⚠️ チャンネルが選択されていないよ。",
                     ephemeral=True,
                 )
                 return
 
-            selected_value = self.values[0]
-            channel_id = int(selected_value.id)
-
-            print(
-                f"[LOG SELECT] Selected channel ID: {channel_id}"
-            )
-
-            # 選択されたチャンネルをサーバーから取得し直す
+            channel_id = int(self.values[0].id)
             selected = guild.get_channel(channel_id)
 
             if selected is None:
-                try:
-                    fetched = await bot.fetch_channel(channel_id)
-                except discord.NotFound:
-                    print(
-                        "[LOG SELECT ERROR] Selected channel not found"
-                    )
-                    await interaction.followup.send(
-                        "⚠️ チャンネルが見つからなかったよ。"
-                        "もう一度選択してね。",
-                        ephemeral=True,
-                    )
-                    return
-
-                if not isinstance(fetched, discord.TextChannel):
-                    print(
-                        "[LOG SELECT ERROR] Not a text channel"
-                    )
-                    await interaction.followup.send(
-                        "⚠️ テキストチャンネルを選択してね。",
-                        ephemeral=True,
-                    )
-                    return
-
-                selected = fetched
+                selected = await bot.fetch_channel(channel_id)
 
             if not isinstance(selected, discord.TextChannel):
-                print(
-                    "[LOG SELECT ERROR] Invalid channel type: "
-                    f"{type(selected).__name__}"
-                )
                 await interaction.followup.send(
                     "⚠️ 通常のテキストチャンネルを選択してね。",
                     ephemeral=True,
                 )
                 return
 
-            # Bot自身のサーバーメンバー情報を取得
             me = guild.me
 
             if me is None:
                 if bot.user is None:
-                    print("[LOG SELECT ERROR] bot.user is None")
                     await interaction.followup.send(
-                        "⚠️ Bot情報を取得できなかったよ。"
-                        "少し待ってからもう一度試してね。",
+                        "⚠️ Bot情報を取得できなかったよ。",
                         ephemeral=True,
                     )
                     return
-
-                try:
-                    me = await guild.fetch_member(bot.user.id)
-                except discord.HTTPException:
-                    print(
-                        "[LOG SELECT ERROR] Failed to fetch bot member"
-                    )
-                    traceback.print_exc()
-                    await interaction.followup.send(
-                        "⚠️ Botのサーバー情報を取得できなかったよ。"
-                        "Renderのログを確認してね。",
-                        ephemeral=True,
-                    )
-                    return
+                me = await guild.fetch_member(bot.user.id)
 
             perms = selected.permissions_for(me)
-
             missing = []
 
             if not perms.view_channel:
@@ -928,11 +942,6 @@ class LogChannelSelect(discord.ui.ChannelSelect):
                 missing.append("埋め込みリンクを送信する")
 
             if missing:
-                print(
-                    "[LOG SELECT ERROR] Missing permissions: "
-                    + ", ".join(missing)
-                )
-
                 await interaction.followup.send(
                     "⚠️ Botに次の権限が必要だよ：\n"
                     + "\n".join(f"・{name}" for name in missing),
@@ -940,16 +949,13 @@ class LogChannelSelect(discord.ui.ChannelSelect):
                 )
                 return
 
-            # 保存前の状態を記録しておく
             guild_key = str(guild.id)
             old_value = log_configs.get(guild_key)
-
             log_configs[guild_key] = selected.id
 
             try:
                 save_configs()
             except Exception:
-                # 保存に失敗した場合はメモリ上の値も戻す
                 if old_value is None:
                     log_configs.pop(guild_key, None)
                 else:
@@ -959,8 +965,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
                 traceback.print_exc()
 
                 await interaction.followup.send(
-                    "⚠️ 設定ファイルの保存に失敗したよ。"
-                    "Renderのログを確認してね。",
+                    "⚠️ 設定ファイルの保存に失敗したよ。",
                     ephemeral=True,
                 )
                 return
@@ -972,30 +977,23 @@ class LogChannelSelect(discord.ui.ChannelSelect):
 
             await interaction.followup.send(
                 f"✅ ログ送信先を {selected.mention} に設定したよ！\n"
-                "これでスロットとコイン増減のログを送信するよ。",
+                "スロットとコイン増減のログを送信するよ。",
                 ephemeral=True,
             )
 
         except Exception as error:
-            print("[LOG SELECT ERROR] Unexpected exception")
             print(
-                f"[LOG SELECT ERROR TYPE] {type(error).__name__}: "
-                f"{error}"
+                f"[LOG SELECT ERROR] {type(error).__name__}: {error}"
             )
             traceback.print_exc()
 
             try:
                 await interaction.followup.send(
                     "⚠️ チャンネル設定中にエラーが起きたよ。\n"
-                    f"エラー種類：`{type(error).__name__}`\n"
-                    "RenderのLogsに出ている "
-                    "`[LOG SELECT ERROR]` の詳細を確認してね。",
+                    f"エラー種類：`{type(error).__name__}`",
                     ephemeral=True,
                 )
             except Exception:
-                print(
-                    "[LOG SELECT ERROR] Could not send error message"
-                )
                 traceback.print_exc()
 
 
@@ -1029,8 +1027,6 @@ async def log_panel(interaction: discord.Interaction):
             thinking=True,
         )
 
-        print("[DEBUG] /log panel deferred")
-
         await interaction.followup.send(
             "ログを送信するチャンネルを選択してね。",
             view=LogPanelView(),
@@ -1046,14 +1042,12 @@ async def log_panel(interaction: discord.Interaction):
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(
-                    "⚠️ パネル表示中にエラーが起きたよ。"
-                    "Renderのログを確認してね。",
+                    "⚠️ パネル表示中にエラーが起きたよ。",
                     ephemeral=True,
                 )
             else:
                 await interaction.response.send_message(
-                    "⚠️ パネル表示中にエラーが起きたよ。"
-                    "Renderのログを確認してね。",
+                    "⚠️ パネル表示中にエラーが起きたよ。",
                     ephemeral=True,
                 )
         except discord.HTTPException:
@@ -1158,10 +1152,7 @@ async def coinrecovery(
                     if match:
                         user_id = match.group(1)
 
-                    balance_text = fields.get(
-                        "回転後の所持金",
-                        "",
-                    )
+                    balance_text = fields.get("回転後の所持金", "")
 
                 elif title == "💰 コイン増減ログ":
                     player_text = fields.get("対象者", "")
@@ -1173,10 +1164,7 @@ async def coinrecovery(
                     if match:
                         user_id = match.group(1)
 
-                    balance_text = fields.get(
-                        "変更後の所持金",
-                        "",
-                    )
+                    balance_text = fields.get("変更後の所持金", "")
 
                 if not user_id or not balance_text:
                     continue
@@ -1188,9 +1176,7 @@ async def coinrecovery(
 
                 try:
                     user_id = str(int(user_id))
-                    amount = int(
-                        match.group(1).replace(",", "")
-                    )
+                    amount = int(match.group(1).replace(",", ""))
                 except ValueError:
                     continue
 
@@ -1202,8 +1188,7 @@ async def coinrecovery(
 
     except discord.Forbidden:
         await interaction.followup.send(
-            "ログを読み取れなかったよ。"
-            "Botの権限を確認してね。",
+            "ログを読み取れなかったよ。Botの権限を確認してね。",
             ephemeral=True,
         )
         return
@@ -1223,8 +1208,7 @@ async def coinrecovery(
         traceback.print_exc()
 
         await interaction.followup.send(
-            "⚠️ 復元中に予期しないエラーが起きたよ。"
-            "Renderのログを確認してね。",
+            "⚠️ 復元中に予期しないエラーが起きたよ。",
             ephemeral=True,
         )
         return
@@ -1245,8 +1229,7 @@ async def coinrecovery(
         traceback.print_exc()
 
         await interaction.followup.send(
-            "⚠️ 残高の保存に失敗したよ。"
-            "Renderのログを確認してね。",
+            "⚠️ 残高の保存に失敗したよ。",
             ephemeral=True,
         )
         return

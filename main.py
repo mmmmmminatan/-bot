@@ -32,7 +32,7 @@ VALID_LINES = (1, 2, 3, 5)
 MAX_BET = 1_000_000_000
 MAX_LOGS = 10000
 
-# 内部シンボルと通常表示
+# 内部シンボルは固定。表示する絵文字はモードで切り替える。
 SYMBOLS = {
     "cherry": {
         "unicode": "🍒",
@@ -61,6 +61,8 @@ SYMBOLS = {
     },
 }
 
+SYMBOL_KEYS = list(SYMBOLS.keys())
+
 LANE_PATTERNS = [
     ["cherry", "lemon", "star", "bell", "seven"],
     ["star", "cherry", "seven", "lemon", "bell"],
@@ -73,16 +75,13 @@ LANE_PATTERNS = [
 
 app = Flask(__name__)
 
-
 @app.route("/")
 def home():
     return "Bot is alive!", 200
 
-
 @app.route("/health")
 def health():
     return "OK", 200
-
 
 def run_web():
     port = int(os.getenv("PORT", "8080"))
@@ -91,7 +90,6 @@ def run_web():
         port=port,
         use_reloader=False,
     )
-
 
 # ==================================================
 # JSON読み書き
@@ -119,7 +117,6 @@ def load_json(path, default):
         traceback.print_exc()
         return default.copy()
 
-
 def save_json(path, data):
     temp = path.with_suffix(".tmp")
 
@@ -136,7 +133,6 @@ def save_json(path, data):
         traceback.print_exc()
         return False
 
-
 balances = load_json(DATA_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
 slot_logs = load_json(LOGS_FILE, [])
@@ -144,30 +140,23 @@ log_configs = load_json(CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 settings = load_json(SETTINGS_FILE, {})
 
-
 def save_balances():
     return save_json(DATA_FILE, balances)
-
 
 def save_positions():
     return save_json(POSITIONS_FILE, slot_positions)
 
-
 def save_logs():
     return save_json(LOGS_FILE, slot_logs)
-
 
 def save_configs():
     return save_json(CONFIG_FILE, log_configs)
 
-
 def save_coin_logs():
     return save_json(COIN_LOGS_FILE, coin_logs)
 
-
 def save_settings():
     return save_json(SETTINGS_FILE, settings)
-
 
 # ==================================================
 # サーバーごとの設定
@@ -186,6 +175,7 @@ def get_guild_settings(guild_id):
     config.setdefault("max_bet", MAX_BET)
     config.setdefault("currency_name", "コイン")
 
+    # 不正な設定値を初期値に戻す
     if config["slot_mode"] not in ("stamp", "emoji"):
         config["slot_mode"] = "stamp"
 
@@ -205,7 +195,6 @@ def get_guild_settings(guild_id):
 
     return config
 
-
 # ==================================================
 # 所持金
 # ==================================================
@@ -219,13 +208,11 @@ def get_balance(user_id):
 
     return int(balances[key])
 
-
 def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
 
     if not save_balances():
         raise OSError("balances.json の保存に失敗したよ")
-
 
 def is_owner(member):
     return any(
@@ -233,14 +220,12 @@ def is_owner(member):
         for role in getattr(member, "roles", [])
     )
 
-
 # ==================================================
 # Discord Bot
 # ==================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
-
 
 class CasinoBot(commands.Bot):
     async def setup_hook(self):
@@ -258,14 +243,12 @@ class CasinoBot(commands.Bot):
             traceback.print_exc()
             raise
 
-
 bot = CasinoBot(
     command_prefix=".",
     intents=intents,
     help_command=None,
     case_insensitive=True,
 )
-
 
 @bot.event
 async def on_ready():
@@ -277,16 +260,13 @@ async def on_ready():
     print(f"[READY] Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"[READY] Connected to {len(bot.guilds)} server(s)")
 
-
 @bot.event
 async def on_disconnect():
     print("[DISCONNECT] Discord connection disconnected")
 
-
 @bot.event
 async def on_resumed():
     print("[RESUMED] Discord connection resumed")
-
 
 # ==================================================
 # エラー処理
@@ -315,10 +295,11 @@ async def on_command_error(ctx, error):
     )
 
     try:
-        await ctx.send(f"⚠️ 実行エラー：{type(original).__name__}")
+        await ctx.send(
+            f"⚠️ 実行エラー：{type(original).__name__}"
+        )
     except discord.HTTPException:
         pass
-
 
 @bot.tree.error
 async def slash_command_error(interaction, error):
@@ -342,7 +323,10 @@ async def slash_command_error(interaction, error):
 
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(
+                message,
+                ephemeral=True,
+            )
         else:
             await interaction.response.send_message(
                 message,
@@ -351,7 +335,6 @@ async def slash_command_error(interaction, error):
     except discord.HTTPException:
         traceback.print_exc()
 
-
 # ==================================================
 # スロット絵文字表示
 # ==================================================
@@ -359,41 +342,38 @@ async def slash_command_error(interaction, error):
 def get_symbol_text(guild, symbol_key):
     symbol = SYMBOLS[symbol_key]
 
-    # 7はスタンプモードなら必ずUnicodeで表示する
-    if symbol_key == "seven":
-        if guild is not None:
-            config = get_guild_settings(guild.id)
+    if guild is None:
+        return symbol["unicode"]
 
-            if config["slot_mode"] == "emoji":
-                custom_emoji = discord.utils.get(
-                    guild.emojis,
-                    name="emoji_15",
-                )
-                if custom_emoji is not None:
-                    return str(custom_emoji)
+    config = get_guild_settings(guild.id)
 
-        return "7️⃣"
+    if config["slot_mode"] == "emoji":
+        custom_name = symbol["custom"]
 
-    # その他の絵柄は従来どおり
-    if guild is not None:
-        config = get_guild_settings(guild.id)
+        custom_emoji = discord.utils.get(
+            guild.emojis,
+            name=custom_name,
+        )
 
-        if config["slot_mode"] == "emoji":
-            custom_emoji = discord.utils.get(
-                guild.emojis,
-                name=symbol["custom"],
-            )
-            if custom_emoji is not None:
-                return str(custom_emoji)
+        if custom_emoji is not None:
+            return str(custom_emoji)
+
+        # 絵文字が見つからない場合は通常の絵文字
+        print(
+            f"[EMOJI WARNING] {custom_name} not found "
+            f"in guild {guild.id}; using Unicode"
+        )
 
     return symbol["unicode"]
 
 def render_grid(guild, grid):
     return "\n".join(
-        " | ".join(get_symbol_text(guild, symbol) for symbol in row)
+        " | ".join(
+            get_symbol_text(guild, symbol)
+            for symbol in row
+        )
         for row in grid
     )
-
 
 # ==================================================
 # ログ送信先
@@ -460,7 +440,6 @@ async def get_log_channel(guild):
 
     return None
 
-
 # ==================================================
 # スロット履歴
 # ==================================================
@@ -474,15 +453,12 @@ def record_slot(data):
     if not save_logs():
         raise OSError("slot_logs.json の保存に失敗したよ")
 
-
 async def send_slot_log(guild, data):
     channel = await get_log_channel(guild)
 
     if channel is None:
         print("[SLOT LOG] No available log channel")
         return False
-
-    currency = get_guild_settings(guild.id)["currency_name"]
 
     embed = discord.Embed(
         title="🎰 スロットログ",
@@ -507,27 +483,27 @@ async def send_slot_log(guild, data):
     )
     embed.add_field(
         name="合計賭け金",
-        value=f"{data['total_bet']:,}{currency}",
+        value=f"{data['total_bet']:,}コイン",
         inline=True,
     )
     embed.add_field(
         name="配当",
-        value=f"{data['winnings']:,}{currency}",
+        value=f"{data['winnings']:,}コイン",
         inline=True,
     )
     embed.add_field(
         name="収支",
-        value=f"{data['profit']:+,}{currency}",
+        value=f"{data['profit']:+,}コイン",
         inline=True,
     )
     embed.add_field(
         name="回転前の所持金",
-        value=f"{data['before']:,}{currency}",
+        value=f"{data['before']:,}コイン",
         inline=True,
     )
     embed.add_field(
         name="回転後の所持金",
-        value=f"{data['after']:,}{currency}",
+        value=f"{data['after']:,}コイン",
         inline=True,
     )
 
@@ -552,7 +528,6 @@ async def send_slot_log(guild, data):
         traceback.print_exc()
 
     return False
-
 
 # ==================================================
 # コイン増減ログ
@@ -604,14 +579,13 @@ async def send_coin_log(
             )
             return False
 
-        currency = (
-            get_guild_settings(guild.id)["currency_name"]
-            if guild else "コイン"
-        )
-
         embed = discord.Embed(
             title="💰 コイン増減ログ",
-            color=discord.Color.green() if change > 0 else discord.Color.red(),
+            color=(
+                discord.Color.green()
+                if change > 0
+                else discord.Color.red()
+            ),
             timestamp=discord.utils.utcnow(),
         )
 
@@ -628,17 +602,17 @@ async def send_coin_log(
         )
         embed.add_field(
             name="変更前の所持金",
-            value=f"{before:,} {currency}",
+            value=f"{before:,} コイン",
             inline=True,
         )
         embed.add_field(
             name="増減",
-            value=f"{change:+,} {currency}",
+            value=f"{change:+,} コイン",
             inline=True,
         )
         embed.add_field(
             name="変更後の所持金",
-            value=f"{after:,} {currency}",
+            value=f"{after:,} コイン",
             inline=True,
         )
 
@@ -654,12 +628,14 @@ async def send_coin_log(
     except discord.Forbidden:
         print("[COIN LOG ERROR] Forbidden: check channel permissions")
         traceback.print_exc()
+
     except discord.HTTPException as error:
         print(
             f"[COIN LOG ERROR] HTTPException "
             f"status={error.status} code={error.code}"
         )
         traceback.print_exc()
+
     except Exception as error:
         print(
             f"[COIN LOG ERROR] Unexpected "
@@ -668,7 +644,6 @@ async def send_coin_log(
         traceback.print_exc()
 
     return False
-
 
 # ==================================================
 # .balance
@@ -682,18 +657,18 @@ async def balance(ctx):
         get_guild_settings(ctx.guild.id)
         if ctx.guild else {"currency_name": "コイン"}
     )
+    currency = config["currency_name"]
 
     embed = discord.Embed(
         title="💰 所持金",
         description=(
             f"{ctx.author.mention} の所持金："
-            f"**{amount:,} {config['currency_name']}**"
+            f"**{amount:,} {currency}**"
         ),
         color=discord.Color.gold(),
     )
 
     await ctx.send(embed=embed)
-
 
 # ==================================================
 # スロット計算
@@ -714,13 +689,14 @@ def make_grid(positions):
 
     return grid
 
-
 def grid_text(grid, guild=None):
     return "\n".join(
-        " | ".join(get_symbol_text(guild, symbol) for symbol in row)
+        " | ".join(
+            get_symbol_text(guild, symbol)
+            for symbol in row
+        )
         for row in grid
     )
-
 
 def get_paylines(grid, line_count):
     lines = [grid[1]]
@@ -732,11 +708,14 @@ def get_paylines(grid, line_count):
         lines.append(grid[2])
 
     if line_count >= 5:
-        lines.append([grid[0][0], grid[1][1], grid[2][2]])
-        lines.append([grid[2][0], grid[1][1], grid[0][2]])
+        lines.append(
+            [grid[0][0], grid[1][1], grid[2][2]]
+        )
+        lines.append(
+            [grid[2][0], grid[1][1], grid[0][2]]
+        )
 
     return lines
-
 
 # ==================================================
 # .slot 賭け金 [ライン数]
@@ -749,7 +728,6 @@ async def slot(ctx, bet: int, lines: int = 1):
         return
 
     config = get_guild_settings(ctx.guild.id)
-    currency = config["currency_name"]
 
     if not config["slot_enabled"]:
         await ctx.send("⚠️ 現在スロットは停止中だよ。")
@@ -770,7 +748,7 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     if total_bet > before:
         await ctx.send(
-            f"💸 {currency}が足りないよ！\n"
+            f"💸 コインが足りないよ！\n"
             f"所持金：{before:,}\n"
             f"必要額：{total_bet:,}"
         )
@@ -799,7 +777,7 @@ async def slot(ctx, bet: int, lines: int = 1):
             hits.append(
                 f"ライン{index}："
                 f"{get_symbol_text(ctx.guild, symbol)} ×3 "
-                f"→ +{prize:,}{currency}"
+                f"→ +{prize:,}{config['currency_name']}"
             )
 
     after = before - total_bet + winnings
@@ -841,18 +819,21 @@ async def slot(ctx, bet: int, lines: int = 1):
         description=(
             f"{rendered_grid}\n\n"
             f"賭け金：{bet:,} × {lines}ライン\n"
-            f"合計賭け金：{total_bet:,}{currency}\n"
-            f"配当：{winnings:,}{currency}\n"
-            f"収支：{winnings - total_bet:+,}{currency}\n"
-            f"回転前：{before:,}{currency}\n"
-            f"回転後：{after:,}{currency}"
+            f"合計賭け金：{total_bet:,}{config['currency_name']}\n"
+            f"配当：{winnings:,}{config['currency_name']}\n"
+            f"収支：{winnings - total_bet:+,}{config['currency_name']}\n"
+            f"回転前：{before:,}{config['currency_name']}\n"
+            f"回転後：{after:,}{config['currency_name']}"
         ),
         color=discord.Color.gold(),
     )
 
     embed.add_field(
         name="🎉 当たり！" if hits else "結果",
-        value="\n".join(hits) if hits else "今回はハズレ！また挑戦してね。",
+        value=(
+            "\n".join(hits)
+            if hits else "今回はハズレ！また挑戦してね。"
+        ),
         inline=False,
     )
 
@@ -863,7 +844,6 @@ async def slot(ctx, bet: int, lines: int = 1):
     except Exception:
         print("[SLOT LOG UNEXPECTED ERROR]")
         traceback.print_exc()
-
 
 # ==================================================
 # .Payment @ユーザー 金額
@@ -898,7 +878,9 @@ async def payment(ctx, member: discord.Member, amount: int):
     after = before + amount
 
     if after < 0:
-        await ctx.send("❌ 所持金がマイナスになるため変更できないよ。")
+        await ctx.send(
+            "❌ 所持金がマイナスになるため変更できないよ。"
+        )
         return
 
     try:
@@ -962,7 +944,6 @@ async def payment(ctx, member: discord.Member, amount: int):
         f"log_sent={log_sent}"
     )
 
-
 # ==================================================
 # .Mbot help
 # ==================================================
@@ -973,7 +954,6 @@ async def mbot(ctx, *, args=""):
         await ctx.send("ウンコブリー")
     else:
         await ctx.send("使い方：`.Mbot help`")
-
 
 # ==================================================
 # .help
@@ -995,9 +975,8 @@ async def help_command(ctx):
         "`/coinrecovery` 残高を復元"
     )
 
-
 # ==================================================
-# /setting：モーダル
+# /setting：設定用モーダル
 # ==================================================
 
 class MaxBetModal(discord.ui.Modal, title="最大賭け金の設定"):
@@ -1047,7 +1026,6 @@ class MaxBetModal(discord.ui.Modal, title="最大賭け金の設定"):
             ephemeral=True,
         )
 
-
 class CurrencyModal(discord.ui.Modal, title="通貨名の設定"):
     currency_name = discord.ui.TextInput(
         label="通貨名",
@@ -1088,7 +1066,6 @@ class CurrencyModal(discord.ui.Modal, title="通貨名の設定"):
             ephemeral=True,
         )
 
-
 # ==================================================
 # /setting：モード選択
 # ==================================================
@@ -1099,13 +1076,13 @@ class SlotModeSelect(discord.ui.Select):
             discord.SelectOption(
                 label="スタンプモード",
                 value="stamp",
-                description="7️⃣を使う",
+                description="通常の絵文字を使う",
                 emoji="7️⃣",
             ),
             discord.SelectOption(
-                label="絵文字モード",
+                label="サーバー絵文字モード",
                 value="emoji",
-                description="7️⃣の絵柄にemoji_15を使う",
+                description="emoji_12〜emoji_16を使う",
                 emoji="🍒",
             ),
         ]
@@ -1137,16 +1114,15 @@ class SlotModeSelect(discord.ui.Select):
             return
 
         mode_name = (
-            "スタンプモード（7️⃣）"
+            "スタンプモード"
             if self.values[0] == "stamp"
-            else "絵文字モード（emoji_15）"
+            else "サーバー絵文字モード"
         )
 
         await interaction.response.send_message(
             f"✅ 表示モードを **{mode_name}** に変更したよ！",
             ephemeral=True,
         )
-
 
 class SettingView(discord.ui.View):
     def __init__(self):
@@ -1224,7 +1200,6 @@ class SettingView(discord.ui.View):
     ):
         await interaction.response.send_modal(CurrencyModal())
 
-
 @bot.tree.command(
     name="setting",
     description="Botの設定パネルを開く",
@@ -1247,10 +1222,11 @@ async def setting_command(interaction: discord.Interaction):
     config = get_guild_settings(interaction.guild.id)
 
     mode_name = (
-        "スタンプモード（7️⃣）"
+        "スタンプモード"
         if config["slot_mode"] == "stamp"
-        else "絵文字モード（emoji_15）"
+        else "サーバー絵文字モード"
     )
+
     slot_state = "ON" if config["slot_enabled"] else "OFF"
 
     embed = discord.Embed(
@@ -1270,7 +1246,6 @@ async def setting_command(interaction: discord.Interaction):
         view=SettingView(),
         ephemeral=True,
     )
-
 
 # ==================================================
 # /log panel：チャンネル選択
@@ -1381,18 +1356,15 @@ class LogChannelSelect(discord.ui.ChannelSelect):
             except Exception:
                 traceback.print_exc()
 
-
 class LogPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
         self.add_item(LogChannelSelect())
 
-
 log_group = app_commands.Group(
     name="log",
     description="コインログの設定",
 )
-
 
 @log_group.command(
     name="panel",
@@ -1411,9 +1383,7 @@ async def log_panel(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-
 bot.tree.add_command(log_group)
-
 
 # ==================================================
 # /coinrecovery
@@ -1581,7 +1551,6 @@ async def coinrecovery(
         ephemeral=True,
     )
 
-
 # ==================================================
 # 起動
 # ==================================================
@@ -1591,7 +1560,6 @@ if not TOKEN:
         "DISCORD_TOKEN が設定されていないよ。"
         "RenderのEnvironmentを確認してね。"
     )
-
 
 if __name__ == "__main__":
     Thread(

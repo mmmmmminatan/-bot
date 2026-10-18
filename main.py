@@ -157,9 +157,26 @@ async def on_resumed():
 # エラー処理
 # =========================
 
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
+        return
+
+    if isinstance(error, commands.CommandInvokeError):
+        original = error.original
+
+        print("===== COMMAND INVOKE ERROR =====")
+        traceback.print_exception(
+            type(original),
+            original,
+            original.__traceback__,
+        )
+
+        await ctx.send(
+            f"⚠️ 実行エラー：`{type(original).__name__}`\n"
+            f"詳細：`{str(original)[:500]}`"
+        )
         return
 
     if isinstance(error, commands.MissingRequiredArgument):
@@ -167,29 +184,19 @@ async def on_command_error(ctx, error):
         return
 
     if isinstance(error, commands.BadArgument):
-        await ctx.send(
-            "⚠️ 入力内容を確認してね！\n"
-            "例：`.slot 100 3`"
-        )
+        await ctx.send("⚠️ 入力内容を確認してね！")
         return
 
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send("⏳ 少し待ってから試してね。")
-        return
-
-    print("===== COMMAND ERROR =====")
+    print(f"Command error: {repr(error)}")
     traceback.print_exception(
         type(error),
         error,
         error.__traceback__,
     )
 
-    try:
-        await ctx.send(
-            f"⚠️ エラー内容：`{type(error).__name__}`"
-        )
-    except discord.HTTPException:
-        print("Could not send error message to Discord")
+    await ctx.send(
+        f"⚠️ エラー：`{type(error).__name__}`"
+    )
 
 # =========================
 # 所持金確認

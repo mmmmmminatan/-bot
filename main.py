@@ -46,7 +46,7 @@ MAX_BET = 1_000_000_000
 MAX_LOGS = 10000
 
 # ==================================================
-# Render用Webサーバー
+# Render Webサーバー
 # ==================================================
 
 app = Flask(__name__)
@@ -78,14 +78,14 @@ def load_json(path, default):
         if isinstance(data, type(default)):
             return data
 
-        print(f"Invalid data format: {path}")
+        print(f"[DATA ERROR] Invalid format: {path}")
         return default.copy()
 
     except FileNotFoundError:
         return default.copy()
 
     except json.JSONDecodeError:
-        print(f"Invalid JSON: {path}")
+        print(f"[DATA ERROR] Invalid JSON: {path}")
         return default.copy()
 
     except OSError:
@@ -95,7 +95,6 @@ def load_json(path, default):
 
 def save_json(path, data):
     temp = path.with_suffix(".tmp")
-
     temp.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -109,9 +108,6 @@ slot_logs = load_json(LOGS_FILE, [])
 log_configs = load_json(CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 
-# ==================================================
-# 所持金
-# ==================================================
 
 def save_balances():
     save_json(DATA_FILE, balances)
@@ -155,45 +151,45 @@ def set_balance(user_id, amount):
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(
+class CasinoBot(commands.Bot):
+    async def setup_hook(self):
+        print("[STARTUP] Syncing slash commands...")
+
+        try:
+            synced = await self.tree.sync()
+            print(f"[SYNC OK] Synced {len(synced)} slash commands")
+        except Exception:
+            print("[SYNC ERROR]")
+            traceback.print_exc()
+            raise
+
+
+bot = CasinoBot(
     command_prefix=".",
     intents=intents,
     help_command=None,
     case_insensitive=True,
 )
 
-_synced = False
-
 
 @bot.event
 async def on_ready():
-    global _synced
-
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Game(name=".Mbot help"),
     )
-
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"Connected to {len(bot.guilds)} server(s)")
-
-    if not _synced:
-        try:
-            synced = await bot.tree.sync()
-            print(f"Synced {len(synced)} slash command(s)")
-            _synced = True
-        except Exception:
-            traceback.print_exc()
+    print(f"[READY] Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"[READY] Connected to {len(bot.guilds)} server(s)")
 
 
 @bot.event
 async def on_disconnect():
-    print("Discord connection disconnected")
+    print("[DISCONNECT] Discord connection disconnected")
 
 
 @bot.event
 async def on_resumed():
-    print("Discord connection resumed")
+    print("[RESUMED] Discord connection resumed")
 
 
 # ==================================================
@@ -213,35 +209,18 @@ async def on_command_error(ctx, error):
         await ctx.send("⚠️ 入力内容を確認してね！")
         return
 
-    if isinstance(error, commands.CommandInvokeError):
-        original = error.original
+    original = getattr(error, "original", error)
 
-        print("===== COMMAND INVOKE ERROR =====")
-        traceback.print_exception(
-            type(original),
-            original,
-            original.__traceback__,
-        )
-
-        try:
-            await ctx.send(
-                f"⚠️ 実行エラー：`{type(original).__name__}`\n"
-                f"詳細：`{str(original)[:400]}`"
-            )
-        except discord.HTTPException:
-            pass
-        return
-
-    print(f"Command error: {repr(error)}")
+    print("[PREFIX COMMAND ERROR]")
     traceback.print_exception(
-        type(error),
-        error,
-        error.__traceback__,
+        type(original),
+        original,
+        original.__traceback__,
     )
 
     try:
         await ctx.send(
-            f"⚠️ エラー：`{type(error).__name__}`"
+            f"⚠️ 実行エラー：{type(original).__name__}"
         )
     except discord.HTTPException:
         pass
@@ -249,7 +228,7 @@ async def on_command_error(ctx, error):
 
 @bot.tree.error
 async def slash_command_error(interaction, error):
-    print("===== SLASH COMMAND ERROR =====")
+    print("[SLASH COMMAND ERROR]")
     traceback.print_exception(
         type(error),
         error,
@@ -275,13 +254,12 @@ async def slash_command_error(interaction, error):
                 ephemeral=True,
             )
     except discord.HTTPException:
-        pass
+        traceback.print_exc()
 
 
 # ==================================================
-# Discordログ送信先
+# ログ送信先
 # ==================================================
-
 
 async def get_log_channel(guild):
     if guild is None:
@@ -291,10 +269,7 @@ async def get_log_channel(guild):
     channel_id = log_configs.get(str(guild.id))
 
     if not channel_id:
-        print(
-            f"[LOG ERROR] No log channel configured "
-            f"for guild {guild.id}"
-        )
+        print(f"[LOG ERROR] No log channel configured: {guild.id}")
         return None
 
     try:
@@ -304,37 +279,26 @@ async def get_log_channel(guild):
             channel = await bot.fetch_channel(int(channel_id))
 
         if not isinstance(channel, discord.TextChannel):
-            print(
-                f"[LOG ERROR] Invalid text channel: "
-                f"{channel_id}"
-            )
+            print("[LOG ERROR] Invalid text channel")
             return None
 
         me = guild.me
         perms = channel.permissions_for(me)
 
-        if not perms.view_channel:
-            print("[LOG ERROR] Missing View Channel permission")
+        if not (
+            perms.view_channel
+            and perms.send_messages
+            and perms.embed_links
+        ):
+            print("[LOG ERROR] Missing channel permissions")
             return None
 
-        if not perms.send_messages:
-            print("[LOG ERROR] Missing Send Messages permission")
-            return None
-
-        if not perms.embed_links:
-            print("[LOG ERROR] Missing Embed Links permission")
-            return None
-
-        print(
-            f"[LOG OK] Channel={channel.name} "
-            f"ID={channel.id}"
-        )
         return channel
 
     except discord.Forbidden:
-        print("[LOG ERROR] Discord returned 403 Forbidden")
+        print("[LOG ERROR] Forbidden")
     except discord.NotFound:
-        print("[LOG ERROR] Log channel was not found")
+        print("[LOG ERROR] Channel not found")
     except (ValueError, TypeError):
         print("[LOG ERROR] Invalid channel ID")
     except discord.HTTPException:
@@ -360,7 +324,7 @@ async def send_slot_log(guild, data):
     channel = await get_log_channel(guild)
 
     if channel is None:
-        print("Slot log channel is not configured.")
+        print("[SLOT LOG] No available log channel")
         return
 
     embed = discord.Embed(
@@ -412,8 +376,9 @@ async def send_slot_log(guild, data):
 
     try:
         await channel.send(embed=embed)
+        print("[SLOT LOG] Sent successfully")
     except discord.Forbidden:
-        print("Cannot send slot log: check channel permissions.")
+        print("[SLOT LOG ERROR] Forbidden")
     except discord.HTTPException:
         traceback.print_exc()
 
@@ -457,7 +422,7 @@ async def send_coin_log(
     channel = await get_log_channel(guild)
 
     if channel is None:
-        print("Coin log channel is not configured.")
+        print("[COIN LOG] No available log channel")
         return
 
     embed = discord.Embed(
@@ -499,8 +464,9 @@ async def send_coin_log(
 
     try:
         await channel.send(embed=embed)
+        print("[COIN LOG] Sent successfully")
     except discord.Forbidden:
-        print("Cannot send coin log: check channel permissions.")
+        print("[COIN LOG ERROR] Forbidden")
     except discord.HTTPException:
         traceback.print_exc()
 
@@ -509,19 +475,13 @@ async def send_coin_log(
 # .balance
 # ==================================================
 
-@bot.command(
-    name="balance",
-    help="自分の所持金を確認する",
-)
+@bot.command(name="balance", help="自分の所持金を確認する")
 async def balance(ctx):
     amount = get_balance(ctx.author.id)
 
     embed = discord.Embed(
         title="💰 所持金",
-        description=(
-            f"{ctx.author.mention} の所持金："
-            f"**{amount:,} コイン**"
-        ),
+        description=f"{ctx.author.mention} の所持金：**{amount:,} コイン**",
         color=discord.Color.gold(),
     )
 
@@ -540,8 +500,7 @@ def make_grid(positions):
 
         for lane in range(3):
             pattern = LANE_PATTERNS[lane]
-            center = positions[lane]
-            index = (center + row - 1) % len(pattern)
+            index = (positions[lane] + row - 1) % len(pattern)
             current_row.append(pattern[index])
 
         grid.append(current_row)
@@ -550,10 +509,7 @@ def make_grid(positions):
 
 
 def grid_text(grid):
-    return "\n".join(
-        " | ".join(row)
-        for row in grid
-    )
+    return "\n".join(" | ".join(row) for row in grid)
 
 
 def get_paylines(grid, line_count):
@@ -566,16 +522,8 @@ def get_paylines(grid, line_count):
         lines.append(grid[2])
 
     if line_count >= 5:
-        lines.append([
-            grid[0][0],
-            grid[1][1],
-            grid[2][2],
-        ])
-        lines.append([
-            grid[2][0],
-            grid[1][1],
-            grid[0][2],
-        ])
+        lines.append([grid[0][0], grid[1][1], grid[2][2]])
+        lines.append([grid[2][0], grid[1][1], grid[0][2]])
 
     return lines
 
@@ -584,21 +532,14 @@ def get_paylines(grid, line_count):
 # .slot 賭け金 [ライン数]
 # ==================================================
 
-@bot.command(
-    name="slot",
-    help="スロット。例：.slot 100 3",
-)
+@bot.command(name="slot", help="スロット。例：.slot 100 3")
 async def slot(ctx, bet: int, lines: int = 1):
     if bet <= 0 or bet > MAX_BET:
-        await ctx.send(
-            "⚠️ 賭け金は1〜1,000,000,000にしてね。"
-        )
+        await ctx.send("⚠️ 賭け金は1〜1,000,000,000にしてね。")
         return
 
     if lines not in VALID_LINES:
-        await ctx.send(
-            "⚠️ ライン数は1、2、3、5から選んでね。"
-        )
+        await ctx.send("⚠️ ライン数は1、2、3、5から選んでね。")
         return
 
     total_bet = bet * lines
@@ -607,8 +548,7 @@ async def slot(ctx, bet: int, lines: int = 1):
     if total_bet > before:
         await ctx.send(
             f"💸 コインが足りないよ！\n"
-            f"所持金：{before:,}\n"
-            f"必要額：{total_bet:,}"
+            f"所持金：{before:,}\n必要額：{total_bet:,}"
         )
         return
 
@@ -677,11 +617,7 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     embed.add_field(
         name="🎉 当たり！" if hits else "結果",
-        value=(
-            "\n".join(hits)
-            if hits
-            else "今回はハズレ！また挑戦してね。"
-        ),
+        value="\n".join(hits) if hits else "今回はハズレ！また挑戦してね。",
         inline=False,
     )
 
@@ -695,13 +631,9 @@ async def slot(ctx, bet: int, lines: int = 1):
 
 # ==================================================
 # .Payment @ユーザー 金額
-# 正の数で追加、負の数で減額
 # ==================================================
 
-@bot.command(
-    name="Payment",
-    help="ownerロール専用。コインを追加・減額する",
-)
+@bot.command(name="Payment", help="ownerロール専用。コインを追加・減額する")
 async def payment(ctx, member: discord.Member, amount: int):
     is_owner = any(
         role.name.lower() == OWNER_ROLE_NAME.lower()
@@ -717,18 +649,14 @@ async def payment(ctx, member: discord.Member, amount: int):
         return
 
     if amount == 0 or abs(amount) > MAX_BET:
-        await ctx.send(
-            "⚠️ 金額は ±1〜1,000,000,000 にしてね。"
-        )
+        await ctx.send("⚠️ 金額は ±1〜1,000,000,000 にしてね。")
         return
 
     before = get_balance(member.id)
     after = before + amount
 
     if after < 0:
-        await ctx.send(
-            "❌ 所持金がマイナスになるため変更できないよ。"
-        )
+        await ctx.send("❌ 所持金がマイナスになるため変更できないよ。")
         return
 
     set_balance(member.id, after)
@@ -810,11 +738,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
         selected = self.values[0]
         perms = selected.permissions_for(interaction.guild.me)
 
-        if not (
-            perms.view_channel
-            and perms.send_messages
-            and perms.embed_links
-        ):
+        if not (perms.view_channel and perms.send_messages and perms.embed_links):
             await interaction.response.send_message(
                 "Botにチャンネル閲覧・メッセージ送信・埋め込み権限が必要だよ。",
                 ephemeral=True,
@@ -851,10 +775,7 @@ log_group = app_commands.Group(
 )
 
 
-@log_group.command(
-    name="panel",
-    description="ログ送信先を設定する",
-)
+@log_group.command(name="panel", description="ログ送信先を設定する")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def log_panel(interaction: discord.Interaction):
     await interaction.response.send_message(
@@ -869,31 +790,19 @@ bot.tree.add_command(log_group)
 
 # ==================================================
 # /coinrecovery
-# Discordのログ履歴から全員の残高を復元
 # ==================================================
 
 @bot.tree.command(
     name="coinrecovery",
     description="ログチャンネルから全員の残高を復元",
 )
-@app_commands.describe(
-    channel="コインログが保存されているチャンネル",
-)
+@app_commands.describe(channel="コインログが保存されているチャンネル")
 @app_commands.checks.has_permissions(administrator=True)
-async def coinrecovery(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-):
-    await interaction.response.defer(
-        ephemeral=True,
-        thinking=True,
-    )
+async def coinrecovery(interaction: discord.Interaction, channel: discord.TextChannel):
+    await interaction.response.defer(ephemeral=True, thinking=True)
 
     if interaction.guild is None:
-        await interaction.followup.send(
-            "サーバー内で実行してね。",
-            ephemeral=True,
-        )
+        await interaction.followup.send("サーバー内で実行してね。", ephemeral=True)
         return
 
     perms = channel.permissions_for(interaction.guild.me)
@@ -905,49 +814,36 @@ async def coinrecovery(
         )
         return
 
-    # ユーザーIDごとの最後の記録
     latest = {}
     scanned = 0
 
     try:
-        async for message in channel.history(
-            limit=None,
-            oldest_first=True,
-        ):
+        async for message in channel.history(limit=None, oldest_first=True):
             if bot.user is None or message.author.id != bot.user.id:
                 continue
 
             for embed in message.embeds:
                 title = embed.title or ""
-                fields = {
-                    field.name: field.value
-                    for field in embed.fields
-                }
+                fields = {field.name: field.value for field in embed.fields}
 
                 user_id = None
                 balance_text = None
 
                 if title == "🎰 スロットログ":
                     player_text = fields.get("プレイヤー", "")
-                    match = re.search(
-                        r"\(`?(\d{15,25})`?\)",
-                        player_text,
-                    )
-
+                    match = re.search(r"\(`?(\d{15,25})`?\)", player_text)
                     if match:
                         user_id = match.group(1)
 
-                    balance_text = fields.get(
-                        "回転後の所持金",
-                        "",
-                    )
+                    balance_text = fields.get("回転後の所持金", "")
 
                 elif title == "💰 コイン増減ログ":
-                    user_id = fields.get("ユーザーID", "").strip()
-                    balance_text = fields.get(
-                        "変更後の所持金",
-                        "",
-                    )
+                    player_text = fields.get("対象者", "")
+                    match = re.search(r"\(`?(\d{15,25})`?\)", player_text)
+                    if match:
+                        user_id = match.group(1)
+
+                    balance_text = fields.get("変更後の所持金", "")
 
                 if not user_id or not balance_text:
                     continue
@@ -1009,15 +905,10 @@ async def coinrecovery(
 
 if not TOKEN:
     raise RuntimeError(
-        "DISCORD_TOKEN が設定されていないよ。"
-        "RenderのEnvironmentを確認してね。"
+        "DISCORD_TOKEN が設定されていないよ。RenderのEnvironmentを確認してね。"
     )
 
 
 if __name__ == "__main__":
-    Thread(
-        target=run_web,
-        daemon=True,
-    ).start()
-
+    Thread(target=run_web, daemon=True).start()
     bot.run(TOKEN)

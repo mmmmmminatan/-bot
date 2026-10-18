@@ -1,3 +1,4 @@
+
 import asyncio
 import json
 import os
@@ -26,6 +27,7 @@ LOGS_FILE = Path("slot_logs.json")
 CONFIG_FILE = Path("log_config.json")
 COIN_LOGS_FILE = Path("coin_logs.json")
 
+# 各レーンの絵柄は固定
 LANE_PATTERNS = [
     ["🍒", "🍋", "⭐", "🔔", "7️⃣"],
     ["⭐", "🍒", "7️⃣", "🍋", "🔔"],
@@ -40,7 +42,6 @@ PAYOUTS = {
     "7️⃣": 50,
 }
 
-VALID_LINES = (1, 2, 3, 5)
 MAX_BET = 1_000_000_000
 MAX_LOGS = 10000
 
@@ -188,8 +189,7 @@ async def on_ready():
 
 
 # ==================================================
-# メッセージ受信確認・コマンド実行
-# ★ 今回の重要な修正
+# メッセージ受信・コマンド実行
 # ==================================================
 
 @bot.event
@@ -209,7 +209,6 @@ async def on_message(message):
             f"channel={message.channel.id}"
         )
 
-    # これがないと通常の .slot などが動かなくなる
     await bot.process_commands(message)
 
 
@@ -233,11 +232,14 @@ async def on_command_error(ctx, error):
         return
 
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("⚠️ 必要な情報が足りないよ！")
+        await ctx.send(
+            "⚠️ 賭け金などの必要な情報を入力してね。\n"
+            "例：`.slot 100`"
+        )
         return
 
     if isinstance(error, commands.BadArgument):
-        await ctx.send("⚠️ 入力内容を確認してね！")
+        await ctx.send("⚠️ 数字で入力してね。例：`.slot 100`")
         return
 
     original = getattr(error, "original", error)
@@ -399,7 +401,7 @@ async def send_slot_log(guild, data):
 
     embed.add_field(
         name="賭け金",
-        value=f"{data['bet']:,} × {data['lines']}ライン",
+        value=f"{data['bet']:,}",
         inline=True,
     )
 
@@ -641,49 +643,28 @@ def grid_text(grid):
     return "\n".join(" | ".join(row) for row in grid)
 
 
-def get_paylines(grid, line_count):
-    lines = [grid[1]]
-
-    if line_count >= 2:
-        lines.append(grid[0])
-
-    if line_count >= 3:
-        lines.append(grid[2])
-
-    if line_count >= 5:
-        lines.append(
-            [grid[0][0], grid[1][1], grid[2][2]]
-        )
-
-        lines.append(
-            [grid[2][0], grid[1][1], grid[0][2]]
-        )
-
-    return lines
+def get_paylines(grid):
+    # 中央の横1ラインのみ
+    return [grid[1]]
 
 
 # ==================================================
-# .slot 賭け金 [ライン数]（全員使用可能）
+# .slot 賭け金（全員使用可能・1ライン固定）
 # ==================================================
 
 @bot.command(
     name="slot",
-    help="スロット。例：.slot 100 3",
+    help="スロット。例：.slot 100",
 )
-async def slot(ctx, bet: int, lines: int = 1):
+async def slot(ctx, bet: int):
     if bet <= 0 or bet > MAX_BET:
         await ctx.send(
             "⚠️ 賭け金は1〜1,000,000,000にしてね。"
         )
         return
 
-    if lines not in VALID_LINES:
-        await ctx.send(
-            "⚠️ ライン数は1、2、3、5から選んでね。"
-        )
-        return
-
-    total_bet = bet * lines
+    lines = 1
+    total_bet = bet
     before = get_balance(ctx.author.id)
 
     if total_bet > before:
@@ -703,7 +684,7 @@ async def slot(ctx, bet: int, lines: int = 1):
     save_positions()
 
     grid = make_grid(positions)
-    paylines = get_paylines(grid, lines)
+    paylines = get_paylines(grid)
 
     winnings = 0
     hits = []
@@ -749,7 +730,7 @@ async def slot(ctx, bet: int, lines: int = 1):
         title="🎰 スロット結果",
         description=(
             f"```text\n{rendered_grid}\n```\n"
-            f"賭け金：{bet:,} × {lines}ライン\n"
+            f"賭け金：{bet:,}\n"
             f"合計賭け金：{total_bet:,}コイン\n"
             f"配当：{winnings:,}コイン\n"
             f"収支：{winnings - total_bet:+,}コイン\n"
@@ -911,9 +892,7 @@ async def help_command(ctx):
     await ctx.send(
         "📘 コマンド一覧\n"
         "`.balance` 所持金確認\n"
-        "`.slot 100` 1ラインスロット\n"
-        "`.slot 100 3` 3ラインスロット\n"
-        "`.slot 100 5` 5ラインスロット\n"
+        "`.slot 100` スロット（中央1ライン）\n"
         "`.Payment @ユーザー 100` コイン追加（ownerのみ）\n"
         "`.Payment @ユーザー -100` コイン減額（ownerのみ）\n"
         "`.Mbot help` ウンコブリー\n"

@@ -145,11 +145,12 @@ def set_balance(user_id, amount):
 
 
 # ==================================================
-# Discord Bot
+# Discord Bot・スラッシュコマンド同期
 # ==================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
+
 
 class CasinoBot(commands.Bot):
     async def setup_hook(self):
@@ -157,7 +158,12 @@ class CasinoBot(commands.Bot):
 
         try:
             synced = await self.tree.sync()
+
             print(f"[SYNC OK] Synced {len(synced)} slash commands")
+
+            for command in synced:
+                print(f"[SYNC COMMAND] /{command.name}")
+
         except Exception:
             print("[SYNC ERROR]")
             traceback.print_exc()
@@ -178,6 +184,7 @@ async def on_ready():
         status=discord.Status.online,
         activity=discord.Game(name=".Mbot help"),
     )
+
     print(f"[READY] Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"[READY] Connected to {len(bot.guilds)} server(s)")
 
@@ -228,7 +235,11 @@ async def on_command_error(ctx, error):
 
 @bot.tree.error
 async def slash_command_error(interaction, error):
-    print("[SLASH COMMAND ERROR]")
+    print(
+        "[SLASH COMMAND ERROR]",
+        getattr(interaction.command, "qualified_name", "unknown"),
+    )
+
     traceback.print_exception(
         type(error),
         error,
@@ -283,6 +294,10 @@ async def get_log_channel(guild):
             return None
 
         me = guild.me
+        if me is None:
+            print("[LOG ERROR] Bot member unavailable")
+            return None
+
         perms = channel.permissions_for(me)
 
         if not (
@@ -728,39 +743,74 @@ class LogChannelSelect(discord.ui.ChannelSelect):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
-            return
-
-        selected = self.values[0]
-        perms = selected.permissions_for(interaction.guild.me)
-
-        if not (perms.view_channel and perms.send_messages and perms.embed_links):
-            await interaction.response.send_message(
-                "Botにチャンネル閲覧・メッセージ送信・埋め込み権限が必要だよ。",
-                ephemeral=True,
-            )
-            return
-
-        log_configs[str(interaction.guild.id)] = selected.id
+        print("[DEBUG] LogChannelSelect callback received")
 
         try:
-            save_configs()
-        except OSError:
-            traceback.print_exc()
+            if interaction.guild is None:
+                await interaction.response.send_message(
+                    "サーバー内で使ってね。",
+                    ephemeral=True,
+                )
+                return
+
+            selected = self.values[0]
+            me = interaction.guild.me
+
+            if me is None:
+                await interaction.response.send_message(
+                    "Botのサーバー情報を取得できなかったよ。",
+                    ephemeral=True,
+                )
+                return
+
+            perms = selected.permissions_for(me)
+
+            if not (
+                perms.view_channel
+                and perms.send_messages
+                and perms.embed_links
+            ):
+                await interaction.response.send_message(
+                    "Botにチャンネル閲覧・メッセージ送信・埋め込み権限が必要だよ。",
+                    ephemeral=True,
+                )
+                return
+
+            log_configs[str(interaction.guild.id)] = selected.id
+
+            try:
+                save_configs()
+            except OSError:
+                traceback.print_exc()
+                await interaction.response.send_message(
+                    "⚠️ 設定保存に失敗したよ。",
+                    ephemeral=True,
+                )
+                return
+
             await interaction.response.send_message(
-                "⚠️ 設定保存に失敗したよ。",
+                f"✅ ログ送信先を {selected.mention} に設定したよ！",
                 ephemeral=True,
             )
-            return
+            print("[DEBUG] Log channel saved successfully")
 
-        await interaction.response.send_message(
-            f"✅ ログ送信先を {selected.mention} に設定したよ！",
-            ephemeral=True,
-        )
+        except Exception:
+            print("[LOG SELECT ERROR]")
+            traceback.print_exc()
+
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        "⚠️ チャンネル設定中にエラーが起きたよ。",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.response.send_message(
+                        "⚠️ チャンネル設定中にエラーが起きたよ。",
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                traceback.print_exc()
 
 
 class LogPanelView(discord.ui.View):
@@ -778,11 +828,43 @@ log_group = app_commands.Group(
 @log_group.command(name="panel", description="ログ送信先を設定する")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def log_panel(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "ログを送信するチャンネルを選択してね。",
-        view=LogPanelView(),
-        ephemeral=True,
+    print(
+        f"[DEBUG] /log panel received "
+        f"user={interaction.user.id} "
+        f"guild={interaction.guild_id}"
     )
+
+    try:
+        # 最初に応答を確保し、3秒の応答期限切れを防ぐ
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        print("[DEBUG] /log panel deferred")
+
+        await interaction.followup.send(
+            "ログを送信するチャンネルを選択してね。",
+            view=LogPanelView(),
+            ephemeral=True,
+        )
+
+        print("[DEBUG] /log panel response sent")
+
+    except Exception:
+        print("[LOG PANEL ERROR]")
+        traceback.print_exc()
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "⚠️ パネル表示中にエラーが起きたよ。Renderのログを確認してね。",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "⚠️ パネル表示中にエラーが起きたよ。Renderのログを確認してね。",
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            traceback.print_exc()
 
 
 bot.tree.add_command(log_group)
@@ -798,11 +880,23 @@ bot.tree.add_command(log_group)
 )
 @app_commands.describe(channel="コインログが保存されているチャンネル")
 @app_commands.checks.has_permissions(administrator=True)
-async def coinrecovery(interaction: discord.Interaction, channel: discord.TextChannel):
+async def coinrecovery(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+):
+    print(
+        f"[DEBUG] /coinrecovery received "
+        f"user={interaction.user.id} "
+        f"guild={interaction.guild_id}"
+    )
+
     await interaction.response.defer(ephemeral=True, thinking=True)
 
     if interaction.guild is None:
-        await interaction.followup.send("サーバー内で実行してね。", ephemeral=True)
+        await interaction.followup.send(
+            "サーバー内で実行してね。",
+            ephemeral=True,
+        )
         return
 
     perms = channel.permissions_for(interaction.guild.me)

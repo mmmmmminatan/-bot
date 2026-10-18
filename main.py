@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import os
@@ -188,6 +187,32 @@ async def on_ready():
     print(f"[READY] Connected to {len(bot.guilds)} server(s)")
 
 
+# ==================================================
+# メッセージ受信確認・コマンド実行
+# ★ 今回の重要な修正
+# ==================================================
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    content = message.content or ""
+
+    if content.startswith("."):
+        print(
+            f"[MESSAGE RECEIVED] "
+            f"user={message.author} "
+            f"user_id={message.author.id} "
+            f"content={content!r} "
+            f"guild={getattr(message.guild, 'id', None)} "
+            f"channel={message.channel.id}"
+        )
+
+    # これがないと通常の .slot などが動かなくなる
+    await bot.process_commands(message)
+
+
 @bot.event
 async def on_disconnect():
     print("[DISCONNECT] Discord connection disconnected")
@@ -298,6 +323,7 @@ async def get_log_channel(guild):
             if bot.user is None:
                 print("[LOG ERROR] Bot user unavailable")
                 return None
+
             me = await guild.fetch_member(bot.user.id)
 
         perms = channel.permissions_for(me)
@@ -364,36 +390,43 @@ async def send_slot_log(guild, data):
         value=f"<@{data['user_id']}> (`{data['user_id']}`)",
         inline=False,
     )
+
     embed.add_field(
         name="スロット結果",
         value=f"```text\n{data['grid']}\n```",
         inline=False,
     )
+
     embed.add_field(
         name="賭け金",
         value=f"{data['bet']:,} × {data['lines']}ライン",
         inline=True,
     )
+
     embed.add_field(
         name="合計賭け金",
         value=f"{data['total_bet']:,}コイン",
         inline=True,
     )
+
     embed.add_field(
         name="配当",
         value=f"{data['winnings']:,}コイン",
         inline=True,
     )
+
     embed.add_field(
         name="収支",
         value=f"{data['profit']:+,}コイン",
         inline=True,
     )
+
     embed.add_field(
         name="回転前の所持金",
         value=f"{data['before']:,}コイン",
         inline=True,
     )
+
     embed.add_field(
         name="回転後の所持金",
         value=f"{data['after']:,}コイン",
@@ -402,20 +435,24 @@ async def send_slot_log(guild, data):
 
     try:
         await channel.send(embed=embed)
+
         print(
             f"[SLOT LOG] Sent successfully "
             f"guild={guild.id} channel={channel.id}"
         )
+
         return True
 
     except discord.Forbidden:
         print("[SLOT LOG ERROR] Forbidden: check channel permissions")
+
     except discord.HTTPException as error:
         print(
             f"[SLOT LOG ERROR] HTTPException "
             f"status={error.status} code={error.code}"
         )
         traceback.print_exc()
+
     except Exception:
         print("[SLOT LOG ERROR] Unexpected exception")
         traceback.print_exc()
@@ -492,26 +529,31 @@ async def send_coin_log(
             value=action,
             inline=True,
         )
+
         embed.add_field(
             name="対象者",
             value=f"<@{user_id}> (`{user_id}`)",
             inline=False,
         )
+
         embed.add_field(
             name="操作した人",
             value=f"<@{operator_id}> (`{operator_id}`)",
             inline=False,
         )
+
         embed.add_field(
             name="変更前の所持金",
             value=f"{before:,} コイン",
             inline=True,
         )
+
         embed.add_field(
             name="増減",
             value=f"{change:+,} コイン",
             inline=True,
         )
+
         embed.add_field(
             name="変更後の所持金",
             value=f"{after:,} コイン",
@@ -525,6 +567,7 @@ async def send_coin_log(
             f"guild={guild.id} channel={channel.id} "
             f"user={user_id} change={change}"
         )
+
         return True
 
     except discord.Forbidden:
@@ -552,7 +595,7 @@ async def send_coin_log(
 
 
 # ==================================================
-# .balance （誰でも実行可能）
+# .balance（全員使用可能）
 # ==================================================
 
 @bot.command(
@@ -608,14 +651,19 @@ def get_paylines(grid, line_count):
         lines.append(grid[2])
 
     if line_count >= 5:
-        lines.append([grid[0][0], grid[1][1], grid[2][2]])
-        lines.append([grid[2][0], grid[1][1], grid[0][2]])
+        lines.append(
+            [grid[0][0], grid[1][1], grid[2][2]]
+        )
+
+        lines.append(
+            [grid[2][0], grid[1][1], grid[0][2]]
+        )
 
     return lines
 
 
 # ==================================================
-# .slot 賭け金 [ライン数] （誰でも実行可能）
+# .slot 賭け金 [ライン数]（全員使用可能）
 # ==================================================
 
 @bot.command(
@@ -624,11 +672,15 @@ def get_paylines(grid, line_count):
 )
 async def slot(ctx, bet: int, lines: int = 1):
     if bet <= 0 or bet > MAX_BET:
-        await ctx.send("⚠️ 賭け金は1〜1,000,000,000にしてね。")
+        await ctx.send(
+            "⚠️ 賭け金は1〜1,000,000,000にしてね。"
+        )
         return
 
     if lines not in VALID_LINES:
-        await ctx.send("⚠️ ライン数は1、2、3、5から選んでね。")
+        await ctx.send(
+            "⚠️ ライン数は1、2、3、5から選んでね。"
+        )
         return
 
     total_bet = bet * lines
@@ -661,6 +713,7 @@ async def slot(ctx, bet: int, lines: int = 1):
             symbol = line[0]
             prize = bet * PAYOUTS[symbol]
             winnings += prize
+
             hits.append(
                 f"ライン{index}：{symbol} ×3 → +{prize:,}コイン"
             )
@@ -708,7 +761,11 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     embed.add_field(
         name="🎉 当たり！" if hits else "結果",
-        value="\n".join(hits) if hits else "今回はハズレ！また挑戦してね。",
+        value=(
+            "\n".join(hits)
+            if hits
+            else "今回はハズレ！また挑戦してね。"
+        ),
         inline=False,
     )
 
@@ -722,7 +779,7 @@ async def slot(ctx, bet: int, lines: int = 1):
 
 
 # ==================================================
-# .Payment @ユーザー 金額 （ownerロール専用）
+# .Payment @ユーザー 金額（ownerロール専用）
 # ==================================================
 
 @bot.command(
@@ -744,16 +801,22 @@ async def payment(ctx, member: discord.Member, amount: int):
     )
 
     if not is_owner:
-        await ctx.send("⛔ このコマンドはownerロール専用だよ。")
+        await ctx.send(
+            "⛔ このコマンドはownerロール専用だよ。"
+        )
         print("[PAYMENT] Rejected: owner role missing")
         return
 
     if member.bot:
-        await ctx.send("⚠️ Botの残高は変更できないよ。")
+        await ctx.send(
+            "⚠️ Botの残高は変更できないよ。"
+        )
         return
 
     if amount == 0 or abs(amount) > MAX_BET:
-        await ctx.send("⚠️ 金額は ±1〜1,000,000,000 にしてね。")
+        await ctx.send(
+            "⚠️ 金額は ±1〜1,000,000,000 にしてね。"
+        )
         return
 
     before = get_balance(member.id)
@@ -770,8 +833,10 @@ async def payment(ctx, member: discord.Member, amount: int):
     except Exception:
         print("[PAYMENT ERROR] Failed to save balance")
         traceback.print_exc()
+
         await ctx.send(
-            "⚠️ 残高の保存に失敗したよ。RenderのLogsを確認してね。"
+            "⚠️ 残高の保存に失敗したよ。"
+            "RenderのLogsを確認してね。"
         )
         return
 
@@ -838,7 +903,7 @@ async def mbot(ctx, *, args=""):
 
 
 # ==================================================
-# .help
+# .help（全員使用可能）
 # ==================================================
 
 @bot.command(name="help")
@@ -852,8 +917,8 @@ async def help_command(ctx):
         "`.Payment @ユーザー 100` コイン追加（ownerのみ）\n"
         "`.Payment @ユーザー -100` コイン減額（ownerのみ）\n"
         "`.Mbot help` ウンコブリー\n"
-        "`/log panel` ログ設定\n"
-        "`/coinrecovery` 全員の残高を復元"
+        "`/log panel` ログ設定（サーバー管理権限）\n"
+        "`/coinrecovery` 全員の残高を復元（管理者）"
     )
 
 
@@ -922,6 +987,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
                         ephemeral=True,
                     )
                     return
+
                 me = await guild.fetch_member(bot.user.id)
 
             perms = selected.permissions_for(me)
@@ -1147,7 +1213,10 @@ async def coinrecovery(
                     if match:
                         user_id = match.group(1)
 
-                    balance_text = fields.get("回転後の所持金", "")
+                    balance_text = fields.get(
+                        "回転後の所持金",
+                        "",
+                    )
 
                 elif title == "💰 コイン増減ログ":
                     player_text = fields.get("対象者", "")
@@ -1159,7 +1228,10 @@ async def coinrecovery(
                     if match:
                         user_id = match.group(1)
 
-                    balance_text = fields.get("変更後の所持金", "")
+                    balance_text = fields.get(
+                        "変更後の所持金",
+                        "",
+                    )
 
                 if not user_id or not balance_text:
                     continue
@@ -1171,7 +1243,9 @@ async def coinrecovery(
 
                 try:
                     user_id = str(int(user_id))
-                    amount = int(match.group(1).replace(",", ""))
+                    amount = int(
+                        match.group(1).replace(",", "")
+                    )
                 except ValueError:
                     continue
 
@@ -1219,6 +1293,7 @@ async def coinrecovery(
     try:
         for user_id, amount in latest.items():
             set_balance(user_id, amount)
+
     except Exception:
         print("[COIN RECOVERY SAVE ERROR]")
         traceback.print_exc()

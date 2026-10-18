@@ -1,5 +1,5 @@
 
-Import asyncio
+import asyncio
 import json
 import os
 import random
@@ -552,7 +552,7 @@ async def send_coin_log(
 
 
 # ==================================================
-# .balance （ownerロール不要・誰でも実行可能）
+# .balance （誰でも実行可能）
 # ==================================================
 
 @bot.command(
@@ -615,7 +615,7 @@ def get_paylines(grid, line_count):
 
 
 # ==================================================
-# .slot 賭け金 [ライン数] （ownerロール不要・誰でも実行可能）
+# .slot 賭け金 [ライン数] （誰でも実行可能）
 # ==================================================
 
 @bot.command(

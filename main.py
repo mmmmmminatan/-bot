@@ -359,30 +359,22 @@ async def slash_command_error(interaction, error):
 def get_symbol_text(guild, symbol_key):
     symbol = SYMBOLS[symbol_key]
 
-    # 7️⃣の絵柄だけ、モードによって表示を変更する
+    # 7はスタンプモードなら必ずUnicodeで表示する
     if symbol_key == "seven":
-        if guild is None:
-            return "7️⃣"
+        if guild is not None:
+            config = get_guild_settings(guild.id)
 
-        config = get_guild_settings(guild.id)
-
-        if config["slot_mode"] == "emoji":
-            custom_emoji = discord.utils.get(
-                guild.emojis,
-                name="emoji_15",
-            )
-
-            if custom_emoji is not None:
-                return str(custom_emoji)
-
-            print(
-                f"[EMOJI WARNING] emoji_15 not found "
-                f"in guild {guild.id}; using 7️⃣"
-            )
+            if config["slot_mode"] == "emoji":
+                custom_emoji = discord.utils.get(
+                    guild.emojis,
+                    name="emoji_15",
+                )
+                if custom_emoji is not None:
+                    return str(custom_emoji)
 
         return "7️⃣"
 
-    # その他の絵柄は通常どおり
+    # その他の絵柄は従来どおり
     if guild is not None:
         config = get_guild_settings(guild.id)
 
@@ -391,17 +383,10 @@ def get_symbol_text(guild, symbol_key):
                 guild.emojis,
                 name=symbol["custom"],
             )
-
             if custom_emoji is not None:
                 return str(custom_emoji)
 
-            print(
-                f"[EMOJI WARNING] {symbol['custom']} not found "
-                f"in guild {guild.id}; using Unicode"
-            )
-
     return symbol["unicode"]
-
 
 def render_grid(guild, grid):
     return "\n".join(

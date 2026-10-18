@@ -282,23 +282,62 @@ async def slash_command_error(interaction, error):
 # Discordログ送信先
 # ==================================================
 
+
 async def get_log_channel(guild):
     if guild is None:
+        print("[LOG ERROR] Guild is None")
         return None
 
     channel_id = log_configs.get(str(guild.id))
+
     if not channel_id:
+        print(
+            f"[LOG ERROR] No log channel configured "
+            f"for guild {guild.id}"
+        )
         return None
 
     try:
         channel = guild.get_channel(int(channel_id))
+
         if channel is None:
             channel = await bot.fetch_channel(int(channel_id))
 
-        if isinstance(channel, discord.TextChannel):
-            return channel
+        if not isinstance(channel, discord.TextChannel):
+            print(
+                f"[LOG ERROR] Invalid text channel: "
+                f"{channel_id}"
+            )
+            return None
 
-    except (discord.HTTPException, discord.Forbidden, ValueError):
+        me = guild.me
+        perms = channel.permissions_for(me)
+
+        if not perms.view_channel:
+            print("[LOG ERROR] Missing View Channel permission")
+            return None
+
+        if not perms.send_messages:
+            print("[LOG ERROR] Missing Send Messages permission")
+            return None
+
+        if not perms.embed_links:
+            print("[LOG ERROR] Missing Embed Links permission")
+            return None
+
+        print(
+            f"[LOG OK] Channel={channel.name} "
+            f"ID={channel.id}"
+        )
+        return channel
+
+    except discord.Forbidden:
+        print("[LOG ERROR] Discord returned 403 Forbidden")
+    except discord.NotFound:
+        print("[LOG ERROR] Log channel was not found")
+    except (ValueError, TypeError):
+        print("[LOG ERROR] Invalid channel ID")
+    except discord.HTTPException:
         traceback.print_exc()
 
     return None

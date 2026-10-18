@@ -1,5 +1,4 @@
-
-import asyncio
+Import asyncio
 import json
 import os
 import random
@@ -455,7 +454,6 @@ async def send_coin_log(
         "after": int(after),
     }
 
-    # ファイルへの履歴保存
     coin_logs.append(entry)
 
     if len(coin_logs) > MAX_LOGS:
@@ -468,7 +466,6 @@ async def send_coin_log(
         print("[COIN LOG ERROR] Failed to save coin_logs.json")
         traceback.print_exc()
 
-    # Discordへのログ送信
     try:
         channel = await get_log_channel(guild)
 
@@ -554,7 +551,7 @@ async def send_coin_log(
 
 
 # ==================================================
-# .balance
+# .balance （ownerロール不要・誰でも実行可能）
 # ==================================================
 
 @bot.command(
@@ -617,7 +614,7 @@ def get_paylines(grid, line_count):
 
 
 # ==================================================
-# .slot 賭け金 [ライン数]
+# .slot 賭け金 [ライン数] （ownerロール不要・誰でも実行可能）
 # ==================================================
 
 @bot.command(
@@ -724,7 +721,7 @@ async def slot(ctx, bet: int, lines: int = 1):
 
 
 # ==================================================
-# .Payment @ユーザー 金額
+# .Payment @ユーザー 金額 （ownerロール専用）
 # ==================================================
 
 @bot.command(
@@ -767,7 +764,6 @@ async def payment(ctx, member: discord.Member, amount: int):
         )
         return
 
-    # 残高を変更
     try:
         set_balance(member.id, after)
     except Exception:
@@ -779,8 +775,6 @@ async def payment(ctx, member: discord.Member, amount: int):
         return
 
     action = "コイン追加" if amount > 0 else "コイン減額"
-
-    # ログ送信が失敗しても、残高変更の成功通知は必ず試みる
     log_sent = False
 
     try:

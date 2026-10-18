@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import traceback
 from pathlib import Path
 from threading import Thread
@@ -24,6 +25,7 @@ DATA_FILE = Path("balances.json")
 POSITIONS_FILE = Path("slot_positions.json")
 LOGS_FILE = Path("slot_logs.json")
 CONFIG_FILE = Path("log_config.json")
+COIN_LOGS_FILE = Path("coin_logs.json")
 
 LANE_PATTERNS = [
     ["🍒", "🍋", "⭐", "🔔", "7️⃣"],
@@ -77,32 +79,27 @@ def load_json(path, default):
             return data
 
         print(f"Invalid data format: {path}")
-        return default
+        return default.copy()
 
     except FileNotFoundError:
-        return default
+        return default.copy()
 
     except json.JSONDecodeError:
         print(f"Invalid JSON: {path}")
-        return default
+        return default.copy()
 
     except OSError:
         traceback.print_exc()
-        return default
+        return default.copy()
 
 
 def save_json(path, data):
     temp = path.with_suffix(".tmp")
 
     temp.write_text(
-        json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
     temp.replace(path)
 
 
@@ -110,6 +107,7 @@ balances = load_json(DATA_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
 slot_logs = load_json(LOGS_FILE, [])
 log_configs = load_json(CONFIG_FILE, {})
+coin_logs = load_json(COIN_LOGS_FILE, [])
 
 # ==================================================
 # 所持金
@@ -129,6 +127,10 @@ def save_logs():
 
 def save_configs():
     save_json(CONFIG_FILE, log_configs)
+
+
+def save_coin_logs():
+    save_json(COIN_LOGS_FILE, coin_logs)
 
 
 def get_balance(user_id):
@@ -228,7 +230,6 @@ async def on_command_error(ctx, error):
             )
         except discord.HTTPException:
             pass
-
         return
 
     print(f"Command error: {repr(error)}")
@@ -255,9 +256,12 @@ async def slash_command_error(interaction, error):
         error.__traceback__,
     )
 
-    message = (
-        f"⚠️ エラー：{type(error).__name__}"
-    )
+    original = getattr(error, "original", error)
+
+    if isinstance(original, app_commands.MissingPermissions):
+        message = "⛔ この操作に必要な権限がないよ。"
+    else:
+        message = f"⚠️ エラー：{type(original).__name__}"
 
     try:
         if interaction.response.is_done():
@@ -275,7 +279,33 @@ async def slash_command_error(interaction, error):
 
 
 # ==================================================
-# スロット履歴記録
+# Discordログ送信先
+# ==================================================
+
+async def get_log_channel(guild):
+    if guild is None:
+        return None
+
+    channel_id = log_configs.get(str(guild.id))
+    if not channel_id:
+        return None
+
+    try:
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            channel = await bot.fetch_channel(int(channel_id))
+
+        if isinstance(channel, discord.TextChannel):
+            return channel
+
+    except (discord.HTTPException, discord.Forbidden, ValueError):
+        traceback.print_exc()
+
+    return None
+
+
+# ==================================================
+# スロット履歴
 # ==================================================
 
 def record_slot(data):
@@ -288,22 +318,11 @@ def record_slot(data):
 
 
 async def send_slot_log(guild, data):
-    if guild is None:
-        return
-
-    channel_id = log_configs.get(str(guild.id))
-
-    if not channel_id:
-        return
-
-    channel = guild.get_channel(int(channel_id))
+    channel = await get_log_channel(guild)
 
     if channel is None:
-        try:
-            channel = await bot.fetch_channel(int(channel_id))
-        except (discord.HTTPException, discord.Forbidden):
-            print("Log channel unavailable:", channel_id)
-            return
+        print("Slot log channel is not configured.")
+        return
 
     embed = discord.Embed(
         title="🎰 スロットログ",
@@ -313,49 +332,39 @@ async def send_slot_log(guild, data):
 
     embed.add_field(
         name="プレイヤー",
-        value=(
-            f"<@{data['user_id']}> "
-            f"(`{data['user_id']}`)"
-        ),
+        value=f"<@{data['user_id']}> (`{data['user_id']}`)",
         inline=False,
     )
-
     embed.add_field(
         name="スロット結果",
         value=f"```text\n{data['grid']}\n```",
         inline=False,
     )
-
     embed.add_field(
         name="賭け金",
         value=f"{data['bet']:,} × {data['lines']}ライン",
         inline=True,
     )
-
     embed.add_field(
         name="合計賭け金",
         value=f"{data['total_bet']:,}コイン",
         inline=True,
     )
-
     embed.add_field(
         name="配当",
         value=f"{data['winnings']:,}コイン",
         inline=True,
     )
-
     embed.add_field(
         name="収支",
         value=f"{data['profit']:+,}コイン",
         inline=True,
     )
-
     embed.add_field(
         name="回転前の所持金",
         value=f"{data['before']:,}コイン",
         inline=True,
     )
-
     embed.add_field(
         name="回転後の所持金",
         value=f"{data['after']:,}コイン",
@@ -365,10 +374,94 @@ async def send_slot_log(guild, data):
     try:
         await channel.send(embed=embed)
     except discord.Forbidden:
-        print(
-            "Cannot send slot log. Check channel permissions:",
-            channel_id,
-        )
+        print("Cannot send slot log: check channel permissions.")
+    except discord.HTTPException:
+        traceback.print_exc()
+
+
+# ==================================================
+# コイン増減ログ
+# ==================================================
+
+async def send_coin_log(
+    guild,
+    user_id,
+    username,
+    operator_id,
+    action,
+    before,
+    change,
+    after,
+):
+    entry = {
+        "timestamp": discord.utils.utcnow().isoformat(),
+        "guild_id": guild.id if guild else None,
+        "user_id": str(user_id),
+        "username": username,
+        "operator_id": str(operator_id),
+        "action": action,
+        "before": int(before),
+        "change": int(change),
+        "after": int(after),
+    }
+
+    coin_logs.append(entry)
+
+    if len(coin_logs) > MAX_LOGS:
+        del coin_logs[:-MAX_LOGS]
+
+    try:
+        save_coin_logs()
+    except OSError:
+        traceback.print_exc()
+
+    channel = await get_log_channel(guild)
+
+    if channel is None:
+        print("Coin log channel is not configured.")
+        return
+
+    embed = discord.Embed(
+        title="💰 コイン増減ログ",
+        color=(
+            discord.Color.green()
+            if change > 0
+            else discord.Color.red()
+        ),
+        timestamp=discord.utils.utcnow(),
+    )
+
+    embed.add_field(name="操作", value=action, inline=True)
+    embed.add_field(
+        name="対象者",
+        value=f"<@{user_id}> (`{user_id}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="操作した人",
+        value=f"<@{operator_id}> (`{operator_id}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="変更前の所持金",
+        value=f"{before:,} コイン",
+        inline=True,
+    )
+    embed.add_field(
+        name="増減",
+        value=f"{change:+,} コイン",
+        inline=True,
+    )
+    embed.add_field(
+        name="変更後の所持金",
+        value=f"{after:,} コイン",
+        inline=True,
+    )
+
+    try:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
+        print("Cannot send coin log: check channel permissions.")
     except discord.HTTPException:
         traceback.print_exc()
 
@@ -410,7 +503,6 @@ def make_grid(positions):
             pattern = LANE_PATTERNS[lane]
             center = positions[lane]
             index = (center + row - 1) % len(pattern)
-
             current_row.append(pattern[index])
 
         grid.append(current_row)
@@ -440,7 +532,6 @@ def get_paylines(grid, line_count):
             grid[1][1],
             grid[2][2],
         ])
-
         lines.append([
             grid[2][0],
             grid[1][1],
@@ -482,12 +573,6 @@ async def slot(ctx, bet: int, lines: int = 1):
         )
         return
 
-    # 賭け金を引く
-    set_balance(
-        ctx.author.id,
-        before - total_bet,
-    )
-
     positions = [
         random.randrange(len(pattern))
         for pattern in LANE_PATTERNS
@@ -507,19 +592,15 @@ async def slot(ctx, bet: int, lines: int = 1):
             symbol = line[0]
             prize = bet * PAYOUTS[symbol]
             winnings += prize
-
             hits.append(
-                f"ライン{index}：{symbol} ×3 "
-                f"→ +{prize:,}コイン"
+                f"ライン{index}：{symbol} ×3 → +{prize:,}コイン"
             )
 
     after = before - total_bet + winnings
-
     set_balance(ctx.author.id, after)
 
     rendered_grid = grid_text(grid)
 
-    # 履歴をファイルに保存
     log_data = {
         "timestamp": discord.utils.utcnow().isoformat(),
         "guild_id": ctx.guild.id if ctx.guild else None,
@@ -541,7 +622,6 @@ async def slot(ctx, bet: int, lines: int = 1):
     except OSError:
         traceback.print_exc()
 
-    # スロット結果を表示
     embed = discord.Embed(
         title="🎰 スロット結果",
         description=(
@@ -568,7 +648,6 @@ async def slot(ctx, bet: int, lines: int = 1):
 
     await ctx.send(embed=embed)
 
-    # ログ送信に失敗してもスロット結果は維持
     try:
         await send_slot_log(ctx.guild, log_data)
     except Exception:
@@ -577,11 +656,12 @@ async def slot(ctx, bet: int, lines: int = 1):
 
 # ==================================================
 # .Payment @ユーザー 金額
+# 正の数で追加、負の数で減額
 # ==================================================
 
 @bot.command(
     name="Payment",
-    help="ownerロール専用。ユーザーにコインを追加",
+    help="ownerロール専用。コインを追加・減額する",
 )
 async def payment(ctx, member: discord.Member, amount: int):
     is_owner = any(
@@ -590,32 +670,48 @@ async def payment(ctx, member: discord.Member, amount: int):
     )
 
     if not is_owner:
-        await ctx.send(
-            "⛔ このコマンドはownerロール専用だよ。"
-        )
+        await ctx.send("⛔ このコマンドはownerロール専用だよ。")
         return
 
     if member.bot:
+        await ctx.send("⚠️ Botの残高は変更できないよ。")
+        return
+
+    if amount == 0 or abs(amount) > MAX_BET:
         await ctx.send(
-            "⚠️ Botにはコインを追加できないよ。"
+            "⚠️ 金額は ±1〜1,000,000,000 にしてね。"
         )
         return
 
-    if amount < 1 or amount > MAX_BET:
+    before = get_balance(member.id)
+    after = before + amount
+
+    if after < 0:
         await ctx.send(
-            "⚠️ 金額は1〜1,000,000,000にしてね。"
+            "❌ 所持金がマイナスになるため変更できないよ。"
         )
         return
 
-    old_balance = get_balance(member.id)
-    new_balance = old_balance + amount
+    set_balance(member.id, after)
 
-    set_balance(member.id, new_balance)
+    action = "コイン追加" if amount > 0 else "コイン減額"
+
+    await send_coin_log(
+        guild=ctx.guild,
+        user_id=member.id,
+        username=str(member),
+        operator_id=ctx.author.id,
+        action=action,
+        before=before,
+        change=amount,
+        after=after,
+    )
 
     await ctx.send(
-        f"💸 {member.mention} に **{amount:,}コイン**追加！\n"
-        f"変更前：{old_balance:,}\n"
-        f"変更後：{new_balance:,}"
+        f"✅ {member.mention} の残高を変更したよ！\n"
+        f"変更前：**{before:,} コイン**\n"
+        f"増減：**{amount:+,} コイン**\n"
+        f"変更後：**{after:,} コイン**"
     )
 
 
@@ -623,10 +719,7 @@ async def payment(ctx, member: discord.Member, amount: int):
 # .Mbot help
 # ==================================================
 
-@bot.command(
-    name="Mbot",
-    help="ヘルプコマンド",
-)
+@bot.command(name="Mbot", help="ヘルプコマンド")
 async def mbot(ctx, *, args=""):
     if args.strip().lower() == "help":
         await ctx.send("ウンコブリー")
@@ -647,14 +740,15 @@ async def help_command(ctx):
         "`.slot 100 3` 3ラインスロット\n"
         "`.slot 100 5` 5ラインスロット\n"
         "`.Payment @ユーザー 100` コイン追加（ownerのみ）\n"
+        "`.Payment @ユーザー -100` コイン減額（ownerのみ）\n"
         "`.Mbot help` ウンコブリー\n"
-        "`/log panel` ログ設定パネル"
+        "`/log panel` ログ設定\n"
+        "`/coinrecovery` 全員の残高を復元"
     )
 
 
 # ==================================================
 # /log panel
-# ログ送信先チャンネルを選ぶ
 # ==================================================
 
 class LogChannelSelect(discord.ui.ChannelSelect):
@@ -675,6 +769,18 @@ class LogChannelSelect(discord.ui.ChannelSelect):
             return
 
         selected = self.values[0]
+        perms = selected.permissions_for(interaction.guild.me)
+
+        if not (
+            perms.view_channel
+            and perms.send_messages
+            and perms.embed_links
+        ):
+            await interaction.response.send_message(
+                "Botにチャンネル閲覧・メッセージ送信・埋め込み権限が必要だよ。",
+                ephemeral=True,
+            )
+            return
 
         log_configs[str(interaction.guild.id)] = selected.id
 
@@ -683,14 +789,13 @@ class LogChannelSelect(discord.ui.ChannelSelect):
         except OSError:
             traceback.print_exc()
             await interaction.response.send_message(
-                "⚠️ 設定の保存に失敗したよ。",
+                "⚠️ 設定保存に失敗したよ。",
                 ephemeral=True,
             )
             return
 
         await interaction.response.send_message(
-            f"✅ ログ送信先を {selected.mention} に設定したよ！\n"
-            "次回からスロット結果を自動記録するね。",
+            f"✅ ログ送信先を {selected.mention} に設定したよ！",
             ephemeral=True,
         )
 
@@ -703,40 +808,18 @@ class LogPanelView(discord.ui.View):
 
 log_group = app_commands.Group(
     name="log",
-    description="スロットログの設定",
+    description="コインログの設定",
 )
 
 
 @log_group.command(
     name="panel",
-    description="ログ送信先を設定するパネルを表示",
+    description="ログ送信先を設定する",
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def log_panel(interaction: discord.Interaction):
-    if interaction.guild is None:
-        await interaction.response.send_message(
-            "サーバー内で使ってね。",
-            ephemeral=True,
-        )
-        return
-
-    embed = discord.Embed(
-        title="⚙️ スロットログ設定",
-        description=(
-            "下のメニューからログ送信先を選んでね。\n\n"
-            "記録する内容：\n"
-            "・プレイヤー\n"
-            "・賭け金とライン数\n"
-            "・スロットの絵柄\n"
-            "・配当と収支\n"
-            "・回転前と回転後の所持金\n\n"
-            "設定はサーバーごとに保存されるよ。"
-        ),
-        color=discord.Color.blue(),
-    )
-
     await interaction.response.send_message(
-        embed=embed,
+        "ログを送信するチャンネルを選択してね。",
         view=LogPanelView(),
         ephemeral=True,
     )
@@ -745,56 +828,151 @@ async def log_panel(interaction: discord.Interaction):
 bot.tree.add_command(log_group)
 
 
-@log_panel.error
-async def log_panel_error(
+# ==================================================
+# /coinrecovery
+# Discordのログ履歴から全員の残高を復元
+# ==================================================
+
+@bot.tree.command(
+    name="coinrecovery",
+    description="ログチャンネルから全員の残高を復元",
+)
+@app_commands.describe(
+    channel="コインログが保存されているチャンネル",
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def coinrecovery(
     interaction: discord.Interaction,
-    error: app_commands.AppCommandError,
+    channel: discord.TextChannel,
 ):
-    if isinstance(
-        error,
-        app_commands.MissingPermissions,
-    ):
-        message = (
-            "⛔ このコマンドはサーバー管理権限が必要だよ。"
+    await interaction.response.defer(
+        ephemeral=True,
+        thinking=True,
+    )
+
+    if interaction.guild is None:
+        await interaction.followup.send(
+            "サーバー内で実行してね。",
+            ephemeral=True,
         )
-    else:
-        traceback.print_exception(
-            type(error),
-            error,
-            error.__traceback__,
+        return
+
+    perms = channel.permissions_for(interaction.guild.me)
+
+    if not perms.view_channel or not perms.read_message_history:
+        await interaction.followup.send(
+            "Botにログチャンネルの閲覧権限と履歴読み取り権限が必要だよ。",
+            ephemeral=True,
         )
-        message = (
-            f"⚠️ エラー：{type(error).__name__}"
-        )
+        return
+
+    # ユーザーIDごとの最後の記録
+    latest = {}
+    scanned = 0
 
     try:
-        if interaction.response.is_done():
-            await interaction.followup.send(
-                message,
-                ephemeral=True,
-            )
-        else:
-            await interaction.response.send_message(
-                message,
-                ephemeral=True,
-            )
-    except discord.HTTPException:
-        pass
+        async for message in channel.history(
+            limit=None,
+            oldest_first=True,
+        ):
+            if bot.user is None or message.author.id != bot.user.id:
+                continue
+
+            for embed in message.embeds:
+                title = embed.title or ""
+                fields = {
+                    field.name: field.value
+                    for field in embed.fields
+                }
+
+                user_id = None
+                balance_text = None
+
+                if title == "🎰 スロットログ":
+                    player_text = fields.get("プレイヤー", "")
+                    match = re.search(
+                        r"\(`?(\d{15,25})`?\)",
+                        player_text,
+                    )
+
+                    if match:
+                        user_id = match.group(1)
+
+                    balance_text = fields.get(
+                        "回転後の所持金",
+                        "",
+                    )
+
+                elif title == "💰 コイン増減ログ":
+                    user_id = fields.get("ユーザーID", "").strip()
+                    balance_text = fields.get(
+                        "変更後の所持金",
+                        "",
+                    )
+
+                if not user_id or not balance_text:
+                    continue
+
+                match = re.search(r"([\d,]+)", balance_text)
+                if not match:
+                    continue
+
+                try:
+                    user_id = str(int(user_id))
+                    amount = int(match.group(1).replace(",", ""))
+                except ValueError:
+                    continue
+
+                if amount < 0:
+                    continue
+
+                latest[user_id] = amount
+                scanned += 1
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "ログを読み取れなかったよ。Botの権限を確認してね。",
+            ephemeral=True,
+        )
+        return
+
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"ログ取得エラー：{error}",
+            ephemeral=True,
+        )
+        return
+
+    if not latest:
+        await interaction.followup.send(
+            "復元できるログが見つからなかったよ。\n"
+            "正しいログチャンネルを選択しているか確認してね。",
+            ephemeral=True,
+        )
+        return
+
+    for user_id, amount in latest.items():
+        set_balance(user_id, amount)
+
+    await interaction.followup.send(
+        f"✅ 残高の復元が完了したよ！\n"
+        f"復元人数：**{len(latest)}人**\n"
+        f"読み取った記録：**{scanned}件**\n"
+        f"ログチャンネル：{channel.mention}\n\n"
+        "ログがないユーザーの残高は変更していないよ。",
+        ephemeral=True,
+    )
 
 
 # ==================================================
 # 起動
 # ==================================================
 
-async def start_bot():
-    if not TOKEN:
-        raise RuntimeError(
-            "DISCORD_TOKEN が設定されていないよ。"
-            "RenderのEnvironmentを確認してね。"
-        )
-
-    async with bot:
-        await bot.start(TOKEN)
+if not TOKEN:
+    raise RuntimeError(
+        "DISCORD_TOKEN が設定されていないよ。"
+        "RenderのEnvironmentを確認してね。"
+    )
 
 
 if __name__ == "__main__":
@@ -803,4 +981,4 @@ if __name__ == "__main__":
         daemon=True,
     ).start()
 
-    asyncio.run(start_bot())
+    bot.run(TOKEN)

@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import random
+import traceback
 from pathlib import Path
 from threading import Thread
 
@@ -10,13 +11,23 @@ import discord
 from discord.ext import commands
 from flask import Flask
 
+# =========================
+# 設定
+# =========================
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "owner"
 STARTING_BALANCE = 1000
 
 DATA_FILE = Path("balances.json")
+POSITIONS_FILE = Path("slot_positions.json")
 
-SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣"]
+LANE_PATTERNS = [
+    ["🍒", "🍋", "⭐", "🔔", "7️⃣"],
+    ["⭐", "🍒", "7️⃣", "🍋", "🔔"],
+    ["🔔", "7️⃣", "🍋", "⭐", "🍒"],
+]
+
 PAYOUTS = {
     "🍒": 2,
     "🍋": 3,
@@ -25,7 +36,12 @@ PAYOUTS = {
     "7️⃣": 50,
 }
 
+VALID_LINES = (1, 2, 3, 5)
+
+# =========================
 # Render用Webサーバー
+# =========================
+
 app = Flask(__name__)
 
 @app.route("/")
@@ -34,9 +50,16 @@ def home():
 
 def run_web():
     port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False,
+    )
 
+# =========================
 # Discord Bot
+# =========================
+
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -47,47 +70,93 @@ bot = commands.Bot(
     case_insensitive=True,
 )
 
-# 所持金データ
-def load_balances():
+# =========================
+# データ読み込み・保存
+# =========================
+
+def load_json(path, default):
     try:
-        with DATA_FILE.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
 
-balances = load_balances()
+        if isinstance(data, type(default)):
+            return data
 
-def save_balances():
-    temp = DATA_FILE.with_suffix(".tmp")
+        print(f"Invalid JSON data format: {path}")
+        return default
+
+    except FileNotFoundError:
+        return default
+
+    except json.JSONDecodeError:
+        print(f"Invalid JSON file: {path}")
+        return default
+
+    except OSError:
+        traceback.print_exc()
+        return default
+
+balances = load_json(DATA_FILE, {})
+slot_positions = load_json(POSITIONS_FILE, {})
+
+def save_json(path, data):
+    temp = path.with_suffix(".tmp")
+
     temp.write_text(
-        json.dumps(balances, ensure_ascii=False, indent=2),
+        json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    temp.replace(DATA_FILE)
+
+    temp.replace(path)
+
+def save_balances():
+    save_json(DATA_FILE, balances)
+
+def save_positions():
+    save_json(POSITIONS_FILE, slot_positions)
 
 def get_balance(user_id):
     key = str(user_id)
+
     if key not in balances:
         balances[key] = STARTING_BALANCE
         save_balances()
+
     return int(balances[key])
 
 def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
     save_balances()
 
-# 起動状態
+# =========================
+# 接続状態
+# =========================
+
 @bot.event
 async def on_ready():
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Game(name=".Mbot help"),
     )
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+
+    print(
+        f"Logged in as {bot.user} "
+        f"(ID: {bot.user.id})"
+    )
     print(f"Connected to {len(bot.guilds)} server(s)")
 
-# エラー表示
+@bot.event
+async def on_disconnect():
+    print("Discord connection disconnected")
+
+@bot.event
+async def on_resumed():
+    print("Discord connection resumed")
+
+# =========================
+# エラー処理
+# =========================
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
@@ -98,88 +167,188 @@ async def on_command_error(ctx, error):
         return
 
     if isinstance(error, commands.BadArgument):
-        await ctx.send("⚠️ 入力内容を確認してね！")
+        await ctx.send(
+            "⚠️ 入力内容を確認してね！\n"
+            "例：`.slot 100 3`"
+        )
         return
 
-    import traceback
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send("⏳ 少し待ってから試してね。")
+        return
+
+    print("===== COMMAND ERROR =====")
     traceback.print_exception(
-        type(error), error, error.__traceback__
-    )
-    await ctx.send(
-        f"⚠️ エラー内容：{type(error).__name__}"
+        type(error),
+        error,
+        error.__traceback__,
     )
 
+    try:
+        await ctx.send(
+            f"⚠️ エラー内容：`{type(error).__name__}`"
+        )
+    except discord.HTTPException:
+        print("Could not send error message to Discord")
+
+# =========================
+# 所持金確認
 # .balance
-@bot.command(name="balance")
+# =========================
+
+@bot.command(
+    name="balance",
+    help="自分の所持金を確認する",
+)
 async def balance(ctx):
     amount = get_balance(ctx.author.id)
-    await ctx.send(
-        f"💰 {ctx.author.mention} の所持金：**{amount:,} コイン**"
+
+    embed = discord.Embed(
+        title="💰 所持金",
+        description=(
+            f"{ctx.author.mention} の所持金："
+            f"**{amount:,} コイン**"
+        ),
+        color=discord.Color.gold(),
     )
 
+    await ctx.send(embed=embed)
+
+# =========================
+# スロット共通処理
+# =========================
+
+def make_grid(positions):
+    grid = []
+
+    for row in range(3):
+        current_row = []
+
+        for lane in range(3):
+            pattern = LANE_PATTERNS[lane]
+            center = positions[lane]
+
+            index = (
+                center + row - 1
+            ) % len(pattern)
+
+            current_row.append(pattern[index])
+
+        grid.append(current_row)
+
+    return grid
+
+def grid_text(grid):
+    return "\n".join(
+        " | ".join(row)
+        for row in grid
+    )
+
+def get_paylines(grid, line_count):
+    lines = [grid[1]]
+
+    if line_count >= 2:
+        lines.append(grid[0])
+
+    if line_count >= 3:
+        lines.append(grid[2])
+
+    if line_count >= 5:
+        lines.append([
+            grid[0][0],
+            grid[1][1],
+            grid[2][2],
+        ])
+
+        lines.append([
+            grid[2][0],
+            grid[1][1],
+            grid[0][2],
+        ])
+
+    return lines
+
+# =========================
+# スロット
 # .slot 賭け金 [ライン数]
-@bot.command(name="slot")
+# 演出なし
+# =========================
+
+@bot.command(
+    name="slot",
+    help="スロット。例：.slot 100 3",
+)
 async def slot(ctx, bet: int, lines: int = 1):
     if bet <= 0:
-        await ctx.send("⚠️ 賭け金は1以上にしてね。")
+        await ctx.send(
+            "⚠️ 賭け金は1以上にしてね。"
+        )
         return
 
-    if lines not in (1, 2, 3, 5):
-        await ctx.send("⚠️ ライン数は1、2、3、5から選んでね。")
+    if lines not in VALID_LINES:
+        await ctx.send(
+            "⚠️ ライン数は1、2、3、5から選んでね。"
+        )
+        return
+
+    if bet > 1_000_000_000:
+        await ctx.send("⚠️ 賭け金が大きすぎるよ。")
         return
 
     total_bet = bet * lines
-    balance_now = get_balance(ctx.author.id)
+    current_balance = get_balance(ctx.author.id)
 
-    if total_bet > balance_now:
+    if total_bet > current_balance:
         await ctx.send(
-            f"💸 コイン不足！所持金：{balance_now:,} / "
+            f"💸 コインが足りないよ！\n"
+            f"所持金：{current_balance:,}\n"
             f"必要額：{total_bet:,}"
         )
         return
 
-    # 先に賭け金を引く
-    set_balance(ctx.author.id, balance_now - total_bet)
+    # 賭け金を先に引く
+    set_balance(
+        ctx.author.id,
+        current_balance - total_bet,
+    )
 
-    grid = [
-        [random.choice(SYMBOLS) for _ in range(3)]
-        for _ in range(3)
+    # 各レーンの停止位置を決定
+    positions = [
+        random.randrange(len(pattern))
+        for pattern in LANE_PATTERNS
     ]
 
-    paylines = [grid[1]]
+    slot_positions[str(ctx.author.id)] = positions
+    save_positions()
 
-    if lines >= 2:
-        paylines.append(grid[0])
-    if lines >= 3:
-        paylines.append(grid[2])
-    if lines >= 5:
-        paylines.extend([
-            [grid[0][0], grid[1][1], grid[2][2]],
-            [grid[2][0], grid[1][1], grid[0][2]],
-        ])
+    grid = make_grid(positions)
+    paylines = get_paylines(grid, lines)
 
     winnings = 0
-    hits = []
+    hit_results = []
 
-    for i, line in enumerate(paylines, 1):
+    for index, line in enumerate(paylines, start=1):
         if line[0] == line[1] == line[2]:
-            prize = bet * PAYOUTS[line[0]]
+            symbol = line[0]
+            prize = bet * PAYOUTS[symbol]
             winnings += prize
-            hits.append(
-                f"ライン{i}：{line[0]} ×3 → +{prize:,}コイン"
+
+            hit_results.append(
+                f"ライン{index}：{symbol} ×3 "
+                f"→ +{prize:,}コイン"
             )
 
-    final_balance = get_balance(ctx.author.id) + winnings
-    set_balance(ctx.author.id, final_balance)
+    final_balance = (
+        get_balance(ctx.author.id) + winnings
+    )
 
-    result = "\n".join(" | ".join(row) for row in grid)
+    set_balance(ctx.author.id, final_balance)
 
     embed = discord.Embed(
         title="🎰 スロット結果",
         description=(
-            f"```text\n{result}\n```\n"
-            f"1ラインあたり：{bet:,}コイン\n"
-            f"ライン数：{lines}\n"
+            f"```text\n{grid_text(grid)}\n```\n"
+            f"賭け金：{bet:,} × {lines}ライン\n"
             f"合計賭け金：{total_bet:,}コイン\n"
             f"配当：{winnings:,}コイン\n"
             f"収支：{winnings - total_bet:+,}コイン\n"
@@ -188,64 +357,105 @@ async def slot(ctx, bet: int, lines: int = 1):
         color=discord.Color.gold(),
     )
 
-    embed.add_field(
-        name="🎉 当たり！" if hits else "結果",
-        value="\n".join(hits) if hits else "今回はハズレ！",
-        inline=False,
-    )
+    if hit_results:
+        embed.add_field(
+            name="🎉 当たり！",
+            value="\n".join(hit_results),
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="結果",
+            value="今回はハズレ！また挑戦してね。",
+            inline=False,
+        )
+
     await ctx.send(embed=embed)
 
-# .Payment @ユーザー 金額（ownerロール限定）
-@bot.command(name="Payment")
+# =========================
+# コイン追加
+# .Payment @ユーザー 金額
+# ownerロール限定
+# =========================
+
+@bot.command(
+    name="Payment",
+    help="ownerロール専用。ユーザーにコインを追加する",
+)
 async def payment(ctx, member: discord.Member, amount: int):
     is_owner = any(
-        role.name.lower() == OWNER_ROLE_NAME
+        role.name.lower() == OWNER_ROLE_NAME.lower()
         for role in getattr(ctx.author, "roles", [])
     )
 
     if not is_owner:
-        await ctx.send("⛔ ownerロール専用だよ。")
+        await ctx.send(
+            "⛔ このコマンドはownerロール専用だよ。"
+        )
         return
 
     if member.bot:
-        await ctx.send("⚠️ Botにはコインを追加できないよ。")
+        await ctx.send(
+            "⚠️ Botにはコインを追加できないよ。"
+        )
         return
 
-    if not 1 <= amount <= 1_000_000_000:
-        await ctx.send("⚠️ 金額は1〜1,000,000,000にしてね。")
+    if amount < 1 or amount > 1_000_000_000:
+        await ctx.send(
+            "⚠️ 金額は1〜1,000,000,000にしてね。"
+        )
         return
 
-    old = get_balance(member.id)
-    new = old + amount
-    set_balance(member.id, new)
+    old_balance = get_balance(member.id)
+    new_balance = old_balance + amount
+
+    set_balance(member.id, new_balance)
 
     await ctx.send(
-        f"💸 {member.mention} に **{amount:,}コイン**追加！\n"
-        f"変更前：{old:,}\n変更後：{new:,}"
+        f"💸 {member.mention} に "
+        f"**{amount:,}コイン**追加したよ！\n"
+        f"変更前：{old_balance:,}\n"
+        f"変更後：{new_balance:,}"
     )
 
-# .Mbot help → ウンコブリー
-@bot.command(name="Mbot")
+# =========================
+# .Mbot help
+# 必ず「ウンコブリー」と返信
+# =========================
+
+@bot.command(
+    name="Mbot",
+    help="ヘルプコマンド",
+)
 async def mbot(ctx, *, args=""):
     if args.strip().lower() == "help":
         await ctx.send("ウンコブリー")
     else:
-        await ctx.send("使い方：`.Mbot help`")
+        await ctx.send(
+            "使い方：`.Mbot help`"
+        )
 
+# =========================
 # .help
+# =========================
+
 @bot.command(name="help")
 async def help_command(ctx):
     await ctx.send(
         "📘 コマンド一覧\n"
         "`.balance` 所持金確認\n"
-        "`.slot 100` 1ライン\n"
-        "`.slot 100 3` 3ライン\n"
-        "`.slot 100 5` 5ライン\n"
-        "`.Payment @ユーザー 100` コイン追加（ownerのみ）\n"
+        "`.slot 100` 1ラインスロット\n"
+        "`.slot 100 3` 3ラインスロット\n"
+        "`.slot 100 5` 5ラインスロット\n"
+        "`.Payment @ユーザー 100` "
+        "コイン追加（ownerのみ）\n"
         "`.Mbot help` ウンコブリー"
     )
 
+# =========================
 # 起動
+# =========================
+
 async def start_bot():
     if not TOKEN:
         raise RuntimeError(
@@ -257,5 +467,9 @@ async def start_bot():
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
-    Thread(target=run_web, daemon=True).start()
+    Thread(
+        target=run_web,
+        daemon=True,
+    ).start()
+
     asyncio.run(start_bot())

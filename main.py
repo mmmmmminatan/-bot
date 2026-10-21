@@ -378,7 +378,7 @@ async def on_app_command_error(interaction, error):
         error.__traceback__,
     )
 
-    message = "スラッシュコマンドの実行中にエラーが発生したよ。"
+    message = "スラッシュコマンドの実行中にエラーが発生したよ."
 
     try:
         if interaction.response.is_done():
@@ -624,11 +624,11 @@ def get_weights_text(weights):
     return "\n".join(lines)
 
 # ==================================================
-# .balance
+# .cash (残高確認)
 # ==================================================
 
-@bot.command(name="balance", aliases=["bal", "残高"])
-async def balance_command(ctx, member: discord.Member = None):
+@bot.command(name="cash", aliases=["balance", "bal", "残高"])
+async def cash_command(ctx, member: discord.Member = None):
     member = member or ctx.author
     amount = get_balance(member.id)
 
@@ -644,17 +644,18 @@ async def balance_command(ctx, member: discord.Member = None):
     await ctx.reply(embed=embed, mention_author=False)
 
 # ==================================================
-# .all balance（全メンバーの残高一覧）
+# /all cash（全メンバーの残高一覧）
 # ==================================================
 
 BALANCE_LIST_PER_PAGE = 15
 
-class AllBalanceView(discord.ui.View):
-    def __init__(self, ctx, pages):
+class AllCashView(discord.ui.View):
+    def __init__(self, ctx, pages, author_id):
         super().__init__(timeout=180)
         self.ctx = ctx
         self.pages = pages
         self.page_index = 0
+        self.author_id = author_id
         self.update_buttons()
 
     def update_buttons(self):
@@ -677,7 +678,7 @@ class AllBalanceView(discord.ui.View):
         return embed
 
     async def interaction_check(self, interaction):
-        if interaction.user.id != self.ctx.author.id:
+        if interaction.user.id != self.author_id:
             await interaction.response.send_message(
                 "この一覧を操作できるのは実行した本人だけだよ。",
                 ephemeral=True,
@@ -722,58 +723,57 @@ class AllBalanceView(discord.ui.View):
             view=self,
         )
 
-@bot.group(name="all", invoke_without_command=True)
-async def all_group(ctx):
-    await ctx.reply(
-        "サブコマンドを指定してね。\n"
-        "例：`.all balance`",
-        mention_author=False,
-    )
-
-@all_group.command(name="balance")
-async def all_balance_command(ctx):
-    if ctx.guild is None:
-        await ctx.reply(
+@bot.tree.command(
+    name="all_cash",
+    description="全メンバーの残高一覧を表示する（管理者・owner専用）",
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def all_cash_command(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(
             "このコマンドはサーバー内で使ってね。",
-            mention_author=False,
+            ephemeral=True,
         )
         return
 
-    if not is_admin_or_owner(ctx.author):
-        await ctx.reply(
-            f"このコマンドはサーバー管理者または"
-            f"`{OWNER_ROLE_NAME}` ロール専用だよ。",
-            mention_author=False,
+    # サーバー管理者またはownerロールを持つ人が実行できるようにする
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            f"このコマンドはサーバー管理者または `{OWNER_ROLE_NAME}` ロール専用だよ。",
+            ephemeral=True,
         )
         return
+
+    await interaction.response.defer(ephemeral=True)
 
     try:
         members = [
             member
-            async for member in ctx.guild.fetch_members(limit=None)
+            async for member in interaction.guild.fetch_members(limit=None)
             if not member.bot
         ]
     except Exception:
         print(
-            "[ALL BALANCE] メンバー取得に失敗。"
+            "[ALL CASH] メンバー取得に失敗。"
             "キャッシュを使用します。"
         )
         traceback.print_exc()
 
         members = [
             member
-            for member in ctx.guild.members
+            for member in interaction.guild.members
             if not member.bot
         ]
 
+    # ソート: 残高が多い順（降順）、残高が同じ場合は名前のアルファベット順（昇順）
     members.sort(
-        key=lambda member: member.display_name.casefold()
+        key=lambda m: (-int(balances.get(str(m.id), STARTING_BALANCE)), m.display_name.casefold())
     )
 
     if not members:
-        await ctx.reply(
+        await interaction.followup.send(
             "表示できるメンバーがいないよ。",
-            mention_author=False,
+            ephemeral=True,
         )
         return
 
@@ -796,12 +796,12 @@ async def all_balance_command(ctx):
         for index in range(0, len(lines), BALANCE_LIST_PER_PAGE)
     ]
 
-    view = AllBalanceView(ctx, pages)
+    view = AllCashView(interaction, pages, interaction.user.id)
 
-    await ctx.reply(
+    await interaction.followup.send(
         embed=view.make_embed(),
         view=view,
-        mention_author=False,
+        ephemeral=True,
     )
 
 # ==================================================
@@ -907,15 +907,16 @@ async def slot_command(ctx, bet: int):
 
         displayed_rows.append(displayed_row)
 
+    # 変更リスト①の仕様通り：スロット表示形式を変更し、付加情報を一番下に、回した本人のみを一番下に表示
     slot_display = (
         f"\\_\\_\\_SLOT\\_\\_\\_\n"
-        f"|{'|'.join(displayed_rows[0])}|"
-        f"　まわしたひと：{ctx.author.mention}\n"
-        f"|{'|'.join(displayed_rows[1])}|"
-        f"　賭け金：{bet:,}コイン\n"
-        f"|{'|'.join(displayed_rows[2])}|"
-        f"　収支：{profit_text}コイン\n"
-        f"￣￣￣￣￣￣"
+        f"|{'|'.join(displayed_rows[0])}|\n"
+        f"|{'|'.join(displayed_rows[1])}|\n"
+        f"|{'|'.join(displayed_rows[2])}|\n"
+        f"￣￣￣￣￣￣\n"
+        f"賭け金：{bet:,}コイン\n"
+        f"収支：{profit_text}コイン\n"
+        f"まわしたひと：{ctx.author.mention}"
     )
 
     if payout > 0:
@@ -1073,9 +1074,9 @@ async def help_command(ctx):
         description=(
             "**一般コマンド**\n"
             "`.slot 賭け金` — スロットを回す\n"
-            "`.balance` — 自分の残高を見る\n"
-            "`.balance @ユーザー` — 指定ユーザーの残高を見る\n"
-            "`.all balance` — 全メンバーの残高一覧（管理者・owner専用）\n"
+            "`.cash` — 自分の残高を見る\n"
+            "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
+             "`/all cash` — 全メンバーの残高一覧（管理者・owner専用）\n"
             "`.help` — この一覧を表示\n\n"
             "**ownerロール専用**\n"
             "`.Payment @ユーザー 金額` — 残高を増減する\n\n"

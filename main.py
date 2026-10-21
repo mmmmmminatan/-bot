@@ -6,6 +6,7 @@ import re
 import traceback
 from pathlib import Path
 from threading import Thread
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -30,6 +31,8 @@ LOG_CONFIG_FILE = Path("log_config.json")
 COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
 
+# 内部処理に使用する絵柄
+# カスタム絵文字に切り替えても、この値は変更しない
 SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣"]
 
 PAYOUTS = {
@@ -40,6 +43,20 @@ PAYOUTS = {
     "7️⃣": 50,
 }
 
+# サーバー内のカスタム絵文字名
+# ⭐ = emoji_12
+# 🍋 = emoji_13
+# 🔔 = emoji_14
+# 🍒 = emoji_15
+# 7️⃣ = emoji_16
+CUSTOM_EMOJI_NAMES = {
+    "⭐": "emoji_12",
+    "🍋": "emoji_13",
+    "🔔": "emoji_14",
+    "🍒": "emoji_15",
+    "7️⃣": "emoji_16",
+}
+
 # 元の固定レーン
 LANE_PATTERNS = [
     ["🍒", "🍋", "⭐", "🔔", "7️⃣"],
@@ -47,7 +64,7 @@ LANE_PATTERNS = [
     ["🔔", "7️⃣", "🍋", "⭐", "🍒"],
 ]
 
-# 初期設定の出現比率。比率なので合計100でなくてもOK
+# 初期設定の出現比率
 DEFAULT_WEIGHTS = {
     "🍒": 20,
     "🍋": 20,
@@ -62,7 +79,11 @@ DEFAULT_SERVER_SETTINGS = {
     "weights": DEFAULT_WEIGHTS.copy(),
     "slot_permission": "everyone",
     "maintenance": False,
+    # unicode = 通常の絵文字
+    # custom = サーバーのカスタム絵文字
+    "emoji_mode": "unicode",
 }
+
 
 # ==================================================
 # JSON読み書き
@@ -114,8 +135,11 @@ def set_balance(user_id, amount):
 
 def get_server_settings(guild_id):
     """サーバー設定を取得。未設定の項目は初期値を使う。"""
+
     if guild_id is None:
-        return DEFAULT_SERVER_SETTINGS.copy()
+        result = DEFAULT_SERVER_SETTINGS.copy()
+        result["weights"] = DEFAULT_WEIGHTS.copy()
+        return result
 
     guild_key = str(guild_id)
 
@@ -136,6 +160,10 @@ def get_server_settings(guild_id):
     for symbol in SYMBOLS:
         current["weights"].setdefault(symbol, DEFAULT_WEIGHTS[symbol])
 
+    # 不正な設定値があった場合は初期値へ戻す
+    if current.get("emoji_mode") not in ("unicode", "custom"):
+        current["emoji_mode"] = "unicode"
+
     save_json(SETTINGS_FILE, server_settings)
     return current
 
@@ -143,6 +171,92 @@ def get_server_settings(guild_id):
 def save_server_settings(guild_id):
     if guild_id is not None:
         save_json(SETTINGS_FILE, server_settings)
+
+
+# ==================================================
+# 絵柄の表示処理
+# ==================================================
+
+def find_custom_emoji(guild, symbol):
+    """
+    サーバー内から対応するカスタム絵文字を探す。
+    見つからない場合はNoneを返す。
+    """
+
+    if guild is None:
+        return None
+
+    emoji_name = CUSTOM_EMOJI_NAMES.get(symbol)
+
+    if not emoji_name:
+        return None
+
+    for emoji in guild.emojis:
+        if emoji.name == emoji_name:
+            return emoji
+
+    return None
+
+
+def display_symbol(symbol, guild, settings):
+    """
+    画面表示用の絵柄を返す。
+
+    内部処理・当たり判定・配当には元のUnicode絵柄を使用する。
+    カスタム絵文字がない場合は通常絵文字に戻す。
+    """
+
+    if settings.get("emoji_mode", "unicode") == "custom":
+        custom_emoji = find_custom_emoji(guild, symbol)
+
+        if custom_emoji is not None:
+            return str(custom_emoji)
+
+    return symbol
+
+
+def grid_text(grid, guild=None, settings=None):
+    """盤面を表示用の文字列に変換する。"""
+
+    if settings is None:
+        settings = DEFAULT_SERVER_SETTINGS
+
+    lines = []
+
+    for row in grid:
+        displayed_row = [
+            display_symbol(symbol, guild, settings)
+            for symbol in row
+        ]
+
+        lines.append(" | ".join(displayed_row))
+
+    return "\n".join(lines)
+
+
+def get_display_mode_name(settings):
+    if settings.get("emoji_mode", "unicode") == "custom":
+        return "サーバーのカスタム絵文字"
+
+    return "通常の絵文字"
+
+
+def get_custom_emoji_status(guild):
+    """カスタム絵文字の登録状況を確認する。"""
+
+    found = []
+    missing = []
+
+    for symbol in SYMBOLS:
+        emoji_name = CUSTOM_EMOJI_NAMES[symbol]
+        emoji = find_custom_emoji(guild, symbol)
+
+        if emoji:
+            found.append(f"{symbol} → {emoji_name}")
+        else:
+            missing.append(f"{symbol} → {emoji_name}")
+
+    return found, missing
 
 
 # ==================================================
@@ -239,7 +353,9 @@ def can_use_slot(member, settings):
         return False, "現在、スロットは管理者のみ利用できます。"
 
     if permission == "owner" and not has_owner_role(member):
-        return False, f"`{OWNER_ROLE_NAME}` ロールを持つメンバーのみ利用できます。"
+        return False, (
+            f"`{OWNER_ROLE_NAME}` ロールを持つメンバーのみ利用できます。"
+        )
 
     return True, None
 
@@ -338,6 +454,9 @@ async def get_log_channel(guild):
     if not isinstance(channel, discord.TextChannel):
         return None
 
+    if guild.me is None:
+        return None
+
     permissions = channel.permissions_for(guild.me)
 
     if not permissions.send_messages or not permissions.embed_links:
@@ -347,6 +466,11 @@ async def get_log_channel(guild):
 
 
 def record_slot(data):
+    data.setdefault(
+        "timestamp",
+        datetime.now(timezone.utc).timestamp(),
+    )
+
     slot_logs.append(data)
 
     if len(slot_logs) > MAX_LOGS:
@@ -356,6 +480,11 @@ def record_slot(data):
 
 
 def record_coin(data):
+    data.setdefault(
+        "timestamp",
+        datetime.now(timezone.utc).timestamp(),
+    )
+
     coin_logs.append(data)
 
     if len(coin_logs) > MAX_LOGS:
@@ -398,8 +527,7 @@ def make_grid(positions, weights=None):
     """
     3レーン×3段の盤面を生成する。
 
-    初期確率では元の固定レーンを使用する。
-    管理者が確率を変更した場合は、その比率でレーンを生成する。
+    設定された出現比率を使って各レーンを生成する。
     """
 
     patterns = LANE_PATTERNS
@@ -414,7 +542,10 @@ def make_grid(positions, weights=None):
             patterns = [
                 random.choices(
                     SYMBOLS,
-                    weights=[normalized[symbol] for symbol in SYMBOLS],
+                    weights=[
+                        normalized[symbol]
+                        for symbol in SYMBOLS
+                    ],
                     k=len(LANE_PATTERNS[lane_index]),
                 )
                 for lane_index in range(3)
@@ -428,18 +559,13 @@ def make_grid(positions, weights=None):
         for lane_index in range(3):
             pattern = patterns[lane_index]
             position = positions[lane_index]
-            row.append(pattern[(position + row_offset) % len(pattern)])
+            row.append(
+                pattern[(position + row_offset) % len(pattern)]
+            )
 
         grid.append(row)
 
     return grid
-
-
-def grid_text(grid):
-    return "\n".join(
-        " | ".join(row)
-        for row in grid
-    )
 
 
 def get_paylines(grid):
@@ -448,7 +574,10 @@ def get_paylines(grid):
 
 
 def get_weights_text(weights):
-    total = sum(max(0, int(weights.get(symbol, 0))) for symbol in SYMBOLS)
+    total = sum(
+        max(0, int(weights.get(symbol, 0)))
+        for symbol in SYMBOLS
+    )
 
     if total <= 0:
         return "確率設定が不正です。"
@@ -458,7 +587,9 @@ def get_weights_text(weights):
     for symbol in SYMBOLS:
         weight = max(0, int(weights.get(symbol, 0)))
         percentage = weight / total * 100
-        lines.append(f"{symbol}：比率 {weight}（約 {percentage:.1f}%）")
+        lines.append(
+            f"{symbol}：比率 {weight}（約 {percentage:.1f}%）"
+        )
 
     return "\n".join(lines)
 
@@ -474,7 +605,10 @@ async def balance_command(ctx, member: discord.Member = None):
 
     embed = discord.Embed(
         title="💰 残高",
-        description=f"{member.mention} の残高：**{amount:,} コイン**",
+        description=(
+            f"{member.mention} の残高："
+            f"**{amount:,} コイン**"
+        ),
         color=discord.Color.gold(),
     )
 
@@ -562,19 +696,36 @@ async def slot_command(ctx, bet: int):
 
     profit = payout - bet
 
+    # 表示用の絵柄を生成
+    # 内部の grid と winning_symbol は変更しない
+    displayed_grid = grid_text(
+        grid,
+        guild=ctx.guild,
+        settings=settings,
+    )
+
     if payout > 0:
+        displayed_winning_symbol = display_symbol(
+            winning_symbol,
+            ctx.guild,
+            settings,
+        )
+
         result_text = (
             f"🎉 **当たり！**\n"
-            f"絵柄：{winning_symbol}\n"
+            f"絵柄：{displayed_winning_symbol}\n"
             f"倍率：**{multiplier}倍**\n"
             f"配当：**{payout:,} コイン**"
         )
+
         color = discord.Color.green()
+
     else:
         result_text = (
             "残念！今回は当たりなし。\n"
             f"損失：**{bet:,} コイン**"
         )
+
         color = discord.Color.red()
 
     embed = discord.Embed(
@@ -582,7 +733,7 @@ async def slot_command(ctx, bet: int):
         description=(
             f"プレイヤー：{ctx.author.mention}\n"
             f"賭け金：**{bet:,} コイン**\n\n"
-            f"```text\n{grid_text(grid)}\n```\n"
+            f"{displayed_grid}\n\n"
             f"{result_text}\n\n"
             f"収支：**{profit:+,} コイン**\n"
             f"現在の残高：**{new_balance:,} コイン**"
@@ -594,6 +745,7 @@ async def slot_command(ctx, bet: int):
 
     log_data = {
         "type": "slot",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
         "guild_id": ctx.guild.id,
         "user_id": ctx.author.id,
         "username": str(ctx.author),
@@ -604,6 +756,7 @@ async def slot_command(ctx, bet: int):
         "grid": grid,
         "winning_symbol": winning_symbol,
         "multiplier": multiplier,
+        "emoji_mode": settings.get("emoji_mode", "unicode"),
     }
 
     record_slot(log_data)
@@ -616,7 +769,7 @@ async def slot_command(ctx, bet: int):
             f"配当：**{payout:,}**\n"
             f"収支：**{profit:+,}**\n"
             f"残高：**{new_balance:,}**\n\n"
-            f"```text\n{grid_text(grid)}\n```"
+            f"{displayed_grid}"
         ),
         color=color,
     )
@@ -675,6 +828,7 @@ async def payment_command(
 
     record_coin({
         "type": "payment",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
         "guild_id": ctx.guild.id if ctx.guild else None,
         "user_id": member.id,
         "username": str(member),
@@ -734,7 +888,9 @@ async def help_command(ctx):
 
 @bot.group(name="Mbot", invoke_without_command=True)
 async def mbot_group(ctx):
-    await ctx.reply("サブコマンドを指定してね。例：`.Mbot help`")
+    await ctx.reply(
+        "サブコマンドを指定してね。例：`.Mbot help`"
+    )
 
 
 @mbot_group.command(name="help")
@@ -775,6 +931,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
         log_configs[str(interaction.guild.id)] = {
             "channel_id": channel.id
         }
+
         save_json(LOG_CONFIG_FILE, log_configs)
 
         await interaction.response.send_message(
@@ -839,18 +996,18 @@ class BetSettingModal(discord.ui.Modal):
         if setting_type == "min_bet":
             title = "最低賭け金の設定"
             label = "最低賭け金"
+            default_amount = 1
         else:
             title = "最大賭け金の設定"
             label = "最大賭け金"
+            default_amount = MAX_BET
 
         super().__init__(title=title)
 
         self.amount_input = discord.ui.TextInput(
             label=label,
             placeholder="例：100",
-            default=str(
-                1 if setting_type == "min_bet" else MAX_BET
-            ),
+            default=str(default_amount),
             required=True,
             min_length=1,
             max_length=15,
@@ -902,7 +1059,9 @@ class BetSettingModal(discord.ui.Modal):
                 return
 
             settings["min_bet"] = amount
-            message = f"最低賭け金を **{amount:,} コイン** に設定したよ。"
+            message = (
+                f"最低賭け金を **{amount:,} コイン** に設定したよ。"
+            )
 
         else:
             current_min = int(settings["min_bet"])
@@ -915,7 +1074,9 @@ class BetSettingModal(discord.ui.Modal):
                 return
 
             settings["max_bet"] = amount
-            message = f"最大賭け金を **{amount:,} コイン** に設定したよ。"
+            message = (
+                f"最大賭け金を **{amount:,} コイン** に設定したよ。"
+            )
 
         save_server_settings(interaction.guild.id)
 
@@ -1014,6 +1175,93 @@ class WeightsSettingModal(discord.ui.Modal):
 
 
 # ==================================================
+# 出目の絵文字タイプ設定
+# ==================================================
+
+class EmojiModeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label="通常の絵文字",
+                description="🍒 🍋 ⭐ 🔔 7️⃣ を使用する",
+                value="unicode",
+                emoji="🍒",
+            ),
+            discord.SelectOption(
+                label="サーバーのカスタム絵文字",
+                description="emoji_12〜emoji_16 を使用する",
+                value="custom",
+                emoji="⭐",
+            ),
+        ]
+
+        super().__init__(
+            placeholder="表示する絵文字タイプを選択",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "サーバー内で使ってね。",
+                ephemeral=True,
+            )
+            return
+
+        if not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "サーバー管理者のみ変更できるよ。",
+                ephemeral=True,
+            )
+            return
+
+        selected_mode = self.values[0]
+        settings = get_server_settings(interaction.guild.id)
+
+        if selected_mode == "custom":
+            found, missing = get_custom_emoji_status(interaction.guild)
+
+            settings["emoji_mode"] = "custom"
+            save_server_settings(interaction.guild.id)
+
+            if missing:
+                missing_text = "\n".join(missing)
+
+                await interaction.response.send_message(
+                    "カスタム絵文字モードに変更したよ。\n\n"
+                    "ただし、次の絵文字はサーバー内で見つからなかったため、"
+                    "通常の絵文字で表示するよ。\n"
+                    f"{missing_text}\n\n"
+                    "サーバー内の絵文字名が正しいか確認してね。",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "✅ 出目の表示を **サーバーのカスタム絵文字** に変更したよ。\n"
+                    "次のスロットから反映されるよ。",
+                    ephemeral=True,
+                )
+
+        else:
+            settings["emoji_mode"] = "unicode"
+            save_server_settings(interaction.guild.id)
+
+            await interaction.response.send_message(
+                "✅ 出目の表示を **通常の絵文字** に変更したよ。\n"
+                "次のスロットから反映されるよ。",
+                ephemeral=True,
+            )
+
+
+class EmojiModeSettingView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(EmojiModeSelect())
+
+
+# ==================================================
 # /setting 選択メニュー
 # ==================================================
 
@@ -1037,6 +1285,12 @@ class SettingActionSelect(discord.ui.Select):
                 description="スロットの絵柄ごとの比率を変更",
                 value="weights",
                 emoji="🎰",
+            ),
+            discord.SelectOption(
+                label="出目の絵文字タイプ",
+                description="通常の絵文字とカスタム絵文字を切り替え",
+                value="emoji_mode",
+                emoji="🎨",
             ),
             discord.SelectOption(
                 label="ログ送信先",
@@ -1096,6 +1350,26 @@ class SettingActionSelect(discord.ui.Select):
         elif selected == "weights":
             await interaction.response.send_modal(
                 WeightsSettingModal(settings["weights"])
+            )
+
+        elif selected == "emoji_mode":
+            embed = discord.Embed(
+                title="🎨 出目の絵文字タイプ",
+                description=(
+                    "スロット盤面に表示する絵文字を選択してね。\n\n"
+                    "**通常の絵文字**\n"
+                    "🍒 🍋 ⭐ 🔔 7️⃣\n\n"
+                    "**サーバーのカスタム絵文字**\n"
+                    "emoji_12〜emoji_16\n\n"
+                    "変更は次のスロットから反映されるよ。"
+                ),
+                color=discord.Color.blurple(),
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=EmojiModeSettingView(),
+                ephemeral=True,
             )
 
         elif selected == "log_channel":
@@ -1279,6 +1553,7 @@ async def setting_command(interaction: discord.Interaction):
 
     log_config = log_configs.get(str(interaction.guild.id), {})
     channel_id = log_config.get("channel_id")
+
     log_channel = (
         interaction.guild.get_channel(int(channel_id))
         if channel_id
@@ -1338,6 +1613,12 @@ async def setting_command(interaction: discord.Interaction):
     )
 
     embed.add_field(
+        name="出目の絵文字タイプ",
+        value=get_display_mode_name(settings),
+        inline=True,
+    )
+
+    embed.add_field(
         name="絵柄・出現比率",
         value=get_weights_text(settings["weights"]),
         inline=False,
@@ -1371,7 +1652,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     # 保存済みログを時系列に並べ、各ユーザーの最新残高を採用
     latest_balances = {}
-
     combined_logs = []
 
     for item in slot_logs:
@@ -1382,17 +1662,19 @@ async def coinrecovery_command(interaction: discord.Interaction):
         if item.get("guild_id") == interaction.guild.id:
             combined_logs.append(item)
 
-    # 過去ログに時刻がある場合は時刻順にする
-    combined_logs.sort(key=lambda item: item.get("timestamp", 0))
+    combined_logs.sort(
+        key=lambda item: item.get("timestamp", 0)
+    )
 
     for item in combined_logs:
         user_id = item.get("user_id")
+
         if user_id is None:
             continue
 
-        # slotログはbalance、Paymentログはafterを保持
         if "balance" in item:
             latest_balances[str(user_id)] = int(item["balance"])
+
         elif "after" in item:
             latest_balances[str(user_id)] = int(item["after"])
 
@@ -1465,7 +1747,15 @@ async def setting_info_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="メンテナンス",
-        value="ON" if settings.get("maintenance") else "OFF",
+        value=(
+            "ON" if settings.get("maintenance") else "OFF"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="出目の絵文字タイプ",
+        value=get_display_mode_name(settings),
         inline=True,
     )
 
@@ -1500,6 +1790,7 @@ def health():
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
+
     app.run(
         host="0.0.0.0",
         port=port,

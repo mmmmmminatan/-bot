@@ -32,7 +32,6 @@ COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
 
 # 内部処理に使用する絵柄
-# カスタム絵文字に切り替えても、この値は変更しない
 SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣"]
 
 PAYOUTS = {
@@ -44,11 +43,6 @@ PAYOUTS = {
 }
 
 # サーバー内のカスタム絵文字名
-# ⭐ = emoji_12
-# 🍋 = emoji_13
-# 🔔 = emoji_14
-# 🍒 = emoji_15
-# 7️⃣ = emoji_16
 CUSTOM_EMOJI_NAMES = {
     "⭐": "emoji_12",
     "🍋": "emoji_13",
@@ -79,8 +73,6 @@ DEFAULT_SERVER_SETTINGS = {
     "weights": DEFAULT_WEIGHTS.copy(),
     "slot_permission": "everyone",
     "maintenance": False,
-    # unicode = 通常の絵文字
-    # custom = サーバーのカスタム絵文字
     "emoji_mode": "unicode",
 }
 
@@ -160,7 +152,6 @@ def get_server_settings(guild_id):
     for symbol in SYMBOLS:
         current["weights"].setdefault(symbol, DEFAULT_WEIGHTS[symbol])
 
-    # 不正な設定値があった場合は初期値へ戻す
     if current.get("emoji_mode") not in ("unicode", "custom"):
         current["emoji_mode"] = "unicode"
 
@@ -178,10 +169,7 @@ def save_server_settings(guild_id):
 # ==================================================
 
 def find_custom_emoji(guild, symbol):
-    """
-    サーバー内から対応するカスタム絵文字を探す。
-    見つからない場合はNoneを返す。
-    """
+    """サーバー内から対応するカスタム絵文字を探す。"""
 
     if guild is None:
         return None
@@ -199,12 +187,7 @@ def find_custom_emoji(guild, symbol):
 
 
 def display_symbol(symbol, guild, settings):
-    """
-    画面表示用の絵柄を返す。
-
-    内部処理・当たり判定・配当には元のUnicode絵柄を使用する。
-    カスタム絵文字がない場合は通常絵文字に戻す。
-    """
+    """画面表示用の絵柄を返す。"""
 
     if settings.get("emoji_mode", "unicode") == "custom":
         custom_emoji = find_custom_emoji(guild, symbol)
@@ -229,7 +212,7 @@ def grid_text(grid, guild=None, settings=None):
             for symbol in row
         ]
 
-        lines.append(" | ".join(displayed_row))
+        lines.append("|" + "|".join(displayed_row) + "|")
 
     return "\n".join(lines)
 
@@ -340,7 +323,6 @@ def is_admin_or_owner(member):
 def can_use_slot(member, settings):
     """メンテナンス・スロット使用権限を確認する。"""
 
-    # 管理者は設定確認や動作テストのため常に利用可能
     if is_admin(member):
         return True, None
 
@@ -524,11 +506,7 @@ async def send_coin_log(guild, embed):
 # ==================================================
 
 def make_grid(positions, weights=None):
-    """
-    3レーン×3段の盤面を生成する。
-
-    設定された出現比率を使って各レーンを生成する。
-    """
+    """3レーン×3段の盤面を生成する。"""
 
     patterns = LANE_PATTERNS
 
@@ -694,54 +672,60 @@ async def slot_command(ctx, bet: int):
 
     set_balance(ctx.author.id, new_balance)
 
+    # 実際の残高の増減
     profit = payout - bet
 
-    # 表示用の絵柄を生成
-    # 内部の grid と winning_symbol は変更しない
+    # 収支の表示を + / - / ±0 にする
+    if profit > 0:
+        profit_text = f"+{profit:,}"
+    elif profit < 0:
+        profit_text = f"-{abs(profit):,}"
+    else:
+        profit_text = "±0"
+
+    # 出目を表示用の絵文字に変換
+    # 内部の当たり判定・配当計算には影響しない
+    displayed_rows = []
+
+    for row in grid:
+        displayed_row = [
+            display_symbol(symbol, ctx.guild, settings)
+            for symbol in row
+        ]
+        displayed_rows.append(displayed_row)
+
+    # 希望のレイアウトにする
+    slot_display = (
+        f"\\_\\_\\_SLOT\\_\\_\\_\n"
+        f"|{ '|'.join(displayed_rows[0]) }|"
+        f"　まわしたひと：{ctx.author.mention}\n"
+        f"|{ '|'.join(displayed_rows[1]) }|"
+        f"　賭け金：{bet:,}コイン\n"
+        f"|{ '|'.join(displayed_rows[2]) }|"
+        f"　収支：{profit_text}コイン\n"
+        f"￣￣￣￣￣￣"
+    )
+
+    if payout > 0:
+        color = discord.Color.green()
+    elif profit == 0:
+        color = discord.Color.gold()
+    else:
+        color = discord.Color.red()
+
+    embed = discord.Embed(
+        description=slot_display,
+        color=color,
+    )
+
+    await ctx.reply(embed=embed, mention_author=False)
+
+    # ログ用の盤面
     displayed_grid = grid_text(
         grid,
         guild=ctx.guild,
         settings=settings,
     )
-
-    if payout > 0:
-        displayed_winning_symbol = display_symbol(
-            winning_symbol,
-            ctx.guild,
-            settings,
-        )
-
-        result_text = (
-            f"🎉 **当たり！**\n"
-            f"絵柄：{displayed_winning_symbol}\n"
-            f"倍率：**{multiplier}倍**\n"
-            f"配当：**{payout:,} コイン**"
-        )
-
-        color = discord.Color.green()
-
-    else:
-        result_text = (
-            "残念！今回は当たりなし。\n"
-            f"損失：**{bet:,} コイン**"
-        )
-
-        color = discord.Color.red()
-
-    embed = discord.Embed(
-        title="🎰 スロット結果",
-        description=(
-            f"プレイヤー：{ctx.author.mention}\n"
-            f"賭け金：**{bet:,} コイン**\n\n"
-            f"{displayed_grid}\n\n"
-            f"{result_text}\n\n"
-            f"収支：**{profit:+,} コイン**\n"
-            f"現在の残高：**{new_balance:,} コイン**"
-        ),
-        color=color,
-    )
-
-    await ctx.reply(embed=embed, mention_author=False)
 
     log_data = {
         "type": "slot",
@@ -767,7 +751,7 @@ async def slot_command(ctx, bet: int):
             f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
             f"賭け金：**{bet:,}**\n"
             f"配当：**{payout:,}**\n"
-            f"収支：**{profit:+,}**\n"
+            f"収支：**{profit_text}**\n"
             f"残高：**{new_balance:,}**\n\n"
             f"{displayed_grid}"
         ),
@@ -1650,7 +1634,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     await interaction.response.defer(ephemeral=True)
 
-    # 保存済みログを時系列に並べ、各ユーザーの最新残高を採用
     latest_balances = {}
     combined_logs = []
 

@@ -636,6 +636,166 @@ async def balance_command(ctx, member: discord.Member = None):
 
 
 # ==================================================
+# .all balance（全メンバーの残高一覧）
+# ==================================================
+
+BALANCE_LIST_PER_PAGE = 15
+
+
+class AllBalanceView(discord.ui.View):
+    def __init__(self, ctx, pages):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+        self.pages = pages
+        self.page_index = 0
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.page_index <= 0
+        self.next_button.disabled = self.page_index >= len(self.pages) - 1
+
+    def make_embed(self):
+        embed = discord.Embed(
+            title="💰 全メンバーの残高一覧",
+            description=self.pages[self.page_index],
+            color=discord.Color.gold(),
+        )
+        embed.set_footer(
+            text=f"{self.page_index + 1} / {len(self.pages)} ページ"
+        )
+        return embed
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message(
+                "この一覧を操作できるのは実行した本人だけだよ。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(
+        label="前へ",
+        emoji="◀️",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def previous_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.page_index -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(
+            embed=self.make_embed(),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="次へ",
+        emoji="▶️",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def next_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.page_index += 1
+        self.update_buttons()
+        await interaction.response.edit_message(
+            embed=self.make_embed(),
+            view=self,
+        )
+
+
+@bot.group(name="all", invoke_without_command=True)
+async def all_group(ctx):
+    await ctx.reply(
+        "サブコマンドを指定してね。\n"
+        "例：`.all balance`",
+        mention_author=False,
+    )
+
+
+@all_group.command(name="balance")
+async def all_balance_command(ctx):
+    # サーバー内でのみ実行可能
+    if ctx.guild is None:
+        await ctx.reply(
+            "このコマンドはサーバー内で使ってね。",
+            mention_author=False,
+        )
+        return
+
+    # ownerロールまたはサーバー管理者のみ
+    if not is_admin_or_owner(ctx.author):
+        await ctx.reply(
+            f"このコマンドはサーバー管理者または"
+            f"`{OWNER_ROLE_NAME}` ロール専用だよ。",
+            mention_author=False,
+        )
+        return
+
+    # メンバー一覧を取得
+    try:
+        members = [
+            member
+            async for member in ctx.guild.fetch_members(limit=None)
+            if not member.bot
+        ]
+    except Exception:
+        print("[ALL BALANCE] メンバー取得に失敗。キャッシュを使用します。")
+        traceback.print_exc()
+
+        members = [
+            member
+            for member in ctx.guild.members
+            if not member.bot
+        ]
+
+    # 名前順に並べる
+    members.sort(key=lambda member: member.display_name.casefold())
+
+    if not members:
+        await ctx.reply(
+            "表示できるメンバーがいないよ。",
+            mention_author=False,
+        )
+        return
+
+    # balances.jsonに登録されていないメンバーは
+    # 初期残高を表示する。ここではデータを新規保存しない。
+    lines = []
+
+    for number, member in enumerate(members, start=1):
+        amount = int(
+            balances.get(str(member.id), STARTING_BALANCE)
+        )
+
+        lines.append(
+            f"`{number:>3}.` {member.mention} — **{amount:,} コイン**"
+        )
+
+    # 1ページ15人ずつに分割
+    pages = [
+        "\n".join(
+            lines[index:index + BALANCE_LIST_PER_PAGE]
+        )
+        for index in range(0, len(lines), BALANCE_LIST_PER_PAGE)
+    ]
+
+    view = AllBalanceView(ctx, pages)
+
+    await ctx.reply(
+        embed=view.make_embed(),
+        view=view,
+        mention_author=False,
+    )
+    
+    
+# ==================================================
 # .slot
 # ==================================================
 

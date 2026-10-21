@@ -506,37 +506,79 @@ async def send_coin_log(guild, embed):
 # ==================================================
 
 def make_grid(positions, weights=None):
-    """3レーン×3段の盤面を生成する。"""
+    """
+    3レーン×3段の盤面を生成する。
 
-    patterns = LANE_PATTERNS
+    修正点：
+    各レーンの元パターンに同じ絵柄を重複させない。
+    重み付き抽選は「重複なし」で行う。
+    そのため、1つの縦レーンに同じ絵柄が複数表示されない。
+    """
+
+    normalized = {}
 
     if weights:
-        normalized = {
-            symbol: max(0, int(weights.get(symbol, 0)))
-            for symbol in SYMBOLS
-        }
-
-        if sum(normalized.values()) > 0:
-            patterns = [
-                random.choices(
-                    SYMBOLS,
-                    weights=[
-                        normalized[symbol]
-                        for symbol in SYMBOLS
-                    ],
-                    k=len(LANE_PATTERNS[lane_index]),
+        for symbol in SYMBOLS:
+            try:
+                normalized[symbol] = max(
+                    0,
+                    int(weights.get(symbol, 0)),
                 )
-                for lane_index in range(3)
+            except (TypeError, ValueError):
+                normalized[symbol] = 0
+    else:
+        normalized = DEFAULT_WEIGHTS.copy()
+
+    # 比率がすべて0の場合は初期設定に戻す
+    if sum(normalized.values()) <= 0:
+        normalized = DEFAULT_WEIGHTS.copy()
+
+    patterns = []
+
+    # 3レーンそれぞれの絵柄パターンを作る
+    for lane_index in range(3):
+        available_symbols = SYMBOLS.copy()
+        lane_pattern = []
+
+        # 重複なしで5種類を並べる
+        # すでに選んだ絵柄は次の抽選対象から除外する
+        while available_symbols:
+            available_weights = [
+                normalized[symbol]
+                for symbol in available_symbols
             ]
+
+            if sum(available_weights) <= 0:
+                # 残りの比率がすべて0なら均等に選ぶ
+                chosen = random.choice(available_symbols)
+            else:
+                chosen = random.choices(
+                    available_symbols,
+                    weights=available_weights,
+                    k=1,
+                )[0]
+
+            lane_pattern.append(chosen)
+            available_symbols.remove(chosen)
+
+        # レーンごとに並び方を変える
+        random.shuffle(lane_pattern)
+        patterns.append(lane_pattern)
 
     grid = []
 
+    # positionsを利用して停止位置を決める
     for row_offset in [-1, 0, 1]:
         row = []
 
         for lane_index in range(3):
             pattern = patterns[lane_index]
-            position = positions[lane_index]
+
+            try:
+                position = int(positions[lane_index])
+            except (IndexError, TypeError, ValueError):
+                position = 0
+
             row.append(
                 pattern[(position + row_offset) % len(pattern)]
             )
@@ -684,7 +726,6 @@ async def slot_command(ctx, bet: int):
         profit_text = "±0"
 
     # 出目を表示用の絵文字に変換
-    # 内部の当たり判定・配当計算には影響しない
     displayed_rows = []
 
     for row in grid:
@@ -694,14 +735,14 @@ async def slot_command(ctx, bet: int):
         ]
         displayed_rows.append(displayed_row)
 
-    # 希望のレイアウトにする
+    # スロット結果の表示
     slot_display = (
         f"\\_\\_\\_SLOT\\_\\_\\_\n"
-        f"|{ '|'.join(displayed_rows[0]) }|"
+        f"|{'|'.join(displayed_rows[0])}|"
         f"　まわしたひと：{ctx.author.mention}\n"
-        f"|{ '|'.join(displayed_rows[1]) }|"
+        f"|{'|'.join(displayed_rows[1])}|"
         f"　賭け金：{bet:,}コイン\n"
-        f"|{ '|'.join(displayed_rows[2]) }|"
+        f"|{'|'.join(displayed_rows[2])}|"
         f"　収支：{profit_text}コイン\n"
         f"￣￣￣￣￣￣"
     )

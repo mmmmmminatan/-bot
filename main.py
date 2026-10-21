@@ -24,6 +24,9 @@ STARTING_BALANCE = 1000
 MAX_BET = 1_000_000_000
 MAX_LOGS = 10000
 
+# スロット・Payment共通の固定ログ送信先
+LOG_CHANNEL_ID = 1561184711571939438
+
 BALANCES_FILE = Path("balances.json")
 POSITIONS_FILE = Path("slot_positions.json")
 SLOT_LOGS_FILE = Path("slot_logs.json")
@@ -261,6 +264,7 @@ bot = commands.Bot(
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user} ({bot.user.id})")
+    print(f"固定ログチャンネルID: {LOG_CHANNEL_ID}")
 
     try:
         synced = await bot.tree.sync()
@@ -412,39 +416,80 @@ async def on_app_command_error(interaction, error):
 
 
 # ==================================================
-# ログチャンネル
+# ログチャンネル（固定）
 # ==================================================
 
 async def get_log_channel(guild):
+    """
+    スロットとPayment共通の固定ログチャンネルを取得する。
+    log_config.jsonの設定には依存しない。
+    """
+
     if guild is None:
         return None
 
-    config = log_configs.get(str(guild.id), {})
-    channel_id = config.get("channel_id")
+    try:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    if not channel_id:
-        return None
+        if channel is None:
+            channel = await bot.fetch_channel(LOG_CHANNEL_ID)
 
-    channel = guild.get_channel(int(channel_id))
-
-    if channel is None:
-        try:
-            channel = await guild.fetch_channel(int(channel_id))
-        except Exception:
+        if not isinstance(channel, discord.TextChannel):
+            print(
+                "[LOG ERROR] 指定先がテキストチャンネルではありません: "
+                f"{LOG_CHANNEL_ID}"
+            )
             return None
 
-    if not isinstance(channel, discord.TextChannel):
-        return None
+        # 指定チャンネルが別サーバーに属していないか確認
+        if channel.guild.id != guild.id:
+            print(
+                "[LOG ERROR] 固定ログチャンネルが実行サーバーと異なります。"
+                f"実行サーバー={guild.id}, "
+                f"ログチャンネルのサーバー={channel.guild.id}"
+            )
+            return None
 
-    if guild.me is None:
-        return None
+        me = channel.guild.me
 
-    permissions = channel.permissions_for(guild.me)
+        if me is None:
+            print("[LOG ERROR] Botのサーバーメンバー情報を取得できません。")
+            return None
 
-    if not permissions.send_messages or not permissions.embed_links:
-        return None
+        permissions = channel.permissions_for(me)
 
-    return channel
+        if not permissions.view_channel:
+            print("[LOG ERROR] ログチャンネルを見る権限がありません。")
+            return None
+
+        if not permissions.send_messages:
+            print("[LOG ERROR] ログチャンネルに送信する権限がありません。")
+            return None
+
+        if not permissions.embed_links:
+            print("[LOG ERROR] 埋め込みリンクの権限がありません。")
+            return None
+
+        return channel
+
+    except discord.NotFound:
+        print(
+            f"[LOG ERROR] ログチャンネルが見つかりません: "
+            f"{LOG_CHANNEL_ID}"
+        )
+    except discord.Forbidden:
+        print(
+            f"[LOG ERROR] ログチャンネルへのアクセスが拒否されました: "
+            f"{LOG_CHANNEL_ID}"
+        )
+    except discord.HTTPException:
+        print("[LOG ERROR] ログチャンネルの取得に失敗しました。")
+        traceback.print_exc()
+    except Exception:
+        print("[LOG ERROR] ログチャンネル取得中に予期しないエラー。")
+        traceback.print_exc()
+
+    return None
 
 
 def record_slot(data):
@@ -479,10 +524,12 @@ async def send_slot_log(guild, embed):
     channel = await get_log_channel(guild)
 
     if channel is None:
+        print("[SLOT LOG] 固定ログチャンネルを取得できず、送信できませんでした。")
         return
 
     try:
         await channel.send(embed=embed)
+        print(f"[SLOT LOG] 送信成功: channel={channel.id}")
     except Exception:
         print("[SLOT LOG SEND ERROR]")
         traceback.print_exc()
@@ -492,12 +539,14 @@ async def send_coin_log(guild, embed):
     channel = await get_log_channel(guild)
 
     if channel is None:
+        print("[PAYMENT LOG] 固定ログチャンネルを取得できず、送信できませんでした。")
         return
 
     try:
         await channel.send(embed=embed)
+        print(f"[PAYMENT LOG] 送信成功: channel={channel.id}")
     except Exception:
-        print("[COIN LOG SEND ERROR]")
+        print("[PAYMENT LOG SEND ERROR]")
         traceback.print_exc()
 
 
@@ -509,10 +558,8 @@ def make_grid(positions, weights=None):
     """
     3レーン×3段の盤面を生成する。
 
-    修正点：
-    各レーンの元パターンに同じ絵柄を重複させない。
-    重み付き抽選は「重複なし」で行う。
-    そのため、1つの縦レーンに同じ絵柄が複数表示されない。
+    各縦レーンの3段に同じ絵柄が重複しないようにする。
+    絵柄の重み付き抽選は重複なしで行う。
     """
 
     normalized = {}
@@ -529,19 +576,15 @@ def make_grid(positions, weights=None):
     else:
         normalized = DEFAULT_WEIGHTS.copy()
 
-    # 比率がすべて0の場合は初期設定に戻す
     if sum(normalized.values()) <= 0:
         normalized = DEFAULT_WEIGHTS.copy()
 
     patterns = []
 
-    # 3レーンそれぞれの絵柄パターンを作る
     for lane_index in range(3):
         available_symbols = SYMBOLS.copy()
         lane_pattern = []
 
-        # 重複なしで5種類を並べる
-        # すでに選んだ絵柄は次の抽選対象から除外する
         while available_symbols:
             available_weights = [
                 normalized[symbol]
@@ -549,7 +592,6 @@ def make_grid(positions, weights=None):
             ]
 
             if sum(available_weights) <= 0:
-                # 残りの比率がすべて0なら均等に選ぶ
                 chosen = random.choice(available_symbols)
             else:
                 chosen = random.choices(
@@ -561,13 +603,11 @@ def make_grid(positions, weights=None):
             lane_pattern.append(chosen)
             available_symbols.remove(chosen)
 
-        # レーンごとに並び方を変える
         random.shuffle(lane_pattern)
         patterns.append(lane_pattern)
 
     grid = []
 
-    # positionsを利用して停止位置を決める
     for row_offset in [-1, 0, 1]:
         row = []
 
@@ -607,6 +647,7 @@ def get_weights_text(weights):
     for symbol in SYMBOLS:
         weight = max(0, int(weights.get(symbol, 0)))
         percentage = weight / total * 100
+
         lines.append(
             f"{symbol}：比率 {weight}（約 {percentage:.1f}%）"
         )
@@ -648,12 +689,13 @@ class AllBalanceView(discord.ui.View):
         self.ctx = ctx
         self.pages = pages
         self.page_index = 0
-        self.message = None
         self.update_buttons()
 
     def update_buttons(self):
         self.previous_button.disabled = self.page_index <= 0
-        self.next_button.disabled = self.page_index >= len(self.pages) - 1
+        self.next_button.disabled = (
+            self.page_index >= len(self.pages) - 1
+        )
 
     def make_embed(self):
         embed = discord.Embed(
@@ -661,9 +703,11 @@ class AllBalanceView(discord.ui.View):
             description=self.pages[self.page_index],
             color=discord.Color.gold(),
         )
+
         embed.set_footer(
             text=f"{self.page_index + 1} / {len(self.pages)} ページ"
         )
+
         return embed
 
     async def interaction_check(self, interaction):
@@ -673,6 +717,7 @@ class AllBalanceView(discord.ui.View):
                 ephemeral=True,
             )
             return False
+
         return True
 
     @discord.ui.button(
@@ -687,6 +732,7 @@ class AllBalanceView(discord.ui.View):
     ):
         self.page_index -= 1
         self.update_buttons()
+
         await interaction.response.edit_message(
             embed=self.make_embed(),
             view=self,
@@ -704,6 +750,7 @@ class AllBalanceView(discord.ui.View):
     ):
         self.page_index += 1
         self.update_buttons()
+
         await interaction.response.edit_message(
             embed=self.make_embed(),
             view=self,
@@ -721,7 +768,6 @@ async def all_group(ctx):
 
 @all_group.command(name="balance")
 async def all_balance_command(ctx):
-    # サーバー内でのみ実行可能
     if ctx.guild is None:
         await ctx.reply(
             "このコマンドはサーバー内で使ってね。",
@@ -729,7 +775,6 @@ async def all_balance_command(ctx):
         )
         return
 
-    # ownerロールまたはサーバー管理者のみ
     if not is_admin_or_owner(ctx.author):
         await ctx.reply(
             f"このコマンドはサーバー管理者または"
@@ -738,7 +783,6 @@ async def all_balance_command(ctx):
         )
         return
 
-    # メンバー一覧を取得
     try:
         members = [
             member
@@ -746,7 +790,10 @@ async def all_balance_command(ctx):
             if not member.bot
         ]
     except Exception:
-        print("[ALL BALANCE] メンバー取得に失敗。キャッシュを使用します。")
+        print(
+            "[ALL BALANCE] メンバー取得に失敗。"
+            "キャッシュを使用します。"
+        )
         traceback.print_exc()
 
         members = [
@@ -755,8 +802,9 @@ async def all_balance_command(ctx):
             if not member.bot
         ]
 
-    # 名前順に並べる
-    members.sort(key=lambda member: member.display_name.casefold())
+    members.sort(
+        key=lambda member: member.display_name.casefold()
+    )
 
     if not members:
         await ctx.reply(
@@ -765,8 +813,6 @@ async def all_balance_command(ctx):
         )
         return
 
-    # balances.jsonに登録されていないメンバーは
-    # 初期残高を表示する。ここではデータを新規保存しない。
     lines = []
 
     for number, member in enumerate(members, start=1):
@@ -775,10 +821,10 @@ async def all_balance_command(ctx):
         )
 
         lines.append(
-            f"`{number:>3}.` {member.mention} — **{amount:,} コイン**"
+            f"`{number:>3}.` {member.mention} — "
+            f"**{amount:,} コイン**"
         )
 
-    # 1ページ15人ずつに分割
     pages = [
         "\n".join(
             lines[index:index + BALANCE_LIST_PER_PAGE]
@@ -793,8 +839,8 @@ async def all_balance_command(ctx):
         view=view,
         mention_author=False,
     )
-    
-    
+
+
 # ==================================================
 # .slot
 # ==================================================
@@ -802,7 +848,10 @@ async def all_balance_command(ctx):
 @bot.command(name="slot")
 async def slot_command(ctx, bet: int):
     if ctx.guild is None:
-        await ctx.reply("このコマンドはサーバー内で使ってね。")
+        await ctx.reply(
+            "このコマンドはサーバー内で使ってね。",
+            mention_author=False,
+        )
         return
 
     settings = get_server_settings(ctx.guild.id)
@@ -810,7 +859,7 @@ async def slot_command(ctx, bet: int):
     allowed, reason = can_use_slot(ctx.author, settings)
 
     if not allowed:
-        await ctx.reply(reason)
+        await ctx.reply(reason, mention_author=False)
         return
 
     minimum = int(settings.get("min_bet", 1))
@@ -818,19 +867,22 @@ async def slot_command(ctx, bet: int):
 
     if bet < minimum:
         await ctx.reply(
-            f"最低賭け金は **{minimum:,} コイン** だよ。"
+            f"最低賭け金は **{minimum:,} コイン** だよ。",
+            mention_author=False,
         )
         return
 
     if bet > maximum:
         await ctx.reply(
-            f"最大賭け金は **{maximum:,} コイン** だよ。"
+            f"最大賭け金は **{maximum:,} コイン** だよ。",
+            mention_author=False,
         )
         return
 
     if bet > MAX_BET:
         await ctx.reply(
-            f"賭け金は最大 **{MAX_BET:,} コイン** までだよ。"
+            f"賭け金は最大 **{MAX_BET:,} コイン** までだよ。",
+            mention_author=False,
         )
         return
 
@@ -839,11 +891,11 @@ async def slot_command(ctx, bet: int):
     if bet > current_balance:
         await ctx.reply(
             f"残高が足りないよ！\n"
-            f"残高：**{current_balance:,}** コイン"
+            f"残高：**{current_balance:,}** コイン",
+            mention_author=False,
         )
         return
 
-    # 3レーンそれぞれの停止位置
     positions = [
         random.randrange(len(LANE_PATTERNS[index]))
         for index in range(3)
@@ -865,7 +917,6 @@ async def slot_command(ctx, bet: int):
             multiplier = PAYOUTS.get(winning_symbol, 0)
             break
 
-    # 賭け金を引いてから、配当を加算
     new_balance = current_balance - bet
     payout = bet * multiplier
 
@@ -874,10 +925,8 @@ async def slot_command(ctx, bet: int):
 
     set_balance(ctx.author.id, new_balance)
 
-    # 実際の残高の増減
     profit = payout - bet
 
-    # 収支の表示を + / - / ±0 にする
     if profit > 0:
         profit_text = f"+{profit:,}"
     elif profit < 0:
@@ -885,7 +934,6 @@ async def slot_command(ctx, bet: int):
     else:
         profit_text = "±0"
 
-    # 出目を表示用の絵文字に変換
     displayed_rows = []
 
     for row in grid:
@@ -893,9 +941,9 @@ async def slot_command(ctx, bet: int):
             display_symbol(symbol, ctx.guild, settings)
             for symbol in row
         ]
+
         displayed_rows.append(displayed_row)
 
-    # スロット結果の表示
     slot_display = (
         f"\\_\\_\\_SLOT\\_\\_\\_\n"
         f"|{'|'.join(displayed_rows[0])}|"
@@ -919,9 +967,11 @@ async def slot_command(ctx, bet: int):
         color=color,
     )
 
-    await ctx.reply(embed=embed, mention_author=False)
+    await ctx.reply(
+        embed=embed,
+        mention_author=False,
+    )
 
-    # ログ用の盤面
     displayed_grid = grid_text(
         grid,
         guild=ctx.guild,
@@ -974,21 +1024,29 @@ async def payment_command(
 ):
     if not has_owner_role(ctx.author):
         await ctx.reply(
-            f"このコマンドは `{OWNER_ROLE_NAME}` ロール専用だよ。"
+            f"このコマンドは `{OWNER_ROLE_NAME}` ロール専用だよ。",
+            mention_author=False,
         )
         return
 
     if member.bot:
-        await ctx.reply("Botには送金できないよ。")
+        await ctx.reply(
+            "Botには送金できないよ。",
+            mention_author=False,
+        )
         return
 
     if amount == 0:
-        await ctx.reply("金額は0以外にしてね。")
+        await ctx.reply(
+            "金額は0以外にしてね。",
+            mention_author=False,
+        )
         return
 
     if abs(amount) > MAX_BET:
         await ctx.reply(
-            f"金額は ±{MAX_BET:,} コイン以内にしてね。"
+            f"金額は ±{MAX_BET:,} コイン以内にしてね。",
+            mention_author=False,
         )
         return
 
@@ -1009,7 +1067,10 @@ async def payment_command(
         color=discord.Color.blurple(),
     )
 
-    await ctx.reply(embed=embed, mention_author=False)
+    await ctx.reply(
+        embed=embed,
+        mention_author=False,
+    )
 
     record_coin({
         "type": "payment",
@@ -1053,18 +1114,22 @@ async def help_command(ctx):
             "`.slot 賭け金` — スロットを回す\n"
             "`.balance` — 自分の残高を見る\n"
             "`.balance @ユーザー` — 指定ユーザーの残高を見る\n"
+            "`.all balance` — 全メンバーの残高一覧（管理者・owner専用）\n"
             "`.help` — この一覧を表示\n\n"
             "**ownerロール専用**\n"
             "`.Payment @ユーザー 金額` — 残高を増減する\n\n"
             "**サーバー管理者向け**\n"
             "`/setting` — Botの設定パネル\n"
-            "`/log panel` — ログ送信先設定\n"
+            "`/log panel` — 固定ログ送信先の確認\n"
             "`/coinrecovery` — ログから残高を復旧"
         ),
         color=discord.Color.blurple(),
     )
 
-    await ctx.reply(embed=embed, mention_author=False)
+    await ctx.reply(
+        embed=embed,
+        mention_author=False,
+    )
 
 
 # ==================================================
@@ -1084,13 +1149,13 @@ async def mbot_help(ctx):
 
 
 # ==================================================
-# ログチャンネル選択UI
+# ログチャンネル選択UI（固定先の案内）
 # ==================================================
 
 class LogChannelSelect(discord.ui.ChannelSelect):
     def __init__(self):
         super().__init__(
-            placeholder="ログ送信先チャンネルを選択",
+            placeholder="ログ送信先は固定されています",
             channel_types=[discord.ChannelType.text],
             min_values=1,
             max_values=1,
@@ -1106,21 +1171,15 @@ class LogChannelSelect(discord.ui.ChannelSelect):
 
         if not is_admin(interaction.user):
             await interaction.response.send_message(
-                "サーバー管理者のみ変更できるよ。",
+                "サーバー管理者のみ確認できるよ。",
                 ephemeral=True,
             )
             return
 
-        channel = self.values[0]
-
-        log_configs[str(interaction.guild.id)] = {
-            "channel_id": channel.id
-        }
-
-        save_json(LOG_CONFIG_FILE, log_configs)
-
         await interaction.response.send_message(
-            f"ログ送信先を {channel.mention} に設定したよ。",
+            f"ログ送信先は固定されているよ。\n"
+            f"スロットログ・Paymentログ共通："
+            f"<#{LOG_CHANNEL_ID}>",
             ephemeral=True,
         )
 
@@ -1143,7 +1202,7 @@ log_group = app_commands.Group(
 
 @log_group.command(
     name="panel",
-    description="ログ送信先を設定する",
+    description="固定ログ送信先を確認する",
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def log_panel(interaction: discord.Interaction):
@@ -1154,15 +1213,34 @@ async def log_panel(interaction: discord.Interaction):
         )
         return
 
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+
     embed = discord.Embed(
-        title="📝 ログ設定パネル",
-        description="ログを送信するチャンネルを選択してね。",
+        title="📝 固定ログ送信先",
+        description=(
+            f"スロットログとPaymentログは、"
+            f"次のチャンネルに送信されるよ。\n\n"
+            f"<#{LOG_CHANNEL_ID}>\n\n"
+            f"チャンネルID：`{LOG_CHANNEL_ID}`"
+        ),
         color=discord.Color.blurple(),
     )
 
+    if channel is None:
+        embed.add_field(
+            name="状態",
+            value="チャンネルを取得できません。IDとBotの権限を確認してね。",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="状態",
+            value="固定チャンネルを取得できました。",
+            inline=False,
+        )
+
     await interaction.response.send_message(
         embed=embed,
-        view=LogChannelView(),
         ephemeral=True,
     )
 
@@ -1424,7 +1502,8 @@ class EmojiModeSelect(discord.ui.Select):
                 )
             else:
                 await interaction.response.send_message(
-                    "✅ 出目の表示を **サーバーのカスタム絵文字** に変更したよ。\n"
+                    "✅ 出目の表示を **サーバーのカスタム絵文字** "
+                    "に変更したよ。\n"
                     "次のスロットから反映されるよ。",
                     ephemeral=True,
                 )
@@ -1479,7 +1558,7 @@ class SettingActionSelect(discord.ui.Select):
             ),
             discord.SelectOption(
                 label="ログ送信先",
-                description="ログチャンネルを変更",
+                description="固定ログ送信先を確認",
                 value="log_channel",
                 emoji="📝",
             ),
@@ -1558,15 +1637,12 @@ class SettingActionSelect(discord.ui.Select):
             )
 
         elif selected == "log_channel":
-            embed = discord.Embed(
-                title="📝 ログ送信先設定",
-                description="ログを送るチャンネルを選んでね。",
-                color=discord.Color.blurple(),
-            )
+            channel = bot.get_channel(LOG_CHANNEL_ID)
 
             await interaction.response.send_message(
-                embed=embed,
-                view=LogChannelView(),
+                f"ログ送信先は固定されているよ。\n"
+                f"スロットログ・Paymentログ共通："
+                f"<#{LOG_CHANNEL_ID}>",
                 ephemeral=True,
             )
 
@@ -1644,7 +1720,8 @@ class PermissionSelect(discord.ui.Select):
         }
 
         await interaction.response.send_message(
-            f"スロット使用権限を **{labels[self.values[0]]}** に変更したよ。",
+            f"スロット使用権限を **{labels[self.values[0]]}** "
+            f"に変更したよ。",
             ephemeral=True,
         )
 
@@ -1736,14 +1813,7 @@ async def setting_command(interaction: discord.Interaction):
 
     settings = get_server_settings(interaction.guild.id)
 
-    log_config = log_configs.get(str(interaction.guild.id), {})
-    channel_id = log_config.get("channel_id")
-
-    log_channel = (
-        interaction.guild.get_channel(int(channel_id))
-        if channel_id
-        else None
-    )
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
     permission_labels = {
         "everyone": "全メンバー",
@@ -1792,8 +1862,12 @@ async def setting_command(interaction: discord.Interaction):
     )
 
     embed.add_field(
-        name="ログ送信先",
-        value=log_channel.mention if log_channel else "未設定",
+        name="ログ送信先（固定）",
+        value=(
+            log_channel.mention
+            if log_channel
+            else f"チャンネルID: {LOG_CHANNEL_ID}"
+        ),
         inline=True,
     )
 
@@ -1946,6 +2020,12 @@ async def setting_info_command(interaction: discord.Interaction):
     embed.add_field(
         name="絵柄ごとの比率",
         value=get_weights_text(settings["weights"]),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="固定ログ送信先",
+        value=f"<#{LOG_CHANNEL_ID}>",
         inline=False,
     )
 

@@ -21,7 +21,6 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "owner"
 STARTING_BALANCE = 1000
 
-MAX_BET = 1_000_000_000
 MAX_LOGS = 10000
 
 # スロット・Payment共通の固定ログ送信先
@@ -70,9 +69,9 @@ DEFAULT_WEIGHTS = {
     "7️⃣": 20,
 }
 
+# 最大賭け金の設定は撤廃
 DEFAULT_SERVER_SETTINGS = {
     "min_bet": 1,
-    "max_bet": MAX_BET,
     "weights": DEFAULT_WEIGHTS.copy(),
     "slot_permission": "everyone",
     "maintenance": False,
@@ -94,6 +93,7 @@ def load_json(path, default):
 
     return default
 
+
 def save_json(path, data):
     try:
         with path.open("w", encoding="utf-8") as file:
@@ -102,12 +102,14 @@ def save_json(path, data):
         print(f"[JSON SAVE ERROR] {path}")
         traceback.print_exc()
 
+
 balances = load_json(BALANCES_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
 slot_logs = load_json(SLOT_LOGS_FILE, [])
 log_configs = load_json(LOG_CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
+
 
 def get_balance(user_id):
     user_id = str(user_id)
@@ -118,9 +120,11 @@ def get_balance(user_id):
 
     return int(balances[user_id])
 
+
 def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
     save_json(BALANCES_FILE, balances)
+
 
 def get_server_settings(guild_id):
     """サーバー設定を取得。未設定の項目は初期値を使う。"""
@@ -152,12 +156,16 @@ def get_server_settings(guild_id):
     if current.get("emoji_mode") not in ("unicode", "custom"):
         current["emoji_mode"] = "unicode"
 
+    # 古い設定ファイルに max_bet が残っていても、
+    # 現在の処理では参照しない。
     save_json(SETTINGS_FILE, server_settings)
     return current
+
 
 def save_server_settings(guild_id):
     if guild_id is not None:
         save_json(SETTINGS_FILE, server_settings)
+
 
 # ==================================================
 # 絵柄の表示処理
@@ -180,6 +188,7 @@ def find_custom_emoji(guild, symbol):
 
     return None
 
+
 def display_symbol(symbol, guild, settings):
     """画面表示用の絵柄を返す。"""
 
@@ -190,6 +199,7 @@ def display_symbol(symbol, guild, settings):
             return str(custom_emoji)
 
     return symbol
+
 
 def grid_text(grid, guild=None, settings=None):
     """盤面を表示用の文字列に変換する。"""
@@ -209,11 +219,13 @@ def grid_text(grid, guild=None, settings=None):
 
     return "\n".join(lines)
 
+
 def get_display_mode_name(settings):
     if settings.get("emoji_mode", "unicode") == "custom":
         return "サーバーのカスタム絵文字"
 
     return "通常の絵文字"
+
 
 def get_custom_emoji_status(guild):
     """カスタム絵文字の登録状況を確認する。"""
@@ -232,6 +244,7 @@ def get_custom_emoji_status(guild):
 
     return found, missing
 
+
 # ==================================================
 # Bot本体
 # ==================================================
@@ -247,6 +260,7 @@ bot = commands.Bot(
     case_insensitive=True,
 )
 
+
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user} ({bot.user.id})")
@@ -258,6 +272,7 @@ async def on_ready():
     except Exception:
         print("[SLASH SYNC ERROR]")
         traceback.print_exc()
+
 
 @bot.event
 async def on_message(message):
@@ -273,13 +288,16 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+
 @bot.event
 async def on_disconnect():
     print("[BOT] Discordから切断")
 
+
 @bot.event
 async def on_resumed():
     print("[BOT] Discordに再接続")
+
 
 # ==================================================
 # 権限チェック
@@ -294,14 +312,17 @@ def has_owner_role(member):
         for role in member.roles
     )
 
+
 def is_admin(member):
     return (
         isinstance(member, discord.Member)
         and member.guild_permissions.administrator
     )
 
+
 def is_admin_or_owner(member):
     return is_admin(member) or has_owner_role(member)
+
 
 def can_use_slot(member, settings):
     """メンテナンス・スロット使用権限を確認する。"""
@@ -323,6 +344,7 @@ def can_use_slot(member, settings):
         )
 
     return True, None
+
 
 # ==================================================
 # エラーハンドラー
@@ -369,6 +391,7 @@ async def on_command_error(ctx, error):
     except Exception:
         pass
 
+
 @bot.tree.error
 async def on_app_command_error(interaction, error):
     print("[SLASH COMMAND ERROR]")
@@ -378,7 +401,7 @@ async def on_app_command_error(interaction, error):
         error.__traceback__,
     )
 
-    message = "スラッシュコマンドの実行中にエラーが発生したよ."
+    message = "スラッシュコマンドの実行中にエラーが発生したよ。"
 
     try:
         if interaction.response.is_done():
@@ -390,6 +413,7 @@ async def on_app_command_error(interaction, error):
             )
     except Exception:
         pass
+
 
 # ==================================================
 # ログチャンネル（固定）
@@ -417,7 +441,6 @@ async def get_log_channel(guild):
             )
             return None
 
-        # 指定チャンネルが別サーバーに属していないか確認
         if channel.guild.id != guild.id:
             print(
                 "[LOG ERROR] 固定ログチャンネルが実行サーバーと異なります。"
@@ -467,6 +490,7 @@ async def get_log_channel(guild):
 
     return None
 
+
 def record_slot(data):
     data.setdefault(
         "timestamp",
@@ -480,6 +504,7 @@ def record_slot(data):
 
     save_json(SLOT_LOGS_FILE, slot_logs)
 
+
 def record_coin(data):
     data.setdefault(
         "timestamp",
@@ -492,6 +517,7 @@ def record_coin(data):
         del coin_logs[:-MAX_LOGS]
 
     save_json(COIN_LOGS_FILE, coin_logs)
+
 
 async def send_slot_log(guild, embed):
     channel = await get_log_channel(guild)
@@ -507,6 +533,7 @@ async def send_slot_log(guild, embed):
         print("[SLOT LOG SEND ERROR]")
         traceback.print_exc()
 
+
 async def send_coin_log(guild, embed):
     channel = await get_log_channel(guild)
 
@@ -520,6 +547,7 @@ async def send_coin_log(guild, embed):
     except Exception:
         print("[PAYMENT LOG SEND ERROR]")
         traceback.print_exc()
+
 
 # ==================================================
 # スロット盤面
@@ -598,9 +626,11 @@ def make_grid(positions, weights=None):
 
     return grid
 
+
 def get_paylines(grid):
     """中央の横一列を配当判定に使う。"""
     return [grid[1]]
+
 
 def get_weights_text(weights):
     total = sum(
@@ -623,6 +653,7 @@ def get_weights_text(weights):
 
     return "\n".join(lines)
 
+
 # ==================================================
 # .cash (残高確認)
 # ==================================================
@@ -643,11 +674,13 @@ async def cash_command(ctx, member: discord.Member = None):
 
     await ctx.reply(embed=embed, mention_author=False)
 
+
 # ==================================================
 # /all cash（全メンバーの残高一覧）
 # ==================================================
 
 BALANCE_LIST_PER_PAGE = 15
+
 
 class AllCashView(discord.ui.View):
     def __init__(self, ctx, pages, author_id):
@@ -723,6 +756,7 @@ class AllCashView(discord.ui.View):
             view=self,
         )
 
+
 @bot.tree.command(
     name="all_cash",
     description="全メンバーの残高一覧を表示する（管理者・owner専用）",
@@ -736,7 +770,6 @@ async def all_cash_command(interaction: discord.Interaction):
         )
         return
 
-    # サーバー管理者またはownerロールを持つ人が実行できるようにする
     if not is_admin_or_owner(interaction.user):
         await interaction.response.send_message(
             f"このコマンドはサーバー管理者または `{OWNER_ROLE_NAME}` ロール専用だよ。",
@@ -765,9 +798,11 @@ async def all_cash_command(interaction: discord.Interaction):
             if not member.bot
         ]
 
-    # ソート: 残高が多い順（降順）、残高が同じ場合は名前のアルファベット順（昇順）
     members.sort(
-        key=lambda m: (-int(balances.get(str(m.id), STARTING_BALANCE)), m.display_name.casefold())
+        key=lambda m: (
+            -int(balances.get(str(m.id), STARTING_BALANCE)),
+            m.display_name.casefold(),
+        )
     )
 
     if not members:
@@ -804,8 +839,10 @@ async def all_cash_command(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+
 # ==================================================
 # .slot
+# 最高賭け金の制限なし
 # ==================================================
 
 @bot.command(name="slot")
@@ -826,7 +863,6 @@ async def slot_command(ctx, bet: int):
         return
 
     minimum = int(settings.get("min_bet", 1))
-    maximum = int(settings.get("max_bet", MAX_BET))
 
     if bet < minimum:
         await ctx.reply(
@@ -835,22 +871,9 @@ async def slot_command(ctx, bet: int):
         )
         return
 
-    if bet > maximum:
-        await ctx.reply(
-            f"最大賭け金は **{maximum:,} コイン** だよ。",
-            mention_author=False,
-        )
-        return
-
-    if bet > MAX_BET:
-        await ctx.reply(
-            f"賭け金は最大 **{MAX_BET:,} コイン** までだよ。",
-            mention_author=False,
-        )
-        return
-
     current_balance = get_balance(ctx.author.id)
 
+    # 上限はないが、所持残高を超えた賭けはできない
     if bet > current_balance:
         await ctx.reply(
             f"残高が足りないよ！\n"
@@ -907,7 +930,6 @@ async def slot_command(ctx, bet: int):
 
         displayed_rows.append(displayed_row)
 
-    # 変更リスト①の仕様通り：スロット表示形式を変更し、付加情報を一番下に、回した本人のみを一番下に表示
     slot_display = (
         f"\\_\\_\\_SLOT\\_\\_\\_\n"
         f"|{'|'.join(displayed_rows[0])}|\n"
@@ -975,8 +997,10 @@ async def slot_command(ctx, bet: int):
 
     await send_slot_log(ctx.guild, log_embed)
 
+
 # ==================================================
 # .Payment
+# 付与額の上限なし
 # ==================================================
 
 @bot.command(name="Payment", aliases=["pay", "送金"])
@@ -1006,13 +1030,8 @@ async def payment_command(
         )
         return
 
-    if abs(amount) > MAX_BET:
-        await ctx.reply(
-            f"金額は ±{MAX_BET:,} コイン以内にしてね。",
-            mention_author=False,
-        )
-        return
-
+    # 金額の上限チェックは撤廃
+    # 正の値なら付与、負の値なら減額
     before = get_balance(member.id)
     after = before + amount
 
@@ -1063,6 +1082,7 @@ async def payment_command(
     if ctx.guild:
         await send_coin_log(ctx.guild, log_embed)
 
+
 # ==================================================
 # .help
 # ==================================================
@@ -1076,7 +1096,7 @@ async def help_command(ctx):
             "`.slot 賭け金` — スロットを回す\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
-             "`/all cash` — 全メンバーの残高一覧（管理者・owner専用）\n"
+            "`/all cash` — 全メンバーの残高一覧（管理者・owner専用）\n"
             "`.help` — この一覧を表示\n\n"
             "**ownerロール専用**\n"
             "`.Payment @ユーザー 金額` — 残高を増減する\n\n"
@@ -1093,6 +1113,7 @@ async def help_command(ctx):
         mention_author=False,
     )
 
+
 # ==================================================
 # .Mbot help
 # ==================================================
@@ -1103,9 +1124,11 @@ async def mbot_group(ctx):
         "サブコマンドを指定してね。例：`.Mbot help`"
     )
 
+
 @mbot_group.command(name="help")
 async def mbot_help(ctx):
     await ctx.reply("ウンコブリー")
+
 
 # ==================================================
 # ログチャンネル選択UI（固定先の案内）
@@ -1142,10 +1165,12 @@ class LogChannelSelect(discord.ui.ChannelSelect):
             ephemeral=True,
         )
 
+
 class LogChannelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(LogChannelSelect())
+
 
 # ==================================================
 # /log panel
@@ -1155,6 +1180,7 @@ log_group = app_commands.Group(
     name="log",
     description="ログ設定",
 )
+
 
 @log_group.command(
     name="panel",
@@ -1200,31 +1226,25 @@ async def log_panel(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+
 bot.tree.add_command(log_group)
+
 
 # ==================================================
 # /setting の各種モーダル
+# 最大賭け金の設定は撤廃
 # ==================================================
 
 class BetSettingModal(discord.ui.Modal):
-    def __init__(self, setting_type):
+    def __init__(self, setting_type="min_bet"):
         self.setting_type = setting_type
 
-        if setting_type == "min_bet":
-            title = "最低賭け金の設定"
-            label = "最低賭け金"
-            default_amount = 1
-        else:
-            title = "最大賭け金の設定"
-            label = "最大賭け金"
-            default_amount = MAX_BET
-
-        super().__init__(title=title)
+        super().__init__(title="最低賭け金の設定")
 
         self.amount_input = discord.ui.TextInput(
-            label=label,
+            label="最低賭け金",
             placeholder="例：100",
-            default=str(default_amount),
+            default="1",
             required=True,
             min_length=1,
             max_length=15,
@@ -1256,51 +1276,22 @@ class BetSettingModal(discord.ui.Modal):
             )
             return
 
-        if amount < 1 or amount > MAX_BET:
+        if amount < 1:
             await interaction.response.send_message(
-                f"1〜{MAX_BET:,} の範囲で入力してね。",
+                "最低賭け金は1以上にしてね。",
                 ephemeral=True,
             )
             return
 
         settings = get_server_settings(interaction.guild.id)
-
-        if self.setting_type == "min_bet":
-            current_max = int(settings["max_bet"])
-
-            if amount > current_max:
-                await interaction.response.send_message(
-                    "最低賭け金は最大賭け金以下にしてね。",
-                    ephemeral=True,
-                )
-                return
-
-            settings["min_bet"] = amount
-            message = (
-                f"最低賭け金を **{amount:,} コイン** に設定したよ。"
-            )
-
-        else:
-            current_min = int(settings["min_bet"])
-
-            if amount < current_min:
-                await interaction.response.send_message(
-                    "最大賭け金は最低賭け金以上にしてね。",
-                    ephemeral=True,
-                )
-                return
-
-            settings["max_bet"] = amount
-            message = (
-                f"最大賭け金を **{amount:,} コイン** に設定したよ。"
-            )
-
+        settings["min_bet"] = amount
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            message,
+            f"最低賭け金を **{amount:,} コイン** に設定したよ。",
             ephemeral=True,
         )
+
 
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
@@ -1389,6 +1380,7 @@ class WeightsSettingModal(discord.ui.Modal):
             ephemeral=True,
         )
 
+
 # ==================================================
 # 出目の絵文字タイプ設定
 # ==================================================
@@ -1470,13 +1462,16 @@ class EmojiModeSelect(discord.ui.Select):
                 ephemeral=True,
             )
 
+
 class EmojiModeSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(EmojiModeSelect())
 
+
 # ==================================================
 # /setting 選択メニュー
+# 最大賭け金の選択肢を削除
 # ==================================================
 
 class SettingActionSelect(discord.ui.Select):
@@ -1487,12 +1482,6 @@ class SettingActionSelect(discord.ui.Select):
                 description="スロットの最低賭け金を変更",
                 value="min_bet",
                 emoji="🪙",
-            ),
-            discord.SelectOption(
-                label="最大賭け金",
-                description="スロットの最大賭け金を変更",
-                value="max_bet",
-                emoji="💰",
             ),
             discord.SelectOption(
                 label="絵柄・出現確率",
@@ -1556,11 +1545,6 @@ class SettingActionSelect(discord.ui.Select):
                 BetSettingModal("min_bet")
             )
 
-        elif selected == "max_bet":
-            await interaction.response.send_modal(
-                BetSettingModal("max_bet")
-            )
-
         elif selected == "weights":
             await interaction.response.send_modal(
                 WeightsSettingModal(settings["weights"])
@@ -1587,8 +1571,6 @@ class SettingActionSelect(discord.ui.Select):
             )
 
         elif selected == "log_channel":
-            channel = bot.get_channel(LOG_CHANNEL_ID)
-
             await interaction.response.send_message(
                 f"ログ送信先は固定されているよ。\n"
                 f"スロットログ・Paymentログ共通："
@@ -1610,10 +1592,12 @@ class SettingActionSelect(discord.ui.Select):
                 ephemeral=True,
             )
 
+
 class SettingPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
+
 
 # ==================================================
 # スロット使用権限の設定
@@ -1673,10 +1657,12 @@ class PermissionSelect(discord.ui.Select):
             ephemeral=True,
         )
 
+
 class PermissionSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(PermissionSelect())
+
 
 # ==================================================
 # メンテナンスモード
@@ -1739,8 +1725,10 @@ class MaintenanceSettingView(discord.ui.View):
             ephemeral=True,
         )
 
+
 # ==================================================
 # /setting
+# 最大賭け金の表示を削除
 # ==================================================
 
 @bot.tree.command(
@@ -1757,7 +1745,6 @@ async def setting_command(interaction: discord.Interaction):
         return
 
     settings = get_server_settings(interaction.guild.id)
-
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
     permission_labels = {
@@ -1778,12 +1765,6 @@ async def setting_command(interaction: discord.Interaction):
     embed.add_field(
         name="最低賭け金",
         value=f"{int(settings['min_bet']):,} コイン",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="最大賭け金",
-        value=f"{int(settings['max_bet']):,} コイン",
         inline=True,
     )
 
@@ -1833,6 +1814,7 @@ async def setting_command(interaction: discord.Interaction):
         view=SettingPanelView(),
         ephemeral=True,
     )
+
 
 # ==================================================
 # /coinrecovery
@@ -1893,7 +1875,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
         )
     else:
         try:
-            # 過去メッセージを古い順に取得
             async for message in channel.history(
                 limit=None,
                 oldest_first=True,
@@ -2075,8 +2056,10 @@ async def coinrecovery_command(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+
 # ==================================================
 # 設定の確認用コマンド
+# 最大賭け金の表示を削除
 # ==================================================
 
 @bot.tree.command(
@@ -2107,12 +2090,6 @@ async def setting_info_command(interaction: discord.Interaction):
     embed.add_field(
         name="最低賭け金",
         value=f"{int(settings['min_bet']):,}",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="最大賭け金",
-        value=f"{int(settings['max_bet']):,}",
         inline=True,
     )
 
@@ -2156,19 +2133,23 @@ async def setting_info_command(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+
 # ==================================================
 # Flask（Renderの稼働確認用）
 # ==================================================
 
 app = Flask(__name__)
 
+
 @app.route("/")
 def home():
     return "Bot is alive!"
 
+
 @app.route("/health")
 def health():
     return "OK"
+
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -2178,6 +2159,7 @@ def run_web():
         port=port,
         use_reloader=False,
     )
+
 
 # ==================================================
 # 起動

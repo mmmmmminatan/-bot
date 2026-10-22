@@ -1836,11 +1836,12 @@ async def setting_command(interaction: discord.Interaction):
 
 # ==================================================
 # /coinrecovery
+# JSONログ + Discord固定ログチャンネルから残高を復旧
 # ==================================================
 
 @bot.tree.command(
     name="coinrecovery",
-    description="ログを使って残高を復旧する",
+    description="JSONとDiscordログから残高を復旧する",
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def coinrecovery_command(interaction: discord.Interaction):
@@ -1853,19 +1854,138 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     await interaction.response.defer(ephemeral=True)
 
+    guild_id = interaction.guild.id
     latest_balances = {}
     combined_logs = []
+    discord_log_count = 0
+    json_log_count = 0
+    errors = []
+
+    # ----------------------------------------------
+    # 1. JSONファイルのログを取得
+    # ----------------------------------------------
 
     for item in slot_logs:
-        if item.get("guild_id") == interaction.guild.id:
-            combined_logs.append(item)
+        try:
+            if int(item.get("guild_id", 0)) == guild_id:
+                combined_logs.append(item)
+                json_log_count += 1
+        except (TypeError, ValueError):
+            continue
 
     for item in coin_logs:
-        if item.get("guild_id") == interaction.guild.id:
-            combined_logs.append(item)
+        try:
+            if int(item.get("guild_id", 0)) == guild_id:
+                combined_logs.append(item)
+                json_log_count += 1
+        except (TypeError, ValueError):
+            continue
+
+    # ----------------------------------------------
+    # 2. Discord固定ログチャンネルを取得
+    # ----------------------------------------------
+
+    channel = await get_log_channel(interaction.guild)
+
+    if channel is None:
+        errors.append(
+            "固定ログチャンネルを取得できなかったよ。"
+        )
+    else:
+        try:
+            # 過去メッセージを古い順に取得
+            async for message in channel.history(
+                limit=None,
+                oldest_first=True,
+            ):
+                for embed in message.embeds:
+                    title = embed.title or ""
+                    description = embed.description or ""
+
+                    # スロットログ
+                    if "スロットログ" in title:
+                        user_match = re.search(
+                            r"ユーザー：.*?`(\d+)`",
+                            description,
+                        )
+                        balance_match = re.search(
+                            r"残高：\*\*([\d,]+)\*\*",
+                            description,
+                        )
+
+                        if not user_match or not balance_match:
+                            continue
+
+                        user_id = user_match.group(1)
+                        balance = int(
+                            balance_match.group(1).replace(",", "")
+                        )
+
+                        combined_logs.append({
+                            "type": "slot",
+                            "timestamp": message.created_at.timestamp(),
+                            "guild_id": guild_id,
+                            "user_id": user_id,
+                            "balance": balance,
+                            "source": "discord",
+                        })
+
+                        discord_log_count += 1
+
+                    # Paymentログ
+                    elif "Paymentログ" in title:
+                        user_match = re.search(
+                            r"対象：.*?`(\d+)`",
+                            description,
+                        )
+                        after_match = re.search(
+                            r"変更後：\*\*([\d,]+)\*\*",
+                            description,
+                        )
+
+                        if not user_match or not after_match:
+                            continue
+
+                        user_id = user_match.group(1)
+                        balance = int(
+                            after_match.group(1).replace(",", "")
+                        )
+
+                        combined_logs.append({
+                            "type": "payment",
+                            "timestamp": message.created_at.timestamp(),
+                            "guild_id": guild_id,
+                            "user_id": user_id,
+                            "after": balance,
+                            "source": "discord",
+                        })
+
+                        discord_log_count += 1
+
+        except discord.Forbidden:
+            errors.append(
+                "ログチャンネルの閲覧権限または"
+                "メッセージ履歴を読む権限がないよ。"
+            )
+
+        except discord.HTTPException:
+            errors.append(
+                "Discordからログを取得できなかったよ。"
+            )
+            traceback.print_exc()
+
+        except Exception:
+            errors.append(
+                "ログの読み取り中にエラーが発生したよ。"
+            )
+            traceback.print_exc()
+
+    # ----------------------------------------------
+    # 3. ログを時刻順に並べて最新残高を計算
+    # ----------------------------------------------
 
     combined_logs.sort(
-        key=lambda item: item.get("timestamp", 0)
+        key=lambda item: float(item.get("timestamp", 0))
     )
 
     for item in combined_logs:
@@ -1874,25 +1994,84 @@ async def coinrecovery_command(interaction: discord.Interaction):
         if user_id is None:
             continue
 
-        if "balance" in item:
-            latest_balances[str(user_id)] = int(item["balance"])
+        try:
+            user_id = str(int(user_id))
+        except (TypeError, ValueError):
+            continue
 
+        balance_value = None
+
+        if "balance" in item:
+            balance_value = item["balance"]
         elif "after" in item:
-            latest_balances[str(user_id)] = int(item["after"])
+            balance_value = item["after"]
+
+        if balance_value is None:
+            continue
+
+        try:
+            latest_balances[user_id] = int(balance_value)
+        except (TypeError, ValueError):
+            continue
+
+    # ----------------------------------------------
+    # 4. 復旧対象がなければ終了
+    # ----------------------------------------------
 
     if not latest_balances:
+        message = (
+            "❌ 復旧に使える残高ログが見つからなかったよ。\n\n"
+            f"JSONログ件数：{json_log_count}\n"
+            f"Discordログ件数：{discord_log_count}\n\n"
+            "固定ログチャンネルにスロットログやPaymentログが"
+            "残っているか確認してね。"
+        )
+
+        if errors:
+            message += "\n\n確認事項：\n" + "\n".join(errors)
+
         await interaction.followup.send(
-            "復旧に使えるログが見つからなかったよ。",
+            message,
             ephemeral=True,
         )
         return
 
-    balances.update(latest_balances)
+    # ----------------------------------------------
+    # 5. 残高を保存
+    # ----------------------------------------------
+
+    restored_count = 0
+
+    for user_id, amount in latest_balances.items():
+        balances[user_id] = amount
+        restored_count += 1
+
     save_json(BALANCES_FILE, balances)
 
+    # ----------------------------------------------
+    # 6. 結果を表示
+    # ----------------------------------------------
+
+    embed = discord.Embed(
+        title="✅ 残高復旧完了",
+        description=(
+            f"復旧対象：**{restored_count}人**\n"
+            f"JSONログ：**{json_log_count}件**\n"
+            f"Discordログ：**{discord_log_count}件**\n\n"
+            "確認できたログのうち、最も新しい残高を保存したよ。"
+        ),
+        color=discord.Color.green(),
+    )
+
+    if errors:
+        embed.add_field(
+            name="⚠️ 確認事項",
+            value="\n".join(errors)[:1000],
+            inline=False,
+        )
+
     await interaction.followup.send(
-        f"✅ 残高を復旧したよ。\n"
-        f"復旧対象：**{len(latest_balances)}人**",
+        embed=embed,
         ephemeral=True,
     )
 

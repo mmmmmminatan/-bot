@@ -6,7 +6,7 @@ import re
 import traceback
 from pathlib import Path
 from threading import Thread
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
@@ -23,7 +23,7 @@ STARTING_BALANCE = 1000
 
 MAX_LOGS = 10000
 
-# スロット・Payment共通の固定ログ送信先
+# スロット・Payment・ログインボーナス共通のログ送信先
 LOG_CHANNEL_ID = 1561184711571939438
 
 BALANCES_FILE = Path("balances.json")
@@ -32,6 +32,12 @@ SLOT_LOGS_FILE = Path("slot_logs.json")
 LOG_CONFIG_FILE = Path("log_config.json")
 COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
+
+# ログインボーナス
+DAILY_FILE = Path("daily_logs.json")
+DAILY_REWARD = 1000
+DAILY_STREAK_BONUS = 100
+JST = timezone(timedelta(hours=9))
 
 # 内部処理に使用する絵柄
 SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣"]
@@ -109,6 +115,10 @@ slot_logs = load_json(SLOT_LOGS_FILE, [])
 log_configs = load_json(LOG_CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
+daily_data = load_json(DAILY_FILE, {})
+
+# ログインボーナスの同時実行による二重受け取りを防止
+DAILY_LOCK = asyncio.Lock()
 
 
 def get_balance(user_id):
@@ -550,112 +560,132 @@ async def send_coin_log(guild, embed):
 
 
 # ==================================================
-# スロット盤面
+# .daily（ログインボーナス）
 # ==================================================
 
-def make_grid(positions, weights=None):
-    """
-    3レーン×3段の盤面を生成する。
+@bot.command(name="daily")
+async def daily_command(ctx):
+    if ctx.author.bot:
+        return
 
-    各縦レーンの3段に同じ絵柄が重複しないようにする。
-    絵柄の重み付き抽選は重複なしで行う。
-    """
+    if ctx.guild is None:
+        await ctx.reply(
+            "このコマンドはサーバー内で使ってね。",
+            mention_author=False,
+        )
+        return
 
-    normalized = {}
+    user_id = str(ctx.author.id)
+    today = datetime.now(JST).date()
+    today_text = today.isoformat()
 
-    if weights:
-        for symbol in SYMBOLS:
-            try:
-                normalized[symbol] = max(
-                    0,
-                    int(weights.get(symbol, 0)),
-                )
-            except (TypeError, ValueError):
-                normalized[symbol] = 0
-    else:
-        normalized = DEFAULT_WEIGHTS.copy()
+    async with DAILY_LOCK:
+        user_data = daily_data.get(user_id, {})
 
-    if sum(normalized.values()) <= 0:
-        normalized = DEFAULT_WEIGHTS.copy()
+        last_date_text = user_data.get("last_date")
 
-    patterns = []
+        try:
+            streak = int(user_data.get("streak", 0))
+        except (TypeError, ValueError):
+            streak = 0
 
-    for lane_index in range(3):
-        available_symbols = SYMBOLS.copy()
-        lane_pattern = []
+        # 今日すでに受け取っている場合
+        if last_date_text == today_text:
+            already_received = True
+        else:
+            already_received = False
 
-        while available_symbols:
-            available_weights = [
-                normalized[symbol]
-                for symbol in available_symbols
-            ]
+            yesterday_text = (
+                today - timedelta(days=1)
+            ).isoformat()
 
-            if sum(available_weights) <= 0:
-                chosen = random.choice(available_symbols)
+            # 昨日受け取っていれば連続日数を継続
+            if last_date_text == yesterday_text:
+                streak += 1
             else:
-                chosen = random.choices(
-                    available_symbols,
-                    weights=available_weights,
-                    k=1,
-                )[0]
+                streak = 1
 
-            lane_pattern.append(chosen)
-            available_symbols.remove(chosen)
-
-        random.shuffle(lane_pattern)
-        patterns.append(lane_pattern)
-
-    grid = []
-
-    for row_offset in [-1, 0, 1]:
-        row = []
-
-        for lane_index in range(3):
-            pattern = patterns[lane_index]
-
-            try:
-                position = int(positions[lane_index])
-            except (IndexError, TypeError, ValueError):
-                position = 0
-
-            row.append(
-                pattern[(position + row_offset) % len(pattern)]
+            # 基本報酬1000 + 連続日数×100
+            reward = DAILY_REWARD + (
+                streak * DAILY_STREAK_BONUS
             )
 
-        grid.append(row)
+            current_balance = get_balance(ctx.author.id)
+            new_balance = current_balance + reward
 
-    return grid
+            # 残高を更新
+            set_balance(ctx.author.id, new_balance)
 
+            # ログイン状況を保存
+            daily_data[user_id] = {
+                "last_date": today_text,
+                "streak": streak,
+                "last_reward": reward,
+                "last_balance": new_balance,
+            }
 
-def get_paylines(grid):
-    """中央の横一列を配当判定に使う。"""
-    return [grid[1]]
+            save_json(DAILY_FILE, daily_data)
 
+            # 既存のコインログにも保存
+            record_coin({
+                "type": "daily",
+                "timestamp": datetime.now(
+                    timezone.utc
+                ).timestamp(),
+                "guild_id": ctx.guild.id,
+                "user_id": ctx.author.id,
+                "username": str(ctx.author),
+                "amount": reward,
+                "streak": streak,
+                "balance": new_balance,
+                "date": today_text,
+            })
 
-def get_weights_text(weights):
-    total = sum(
-        max(0, int(weights.get(symbol, 0)))
-        for symbol in SYMBOLS
+    if already_received:
+        await ctx.reply(
+            "今日はもうログインボーナスを受け取っているよ。",
+            mention_author=False,
+        )
+        return
+
+    # 指定された表示形式。余計な絵文字は追加しない。
+    await ctx.reply(
+        f"Mbot\n"
+        f"{streak}日目\n"
+        f"増やした金額：+{reward:,} コイン",
+        mention_author=False,
     )
 
-    if total <= 0:
-        return "確率設定が不正です。"
+    # 指定された固定ログチャンネルに送信
+    channel = await get_log_channel(ctx.guild)
 
-    lines = []
+    if channel is None:
+        print(
+            "[DAILY LOG] 固定ログチャンネルを取得できませんでした。"
+        )
+        return
 
-    for symbol in SYMBOLS:
-        weight = max(0, int(weights.get(symbol, 0)))
-        percentage = weight / total * 100
-
-        lines.append(
-            f"{symbol}：比率 {weight}（約 {percentage:.1f}%）"
+    try:
+        await channel.send(
+            f"ログインボーナス\n"
+            f"やった人：{ctx.author.mention}\n"
+            f"増やした金額：+{reward:,} コイン\n"
+            f"何日目か：{streak}日目"
         )
 
-    return "\n".join(lines)
+        print(
+            f"[DAILY LOG] 送信成功: "
+            f"user={ctx.author.id}, "
+            f"reward={reward}, streak={streak}"
+        )
+
+    except Exception:
+        print("[DAILY LOG SEND ERROR]")
+        traceback.print_exc()
 
 
 # ==================================================
-# .cash (残高確認)
+# .cash（残高確認）
 # ==================================================
 
 @bot.command(name="cash", aliases=["balance", "bal", "残高"])
@@ -1096,6 +1126,7 @@ async def help_command(ctx):
             "`.slot 賭け金` — スロットを回す\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
+            "`.daily` — ログインボーナスを受け取る\n"
             "`/all cash` — 全メンバーの残高一覧（管理者・owner専用）\n"
             "`.help` — この一覧を表示\n\n"
             "**ownerロール専用**\n"
@@ -1446,7 +1477,7 @@ class EmojiModeSelect(discord.ui.Select):
                 )
             else:
                 await interaction.response.send_message(
-                    "✅ 出目の表示を **サーバーのカスタム絵文字** "
+                    "出目の表示を **サーバーのカスタム絵文字** "
                     "に変更したよ。\n"
                     "次のスロットから反映されるよ。",
                     ephemeral=True,
@@ -1457,7 +1488,7 @@ class EmojiModeSelect(discord.ui.Select):
             save_server_settings(interaction.guild.id)
 
             await interaction.response.send_message(
-                "✅ 出目の表示を **通常の絵文字** に変更したよ。\n"
+                "出目の表示を **通常の絵文字** に変更したよ。\n"
                 "次のスロットから反映されるよ。",
                 ephemeral=True,
             )
@@ -1552,7 +1583,7 @@ class SettingActionSelect(discord.ui.Select):
 
         elif selected == "emoji_mode":
             embed = discord.Embed(
-                title="🎨 出目の絵文字タイプ",
+                title="出目の絵文字タイプ",
                 description=(
                     "スロット盤面に表示する絵文字を選択してね。\n\n"
                     "**通常の絵文字**\n"
@@ -1573,7 +1604,7 @@ class SettingActionSelect(discord.ui.Select):
         elif selected == "log_channel":
             await interaction.response.send_message(
                 f"ログ送信先は固定されているよ。\n"
-                f"スロットログ・Paymentログ共通："
+                f"スロットログ・Paymentログ・ログインボーナス共通："
                 f"<#{LOG_CHANNEL_ID}>",
                 ephemeral=True,
             )
@@ -1694,7 +1725,7 @@ class MaintenanceSettingView(discord.ui.View):
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            "🔴 メンテナンスモードを **ON** にしたよ。\n"
+            "メンテナンスモードを **ON** にしたよ。\n"
             "一般メンバーはスロットを使えなくなるよ。管理者は利用可能。",
             ephemeral=True,
         )
@@ -1721,7 +1752,7 @@ class MaintenanceSettingView(discord.ui.View):
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            "🟢 メンテナンスモードを **OFF** にしたよ。",
+            "メンテナンスモードを **OFF** にしたよ。",
             ephemeral=True,
         )
 
@@ -1754,7 +1785,7 @@ async def setting_command(interaction: discord.Interaction):
     }
 
     embed = discord.Embed(
-        title="⚙️ Bot設定パネル",
+        title="Bot設定パネル",
         description=(
             "下のメニューから変更したい設定を選んでね。\n"
             "設定の変更はサーバー管理者のみ可能だよ。"
@@ -1780,9 +1811,9 @@ async def setting_command(interaction: discord.Interaction):
     embed.add_field(
         name="メンテナンス",
         value=(
-            "🔴 ON"
+            "ON"
             if settings.get("maintenance", False)
-            else "🟢 OFF"
+            else "OFF"
         ),
         inline=True,
     )
@@ -2001,7 +2032,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     if not latest_balances:
         message = (
-            "❌ 復旧に使える残高ログが見つからなかったよ。\n\n"
+            "復旧に使える残高ログが見つからなかったよ。\n\n"
             f"JSONログ件数：{json_log_count}\n"
             f"Discordログ件数：{discord_log_count}\n\n"
             "固定ログチャンネルにスロットログやPaymentログが"
@@ -2034,7 +2065,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
     # ----------------------------------------------
 
     embed = discord.Embed(
-        title="✅ 残高復旧完了",
+        title="残高復旧完了",
         description=(
             f"復旧対象：**{restored_count}人**\n"
             f"JSONログ：**{json_log_count}件**\n"
@@ -2046,7 +2077,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     if errors:
         embed.add_field(
-            name="⚠️ 確認事項",
+            name="確認事項",
             value="\n".join(errors)[:1000],
             inline=False,
         )
@@ -2083,7 +2114,7 @@ async def setting_info_command(interaction: discord.Interaction):
     }
 
     embed = discord.Embed(
-        title="⚙️ 現在の設定",
+        title="現在の設定",
         color=discord.Color.blurple(),
     )
 

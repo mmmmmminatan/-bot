@@ -19,7 +19,6 @@ from flask import Flask
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "owner"
-OWNER_USER_ID = 1325449934236942392
 STARTING_BALANCE = 1000
 
 MAX_LOGS = 10000
@@ -100,7 +99,6 @@ def load_json(path, default):
 
     return default
 
-
 def save_json(path, data):
     try:
         with path.open("w", encoding="utf-8") as file:
@@ -108,7 +106,6 @@ def save_json(path, data):
     except Exception:
         print(f"[JSON SAVE ERROR] {path}")
         traceback.print_exc()
-
 
 balances = load_json(BALANCES_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
@@ -121,7 +118,6 @@ daily_data = load_json(DAILY_FILE, {})
 # ログインボーナスの同時実行による二重受け取りを防止
 DAILY_LOCK = asyncio.Lock()
 
-
 def get_balance(user_id):
     user_id = str(user_id)
 
@@ -131,11 +127,9 @@ def get_balance(user_id):
 
     return int(balances[user_id])
 
-
 def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
     save_json(BALANCES_FILE, balances)
-
 
 def get_server_settings(guild_id):
     """サーバー設定を取得。未設定の項目は初期値を使う。"""
@@ -172,11 +166,9 @@ def get_server_settings(guild_id):
     save_json(SETTINGS_FILE, server_settings)
     return current
 
-
 def save_server_settings(guild_id):
     if guild_id is not None:
         save_json(SETTINGS_FILE, server_settings)
-
 
 # ==================================================
 # 絵柄の表示処理
@@ -199,7 +191,6 @@ def find_custom_emoji(guild, symbol):
 
     return None
 
-
 def display_symbol(symbol, guild, settings):
     """画面表示用の絵柄を返す。"""
 
@@ -210,7 +201,6 @@ def display_symbol(symbol, guild, settings):
             return str(custom_emoji)
 
     return symbol
-
 
 def grid_text(grid, guild=None, settings=None):
     """盤面を表示用の文字列に変換する。"""
@@ -230,13 +220,11 @@ def grid_text(grid, guild=None, settings=None):
 
     return "\n".join(lines)
 
-
 def get_display_mode_name(settings):
     if settings.get("emoji_mode", "unicode") == "custom":
         return "サーバーのカスタム絵文字"
 
     return "通常の絵文字"
-
 
 def get_custom_emoji_status(guild):
     """カスタム絵文字の登録状況を確認する。"""
@@ -255,7 +243,6 @@ def get_custom_emoji_status(guild):
 
     return found, missing
 
-
 # ==================================================
 # Bot本体
 # ==================================================
@@ -271,7 +258,6 @@ bot = commands.Bot(
     case_insensitive=True,
 )
 
-
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user} ({bot.user.id})")
@@ -283,7 +269,6 @@ async def on_ready():
     except Exception:
         print("[SLASH SYNC ERROR]")
         traceback.print_exc()
-
 
 @bot.event
 async def on_message(message):
@@ -299,28 +284,19 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-
 @bot.event
 async def on_disconnect():
     print("[BOT] Discordから切断")
-
 
 @bot.event
 async def on_resumed():
     print("[BOT] Discordに再接続")
 
-
 # ==================================================
 # 権限チェック
 # ==================================================
 
-def is_owner_user(user):
-    """指定されたDiscordユーザーIDの本人だけをオーナーとする。"""
-    return getattr(user, "id", None) == OWNER_USER_ID
-
-
 def has_owner_role(member):
-    """スロットの利用権限設定用。"""
     if not isinstance(member, discord.Member):
         return False
 
@@ -329,21 +305,17 @@ def has_owner_role(member):
         for role in member.roles
     )
 
-
 def is_admin(member):
     return (
         isinstance(member, discord.Member)
         and member.guild_permissions.administrator
     )
 
-
 def is_admin_or_owner(member):
-    # オーナー限定機能は指定IDの本人だけ
-    return is_owner_user(member)
-
+    return is_admin(member) or has_owner_role(member)
 
 def can_use_slot(member, settings):
-    """スロットの利用権限は、従来のサーバー設定に従う。"""
+    """メンテナンス・スロット使用権限を確認する。"""
 
     if is_admin(member):
         return True, None
@@ -362,7 +334,6 @@ def can_use_slot(member, settings):
         )
 
     return True, None
-
 
 # ==================================================
 # エラーハンドラー
@@ -409,7 +380,6 @@ async def on_command_error(ctx, error):
     except Exception:
         pass
 
-
 @bot.tree.error
 async def on_app_command_error(interaction, error):
     print("[SLASH COMMAND ERROR]")
@@ -431,7 +401,6 @@ async def on_app_command_error(interaction, error):
             )
     except Exception:
         pass
-
 
 # ==================================================
 # ログチャンネル（固定）
@@ -508,7 +477,6 @@ async def get_log_channel(guild):
 
     return None
 
-
 def record_slot(data):
     data.setdefault(
         "timestamp",
@@ -522,7 +490,6 @@ def record_slot(data):
 
     save_json(SLOT_LOGS_FILE, slot_logs)
 
-
 def record_coin(data):
     data.setdefault(
         "timestamp",
@@ -535,7 +502,6 @@ def record_coin(data):
         del coin_logs[:-MAX_LOGS]
 
     save_json(COIN_LOGS_FILE, coin_logs)
-
 
 async def send_slot_log(guild, embed):
     channel = await get_log_channel(guild)
@@ -551,7 +517,6 @@ async def send_slot_log(guild, embed):
         print("[SLOT LOG SEND ERROR]")
         traceback.print_exc()
 
-
 async def send_coin_log(guild, embed):
     channel = await get_log_channel(guild)
 
@@ -565,7 +530,6 @@ async def send_coin_log(guild, embed):
     except Exception:
         print("[PAYMENT LOG SEND ERROR]")
         traceback.print_exc()
-
 
 # ==================================================
 # .daily（ログインボーナス）
@@ -690,7 +654,6 @@ async def daily_command(ctx):
         print("[DAILY LOG SEND ERROR]")
         traceback.print_exc()
 
-
 # ==================================================
 # .cash（残高確認）
 # ==================================================
@@ -711,13 +674,11 @@ async def cash_command(ctx, member: discord.Member = None):
 
     await ctx.reply(embed=embed, mention_author=False)
 
-
 # ==================================================
 # /all cash（全メンバーの残高一覧）
 # ==================================================
 
 BALANCE_LIST_PER_PAGE = 15
-
 
 class AllCashView(discord.ui.View):
     def __init__(self, ctx, pages, author_id):
@@ -792,7 +753,6 @@ class AllCashView(discord.ui.View):
             embed=self.make_embed(),
             view=self,
         )
-
 
 @bot.tree.command(
     name="all_cash",
@@ -875,7 +835,6 @@ async def all_cash_command(interaction: discord.Interaction):
         view=view,
         ephemeral=True,
     )
-
 
 # ==================================================
 # .slot
@@ -1034,7 +993,6 @@ async def slot_command(ctx, bet: int):
 
     await send_slot_log(ctx.guild, log_embed)
 
-
 # ==================================================
 # .Payment
 # 付与額の上限なし
@@ -1046,12 +1004,12 @@ async def payment_command(
     member: discord.Member,
     amount: int,
 ):
-    if not is_owner_user(ctx.author):
-    await ctx.reply(
-        "このコマンドを使えるのは指定されたオーナー本人だけだよ。",
-        mention_author=False,
-    )
-    return
+    if not has_owner_role(ctx.author):
+        await ctx.reply(
+            f"このコマンドは `{OWNER_ROLE_NAME}` ロール専用だよ。",
+            mention_author=False,
+        )
+        return
 
     if member.bot:
         await ctx.reply(
@@ -1119,7 +1077,6 @@ async def payment_command(
     if ctx.guild:
         await send_coin_log(ctx.guild, log_embed)
 
-
 # ==================================================
 # .help
 # ==================================================
@@ -1151,7 +1108,6 @@ async def help_command(ctx):
         mention_author=False,
     )
 
-
 # ==================================================
 # .Mbot help
 # ==================================================
@@ -1162,11 +1118,9 @@ async def mbot_group(ctx):
         "サブコマンドを指定してね。例：`.Mbot help`"
     )
 
-
 @mbot_group.command(name="help")
 async def mbot_help(ctx):
     await ctx.reply("ウンコブリー")
-
 
 # ==================================================
 # ログチャンネル選択UI（固定先の案内）
@@ -1203,12 +1157,10 @@ class LogChannelSelect(discord.ui.ChannelSelect):
             ephemeral=True,
         )
 
-
 class LogChannelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(LogChannelSelect())
-
 
 # ==================================================
 # /log panel
@@ -1218,7 +1170,6 @@ log_group = app_commands.Group(
     name="log",
     description="ログ設定",
 )
-
 
 @log_group.command(
     name="panel",
@@ -1264,9 +1215,7 @@ async def log_panel(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-
 bot.tree.add_command(log_group)
-
 
 # ==================================================
 # /setting の各種モーダル
@@ -1329,7 +1278,6 @@ class BetSettingModal(discord.ui.Modal):
             f"最低賭け金を **{amount:,} コイン** に設定したよ。",
             ephemeral=True,
         )
-
 
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
@@ -1418,7 +1366,6 @@ class WeightsSettingModal(discord.ui.Modal):
             ephemeral=True,
         )
 
-
 # ==================================================
 # 出目の絵文字タイプ設定
 # ==================================================
@@ -1500,12 +1447,10 @@ class EmojiModeSelect(discord.ui.Select):
                 ephemeral=True,
             )
 
-
 class EmojiModeSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(EmojiModeSelect())
-
 
 # ==================================================
 # /setting 選択メニュー
@@ -1630,12 +1575,10 @@ class SettingActionSelect(discord.ui.Select):
                 ephemeral=True,
             )
 
-
 class SettingPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
-
 
 # ==================================================
 # スロット使用権限の設定
@@ -1695,12 +1638,10 @@ class PermissionSelect(discord.ui.Select):
             ephemeral=True,
         )
 
-
 class PermissionSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(PermissionSelect())
-
 
 # ==================================================
 # メンテナンスモード
@@ -1762,7 +1703,6 @@ class MaintenanceSettingView(discord.ui.View):
             "メンテナンスモードを **OFF** にしたよ。",
             ephemeral=True,
         )
-
 
 # ==================================================
 # /setting
@@ -1852,7 +1792,6 @@ async def setting_command(interaction: discord.Interaction):
         view=SettingPanelView(),
         ephemeral=True,
     )
-
 
 # ==================================================
 # /coinrecovery
@@ -2094,7 +2033,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-
 # ==================================================
 # 設定の確認用コマンド
 # 最大賭け金の表示を削除
@@ -2171,23 +2109,19 @@ async def setting_info_command(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-
 # ==================================================
 # Flask（Renderの稼働確認用）
 # ==================================================
 
 app = Flask(__name__)
 
-
 @app.route("/")
 def home():
     return "Bot is alive!"
 
-
 @app.route("/health")
 def health():
     return "OK"
-
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -2197,7 +2131,6 @@ def run_web():
         port=port,
         use_reloader=False,
     )
-
 
 # ==================================================
 # 起動

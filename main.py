@@ -381,11 +381,9 @@ def make_grid(positions, weights):
         except (IndexError, TypeError, ValueError):
             position = 0
 
-        # 5種類の順序を回転し、中央の行を含む3個を表示
         rotated = pattern[position:] + pattern[:position]
         columns.append(rotated[:3])
 
-    # 内部は行ごとの盤面にする
     return [
         [columns[column][row] for column in range(3)]
         for row in range(3)
@@ -744,6 +742,270 @@ async def daily_command(ctx):
     except Exception:
         print("[DAILY LOG SEND ERROR]")
         traceback.print_exc()
+
+
+# ==================================================
+# .color 2択ゲーム
+# 最大賭け金制限なし
+# 当たり：賭け金込みで2倍
+# ハズレ：賭け金を失う
+# ==================================================
+
+class ColorBetView(discord.ui.View):
+    def __init__(self, ctx, bet):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.bet = bet
+        self.finished = False
+        self.message = None
+
+    async def choose_color(self, interaction, chosen_color):
+        if self.finished:
+            await interaction.response.send_message(
+                "このゲームはもう終了しているよ。",
+                ephemeral=True,
+            )
+            return
+
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message(
+                "このゲームを操作できるのは賭けた本人だけだよ。",
+                ephemeral=True,
+            )
+            return
+
+        self.finished = True
+
+        winning_color = random.choice(["🟥", "🟦"])
+        won = chosen_color == winning_color
+
+        # ゲーム開始時点で賭け金を差し引いている。
+        # 当たりの場合は、賭け金の2倍を払い戻す。
+        current_balance = get_balance(interaction.user.id)
+
+        if won:
+            payout = self.bet * 2
+            new_balance = current_balance + payout
+            profit = self.bet
+
+            result_text = (
+                f"🎉 **当たり！**\n"
+                f"正解：{winning_color}\n"
+                f"配当：+{payout:,} コイン"
+            )
+            color = discord.Color.green()
+        else:
+            payout = 0
+            new_balance = current_balance
+            profit = -self.bet
+
+            result_text = (
+                f"💸 **ハズレ！**\n"
+                f"正解：{winning_color}\n"
+                f"損失：-{self.bet:,} コイン"
+            )
+            color = discord.Color.red()
+
+        set_balance(interaction.user.id, new_balance)
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="🟥🟦 2択ゲーム",
+            description=(
+                f"プレイヤー：{interaction.user.mention}\n"
+                f"選んだ色：{chosen_color}\n\n"
+                f"{result_text}\n\n"
+                f"賭け金：{self.bet:,} コイン\n"
+                f"収支：{profit:+,} コイン\n"
+                f"残高：{new_balance:,} コイン"
+            ),
+            color=color,
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self,
+        )
+
+        record_coin({
+            "type": "color",
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "guild_id": interaction.guild.id if interaction.guild else None,
+            "user_id": interaction.user.id,
+            "username": str(interaction.user),
+            "bet": self.bet,
+            "chosen_color": chosen_color,
+            "winning_color": winning_color,
+            "won": won,
+            "payout": payout,
+            "amount": profit,
+            "profit": profit,
+            "balance": new_balance,
+        })
+
+        if interaction.guild is not None:
+            log_embed = discord.Embed(
+                title="🟥🟦 2択ゲームログ",
+                description=(
+                    f"ユーザー：{interaction.user.mention} "
+                    f"(`{interaction.user.id}`)\n"
+                    f"選択：{chosen_color}\n"
+                    f"正解：{winning_color}\n"
+                    f"結果：{'当たり' if won else 'ハズレ'}\n"
+                    f"賭け金：**{self.bet:,}**\n"
+                    f"配当：**{payout:,}**\n"
+                    f"収支：**{profit:+,}**\n"
+                    f"残高：**{new_balance:,}**"
+                ),
+                color=color,
+            )
+
+            await send_coin_log(interaction.guild, log_embed)
+
+    @discord.ui.button(
+        label="赤",
+        emoji="🟥",
+        style=discord.ButtonStyle.danger,
+    )
+    async def red_button(self, interaction, button):
+        await self.choose_color(interaction, "🟥")
+
+    @discord.ui.button(
+        label="青",
+        emoji="🟦",
+        style=discord.ButtonStyle.primary,
+    )
+    async def blue_button(self, interaction, button):
+        await self.choose_color(interaction, "🟦")
+
+    async def on_timeout(self):
+        if self.finished:
+            return
+
+        self.finished = True
+
+        # 60秒以内に選ばれなかったら賭け金を返す
+        current_balance = get_balance(self.ctx.author.id)
+        refunded_balance = current_balance + self.bet
+        set_balance(self.ctx.author.id, refunded_balance)
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="🟥🟦 2択ゲーム",
+            description=(
+                f"プレイヤー：{self.ctx.author.mention}\n\n"
+                "時間切れ！今回はゲームをキャンセルしたよ。\n"
+                f"賭け金 **{self.bet:,} コイン** を返したよ。\n"
+                f"残高：**{refunded_balance:,} コイン**"
+            ),
+            color=discord.Color.gold(),
+        )
+
+        if self.message is not None:
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+        record_coin({
+            "type": "color_refund",
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "guild_id": self.ctx.guild.id if self.ctx.guild else None,
+            "user_id": self.ctx.author.id,
+            "username": str(self.ctx.author),
+            "bet": self.bet,
+            "amount": self.bet,
+            "balance": refunded_balance,
+        })
+
+        if self.ctx.guild is not None:
+            log_embed = discord.Embed(
+                title="🟥🟦 2択ゲーム返金ログ",
+                description=(
+                    f"ユーザー：{self.ctx.author.mention} "
+                    f"(`{self.ctx.author.id}`)\n"
+                    f"理由：選択時間切れ\n"
+                    f"返金額：**{self.bet:,}**\n"
+                    f"残高：**{refunded_balance:,}**"
+                ),
+                color=discord.Color.gold(),
+            )
+
+            await send_coin_log(self.ctx.guild, log_embed)
+
+
+@bot.command(name="color", aliases=["色当て", "redblue"])
+async def color_command(ctx, bet: int):
+    if ctx.guild is None:
+        await ctx.reply(
+            "このコマンドはサーバー内で使ってね。",
+            mention_author=False,
+        )
+        return
+
+    if bet <= 0:
+        await ctx.reply(
+            "賭け金は1コイン以上にしてね。",
+            mention_author=False,
+        )
+        return
+
+    settings = get_server_settings(ctx.guild.id)
+    minimum = int(settings.get("min_bet", 1))
+
+    if bet < minimum:
+        await ctx.reply(
+            f"最低賭け金は {minimum:,} コインだよ。",
+            mention_author=False,
+        )
+        return
+
+    current_balance = get_balance(ctx.author.id)
+
+    if bet > current_balance:
+        await ctx.reply(
+            f"残高が足りないよ！\n"
+            f"残高：{current_balance:,} コイン",
+            mention_author=False,
+        )
+        return
+
+    # 最大賭け金制限は設けない。
+    # 賭け金はゲーム開始時に確保して、残高から差し引く。
+    set_balance(ctx.author.id, current_balance - bet)
+
+    embed = discord.Embed(
+        title="🟥🟦 2択ゲーム",
+        description=(
+            f"プレイヤー：{ctx.author.mention}\n"
+            f"賭け金：**{bet:,} コイン**\n\n"
+            "🟥 赤か 🟦 青を選んでね！\n"
+            "当たりなら賭け金込みで2倍が戻るよ。\n"
+            "ハズレなら賭け金を失うよ。\n\n"
+            "60秒以内に選んでね。\n"
+            "時間切れになった場合は賭け金が返金されるよ。"
+        ),
+        color=discord.Color.blurple(),
+    )
+
+    view = ColorBetView(ctx, bet)
+
+    try:
+        message = await ctx.reply(
+            embed=embed,
+            view=view,
+            mention_author=False,
+        )
+        view.message = message
+    except Exception:
+        # ゲーム画面を送信できなかった場合は賭け金を返す
+        current_balance = get_balance(ctx.author.id)
+        set_balance(ctx.author.id, current_balance + bet)
+        raise
 
 
 # ==================================================
@@ -1135,6 +1397,7 @@ async def help_command(ctx):
         description=(
             "**一般コマンド**\n"
             "`.slot 賭け金` — スロットを回す\n"
+            "`.color 賭け金` — 🟥🟦の2択ゲーム（当たりで2倍）\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
             "`.daily` — ログインボーナスを受け取る\n"

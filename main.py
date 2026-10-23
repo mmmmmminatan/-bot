@@ -137,6 +137,7 @@ def get_balance(user_id):
 
 
 def set_balance(user_id, amount):
+    # マイナス残高も許可する
     balances[str(user_id)] = int(amount)
     save_json(BALANCES_FILE, balances)
 
@@ -611,6 +612,74 @@ def record_coin(data):
     save_json(COIN_LOGS_FILE, coin_logs)
 
 
+# ==================================================
+# 胴元システム
+# 他の人の勝ち負けをオーナー残高に反映する
+# ==================================================
+
+def transfer_to_house(player_id, profit, guild_id=None, game="game"):
+    """
+    プレイヤーの純収支をオーナー残高に反映する。
+
+    profit がマイナス：
+        プレイヤーが負けたため、オーナー残高が増える。
+
+    profit がプラス：
+        プレイヤーが勝ったため、オーナー残高が減る。
+
+    オーナー本人のプレイでは移動させない。
+    オーナー残高がマイナスでも支払いを許可する。
+    """
+
+    player_id = int(player_id)
+    profit = int(profit)
+
+    # オーナー本人が遊んだ場合は胴元との資金移動をしない
+    if player_id == OWNER_USER_ID:
+        return None
+
+    # 収支が±0なら資金移動は不要
+    if profit == 0:
+        return None
+
+    owner_before = get_balance(OWNER_USER_ID)
+
+    # プレイヤーの利益と逆方向にオーナー残高を動かす
+    owner_change = -profit
+    owner_after = owner_before + owner_change
+
+    # マイナス残高もそのまま保存する
+    set_balance(OWNER_USER_ID, owner_after)
+
+    # 胴元の資金移動をログに記録
+    record_coin({
+        "type": "house_transfer",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": guild_id,
+        "user_id": OWNER_USER_ID,
+        "username": "owner",
+        "player_id": player_id,
+        "game": game,
+        "player_profit": profit,
+        "amount": owner_change,
+        "before": owner_before,
+        "after": owner_after,
+    })
+
+    print(
+        f"[HOUSE] game={game} player={player_id} "
+        f"player_profit={profit:+,} "
+        f"owner_change={owner_change:+,} "
+        f"owner_balance={owner_after:,}"
+    )
+
+    return {
+        "before": owner_before,
+        "change": owner_change,
+        "after": owner_after,
+    }
+
+
 async def send_slot_log(guild, embed):
     channel = await get_log_channel(guild)
 
@@ -808,8 +877,25 @@ class ColorBetView(discord.ui.View):
 
         set_balance(interaction.user.id, new_balance)
 
+        # 胴元の残高にも純収支を反映
+        house_result = transfer_to_house(
+            player_id=interaction.user.id,
+            profit=profit,
+            guild_id=interaction.guild.id if interaction.guild else None,
+            game="color",
+        )
+
         for item in self.children:
             item.disabled = True
+
+        house_text = ""
+
+        if house_result is not None:
+            house_text = (
+                f"\n胴元の残高変動："
+                f"{house_result['change']:+,} コイン"
+                f"\n胴元の残高：{house_result['after']:,} コイン"
+            )
 
         embed = discord.Embed(
             title="🟥🟦 2択ゲーム",
@@ -820,6 +906,7 @@ class ColorBetView(discord.ui.View):
                 f"賭け金：{self.bet:,} コイン\n"
                 f"収支：{profit:+,} コイン\n"
                 f"残高：{new_balance:,} コイン"
+                f"{house_text}"
             ),
             color=color,
         )
@@ -846,19 +933,27 @@ class ColorBetView(discord.ui.View):
         })
 
         if interaction.guild is not None:
+            log_description = (
+                f"ユーザー：{interaction.user.mention} "
+                f"(`{interaction.user.id}`)\n"
+                f"選択：{chosen_color}\n"
+                f"正解：{winning_color}\n"
+                f"結果：{'当たり' if won else 'ハズレ'}\n"
+                f"賭け金：**{self.bet:,}**\n"
+                f"配当：**{payout:,}**\n"
+                f"収支：**{profit:+,}**\n"
+                f"残高：**{new_balance:,}**"
+            )
+
+            if house_result is not None:
+                log_description += (
+                    f"\n胴元の変動：**{house_result['change']:+,}**\n"
+                    f"胴元の残高：**{house_result['after']:,}**"
+                )
+
             log_embed = discord.Embed(
                 title="🟥🟦 2択ゲームログ",
-                description=(
-                    f"ユーザー：{interaction.user.mention} "
-                    f"(`{interaction.user.id}`)\n"
-                    f"選択：{chosen_color}\n"
-                    f"正解：{winning_color}\n"
-                    f"結果：{'当たり' if won else 'ハズレ'}\n"
-                    f"賭け金：**{self.bet:,}**\n"
-                    f"配当：**{payout:,}**\n"
-                    f"収支：**{profit:+,}**\n"
-                    f"残高：**{new_balance:,}**"
-                ),
+                description=log_description,
                 color=color,
             )
 
@@ -1228,7 +1323,17 @@ async def slot_command(ctx, bet: int):
 
     set_balance(ctx.author.id, new_balance)
 
+    # プレイヤーの純収支を計算
     profit = payout - bet
+
+    # 胴元の残高へ反映
+    # profitがマイナスならオーナーは増え、プラスならオーナーは減る
+    house_result = transfer_to_house(
+        player_id=ctx.author.id,
+        profit=profit,
+        guild_id=ctx.guild.id,
+        game="slot",
+    )
 
     if profit > 0:
         profit_text = f"+{profit:,}"
@@ -1292,18 +1397,30 @@ async def slot_command(ctx, bet: int):
         "emoji_mode": settings.get("emoji_mode", "unicode"),
     }
 
+    if house_result is not None:
+        log_data["house_change"] = house_result["change"]
+        log_data["house_balance"] = house_result["after"]
+
     record_slot(log_data)
+
+    log_description = (
+        f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+        f"賭け金：**{bet:,}**\n"
+        f"配当：**{payout:,}**\n"
+        f"収支：**{profit_text}**\n"
+        f"残高：**{new_balance:,}**\n\n"
+        f"{displayed_grid}"
+    )
+
+    if house_result is not None:
+        log_description += (
+            f"\n\n胴元の残高変動：**{house_result['change']:+,}**\n"
+            f"胴元の残高：**{house_result['after']:,}**"
+        )
 
     log_embed = discord.Embed(
         title="🎰 スロットログ",
-        description=(
-            f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-            f"賭け金：**{bet:,}**\n"
-            f"配当：**{payout:,}**\n"
-            f"収支：**{profit_text}**\n"
-            f"残高：**{new_balance:,}**\n\n"
-            f"{displayed_grid}"
-        ),
+        description=log_description,
         color=color,
     )
 
@@ -2182,6 +2299,32 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
                         combined_logs.append({
                             "type": "payment",
+                            "timestamp": message.created_at.timestamp(),
+                            "guild_id": guild_id,
+                            "user_id": user_match.group(1),
+                            "after": int(
+                                after_match.group(1).replace(",", "")
+                            ),
+                            "source": "discord",
+                        })
+                        discord_log_count += 1
+
+                    # 胴元の残高もDiscordログから復旧できるようにする
+                    elif "胴元残高ログ" in title:
+                        user_match = re.search(
+                            r"オーナーID：`(\d+)`",
+                            description,
+                        )
+                        after_match = re.search(
+                            r"変更後：\*\*([+-]?[\d,]+)\*\*",
+                            description,
+                        )
+
+                        if not user_match or not after_match:
+                            continue
+
+                        combined_logs.append({
+                            "type": "house_transfer",
                             "timestamp": message.created_at.timestamp(),
                             "guild_id": guild_id,
                             "user_id": user_match.group(1),

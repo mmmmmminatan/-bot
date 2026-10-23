@@ -1113,10 +1113,10 @@ async def payment_command(
 
 
 # ==================================================
-# .Mhelp
+# .help
 # ==================================================
 
-@bot.command(name="help")
+@bot.command(name="mhelp")
 async def help_command(ctx):
     embed = discord.Embed(
         title="📖 コマンド一覧",

@@ -1113,7 +1113,7 @@ async def payment_command(
 
 
 # ==================================================
-# .help
+# .Mhelp
 # ==================================================
 
 @bot.command(name="help")
@@ -1128,9 +1128,9 @@ async def help_command(ctx):
             "`.daily` — ログインボーナスを受け取る\n"
             "`/all cash` — 全メンバーの残高一覧（管理者・owner専用）\n"
             "`.help` — この一覧を表示\n\n"
-            "**ownerロール専用**\n"
+            "**owner only**\n"
             "`.Payment @ユーザー 金額` — 残高を増減する\n\n"
-            "**サーバー管理者向け**\n"
+            "**owner only**\n"
             "`/setting` — Botの設定パネル\n"
             "`/log panel` — 固定ログ送信先の確認\n"
             "`/coinrecovery` — ログから残高を復旧"

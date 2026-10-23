@@ -19,6 +19,7 @@ from flask import Flask
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "owner"
+OWNER_USER_ID = 1325449934236942392
 STARTING_BALANCE = 1000
 
 MAX_LOGS = 10000
@@ -313,7 +314,13 @@ async def on_resumed():
 # 権限チェック
 # ==================================================
 
+def is_owner_user(user):
+    """指定されたDiscordユーザーIDの本人だけをオーナーとする。"""
+    return getattr(user, "id", None) == OWNER_USER_ID
+
+
 def has_owner_role(member):
+    """スロットの利用権限設定用。"""
     if not isinstance(member, discord.Member):
         return False
 
@@ -331,11 +338,12 @@ def is_admin(member):
 
 
 def is_admin_or_owner(member):
-    return is_admin(member) or has_owner_role(member)
+    # オーナー限定機能は指定IDの本人だけ
+    return is_owner_user(member)
 
 
 def can_use_slot(member, settings):
-    """メンテナンス・スロット使用権限を確認する。"""
+    """スロットの利用権限は、従来のサーバー設定に従う。"""
 
     if is_admin(member):
         return True, None
@@ -1038,12 +1046,12 @@ async def payment_command(
     member: discord.Member,
     amount: int,
 ):
-    if not has_owner_role(ctx.author):
-        await ctx.reply(
-            f"このコマンドは `{OWNER_ROLE_NAME}` ロール専用だよ。",
-            mention_author=False,
-        )
-        return
+    if not is_owner_user(ctx.author):
+    await ctx.reply(
+        "このコマンドを使えるのは指定されたオーナー本人だけだよ。",
+        mention_author=False,
+    )
+    return
 
     if member.bot:
         await ctx.reply(

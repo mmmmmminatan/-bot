@@ -1,3 +1,4 @@
+
 import asyncio
 import json
 import os
@@ -18,17 +19,11 @@ from flask import Flask
 # ==================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-# オーナー本人のDiscord ID
 OWNER_USER_ID = 1325449934236942392
-
-# スロットの「ownerロール限定」設定用
 OWNER_ROLE_NAME = "owner"
 
 STARTING_BALANCE = 1000
 MAX_LOGS = 10000
-
-# スロット・Payment・ログインボーナス共通のログ送信先
 LOG_CHANNEL_ID = 1561184711571939438
 
 BALANCES_FILE = Path("balances.json")
@@ -39,7 +34,6 @@ COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
 DAILY_FILE = Path("daily_logs.json")
 
-# ログインボーナス
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
 JST = timezone(timedelta(hours=9))
@@ -183,6 +177,27 @@ def save_server_settings(guild_id):
 
 
 # ==================================================
+# 賭け金の入力処理
+# 数字指定と all / ALL の両方に対応
+# ==================================================
+
+def resolve_bet(user_id, bet_text):
+    """
+    数字なら指定金額、allなら現在の所持金を返す。
+    不正な入力の場合は None を返す。
+    """
+    bet_text = str(bet_text).strip()
+
+    if bet_text.casefold() == "all":
+        return get_balance(user_id)
+
+    try:
+        return int(bet_text)
+    except (TypeError, ValueError):
+        return None
+
+
+# ==================================================
 # 権限チェック
 # ==================================================
 
@@ -210,7 +225,6 @@ def is_admin(member):
 
 
 def is_admin_or_owner(member):
-    # 管理コマンドでは管理者権限・ロール名ではなくIDで判定する
     return is_owner_user(member)
 
 
@@ -614,44 +628,21 @@ def record_coin(data):
 
 # ==================================================
 # 胴元システム
-# 他の人の勝ち負けをオーナー残高に反映する
 # ==================================================
 
 def transfer_to_house(player_id, profit, guild_id=None, game="game"):
-    """
-    プレイヤーの純収支をオーナー残高に反映する。
-
-    profit がマイナス：
-        プレイヤーが負けたため、オーナー残高が増える。
-
-    profit がプラス：
-        プレイヤーが勝ったため、オーナー残高が減る。
-
-    オーナー本人のプレイでは移動させない。
-    オーナー残高がマイナスでも支払いを許可する。
-    """
-
     player_id = int(player_id)
     profit = int(profit)
 
-    # オーナー本人が遊んだ場合は胴元との資金移動をしない
-    if player_id == OWNER_USER_ID:
-        return None
-
-    # 収支が±0なら資金移動は不要
-    if profit == 0:
+    if player_id == OWNER_USER_ID or profit == 0:
         return None
 
     owner_before = get_balance(OWNER_USER_ID)
-
-    # プレイヤーの利益と逆方向にオーナー残高を動かす
     owner_change = -profit
     owner_after = owner_before + owner_change
 
-    # マイナス残高もそのまま保存する
     set_balance(OWNER_USER_ID, owner_after)
 
-    # 胴元の資金移動をログに記録
     record_coin({
         "type": "house_transfer",
         "timestamp": datetime.now(timezone.utc).timestamp(),
@@ -815,9 +806,7 @@ async def daily_command(ctx):
 
 # ==================================================
 # .color 2択ゲーム
-# 最大賭け金制限なし
-# 当たり：賭け金込みで2倍
-# ハズレ：賭け金を失う
+# .color all 対応
 # ==================================================
 
 class ColorBetView(discord.ui.View):
@@ -847,9 +836,6 @@ class ColorBetView(discord.ui.View):
 
         winning_color = random.choice(["🟥", "🟦"])
         won = chosen_color == winning_color
-
-        # ゲーム開始時点で賭け金を差し引いている。
-        # 当たりの場合は、賭け金の2倍を払い戻す。
         current_balance = get_balance(interaction.user.id)
 
         if won:
@@ -877,7 +863,6 @@ class ColorBetView(discord.ui.View):
 
         set_balance(interaction.user.id, new_balance)
 
-        # 胴元の残高にも純収支を反映
         house_result = transfer_to_house(
             player_id=interaction.user.id,
             profit=profit,
@@ -981,7 +966,6 @@ class ColorBetView(discord.ui.View):
 
         self.finished = True
 
-        # 60秒以内に選ばれなかったら賭け金を返す
         current_balance = get_balance(self.ctx.author.id)
         refunded_balance = current_balance + self.bet
         set_balance(self.ctx.author.id, refunded_balance)
@@ -1034,7 +1018,7 @@ class ColorBetView(discord.ui.View):
 
 
 @bot.command(name="color", aliases=["色当て", "redblue"])
-async def color_command(ctx, bet: int):
+async def color_command(ctx, bet_text: str):
     if ctx.guild is None:
         await ctx.reply(
             "このコマンドはサーバー内で使ってね。",
@@ -1042,9 +1026,20 @@ async def color_command(ctx, bet: int):
         )
         return
 
+    # 数字指定ならその金額、allなら所持金全額
+    bet = resolve_bet(ctx.author.id, bet_text)
+
+    if bet is None:
+        await ctx.reply(
+            "賭け金は数字か `all` で指定してね。\n"
+            "例：`.color 500` / `.color all`",
+            mention_author=False,
+        )
+        return
+
     if bet <= 0:
         await ctx.reply(
-            "賭け金は1コイン以上にしてね。",
+            "賭け金に使える残高がないよ。",
             mention_author=False,
         )
         return
@@ -1069,8 +1064,6 @@ async def color_command(ctx, bet: int):
         )
         return
 
-    # 最大賭け金制限は設けない。
-    # 賭け金はゲーム開始時に確保して、残高から差し引く。
     set_balance(ctx.author.id, current_balance - bet)
 
     embed = discord.Embed(
@@ -1097,7 +1090,6 @@ async def color_command(ctx, bet: int):
         )
         view.message = message
     except Exception:
-        # ゲーム画面を送信できなかった場合は賭け金を返す
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
         raise
@@ -1123,7 +1115,6 @@ async def cash_command(ctx, member: discord.Member = None):
 
 # ==================================================
 # /all_cash 全メンバーの残高一覧
-# オーナー本人のIDのみ利用可能
 # ==================================================
 
 BALANCE_LIST_PER_PAGE = 15
@@ -1258,10 +1249,11 @@ async def all_cash_command(interaction: discord.Interaction):
 
 # ==================================================
 # .slot スロット
+# .slot all 対応
 # ==================================================
 
 @bot.command(name="slot")
-async def slot_command(ctx, bet: int):
+async def slot_command(ctx, bet_text: str):
     if ctx.guild is None:
         await ctx.reply(
             "このコマンドはサーバー内で使ってね。",
@@ -1274,6 +1266,24 @@ async def slot_command(ctx, bet: int):
 
     if not allowed:
         await ctx.reply(reason, mention_author=False)
+        return
+
+    # 数字指定ならその金額、allなら所持金全額
+    bet = resolve_bet(ctx.author.id, bet_text)
+
+    if bet is None:
+        await ctx.reply(
+            "賭け金は数字か `all` で指定してね。\n"
+            "例：`.slot 500` / `.slot all`",
+            mention_author=False,
+        )
+        return
+
+    if bet <= 0:
+        await ctx.reply(
+            "賭け金に使える残高がないよ。",
+            mention_author=False,
+        )
         return
 
     minimum = int(settings.get("min_bet", 1))
@@ -1323,11 +1333,8 @@ async def slot_command(ctx, bet: int):
 
     set_balance(ctx.author.id, new_balance)
 
-    # プレイヤーの純収支を計算
     profit = payout - bet
 
-    # 胴元の残高へ反映
-    # profitがマイナスならオーナーは増え、プラスならオーナーは減る
     house_result = transfer_to_house(
         player_id=ctx.author.id,
         profit=profit,
@@ -1429,7 +1436,6 @@ async def slot_command(ctx, bet: int):
 
 # ==================================================
 # .Payment 残高の増減
-# 指定されたオーナー本人だけ利用可能
 # ==================================================
 
 @bot.command(name="Payment", aliases=["pay", "送金"])
@@ -1514,7 +1520,9 @@ async def help_command(ctx):
         description=(
             "**一般コマンド**\n"
             "`.slot 賭け金` — スロットを回す\n"
+            "`.slot all` — 所持金を全額賭ける\n"
             "`.color 賭け金` — 🟥🟦の2択ゲーム（当たりで2倍）\n"
+            "`.color all` — 所持金を全額賭ける\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
             "`.daily` — ログインボーナスを受け取る\n"
@@ -1586,7 +1594,6 @@ class LogChannelView(discord.ui.View):
 
 # ==================================================
 # /log panel
-# オーナー本人専用
 # ==================================================
 
 log_group = app_commands.Group(
@@ -2115,7 +2122,6 @@ class MaintenanceSettingView(discord.ui.View):
 
 # ==================================================
 # /setting
-# オーナー本人専用
 # ==================================================
 
 @bot.tree.command(
@@ -2199,8 +2205,6 @@ async def setting_command(interaction: discord.Interaction):
 
 # ==================================================
 # /coinrecovery
-# JSONログ + Discord固定ログチャンネルから残高を復旧
-# オーナー本人専用
 # ==================================================
 
 @bot.tree.command(
@@ -2213,7 +2217,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     if interaction.guild is None:
         await interaction.response.send_message(
-            "サーバー内で使ってね。",
+            "このコマンドはサーバー内で使ってね。",
             ephemeral=True,
         )
         return
@@ -2227,7 +2231,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
     json_log_count = 0
     errors = []
 
-    # JSONログを取得
     for item in slot_logs:
         try:
             if int(item.get("guild_id", 0)) == guild_id:
@@ -2244,7 +2247,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
         except (TypeError, ValueError, AttributeError):
             continue
 
-    # 固定ログチャンネルを取得
     channel = await get_log_channel(interaction.guild)
 
     if channel is None:
@@ -2309,7 +2311,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
                         })
                         discord_log_count += 1
 
-                    # 胴元の残高もDiscordログから復旧できるようにする
                     elif "胴元残高ログ" in title:
                         user_match = re.search(
                             r"オーナーID：`(\d+)`",
@@ -2346,7 +2347,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
             errors.append("ログの読み取り中にエラーが発生したよ。")
             traceback.print_exc()
 
-    # 時刻順に並べて最新残高を計算
     combined_logs.sort(
         key=lambda item: float(item.get("timestamp", 0))
     )
@@ -2423,7 +2423,6 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
 # ==================================================
 # /settinginfo 設定の確認
-# これは公開コマンドのまま
 # ==================================================
 
 @bot.tree.command(

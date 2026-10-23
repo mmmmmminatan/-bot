@@ -650,7 +650,6 @@ async def daily_command(ctx):
 
     # 指定された表示形式。余計な絵文字は追加しない。
     await ctx.reply(
-        f"Mbot\n"
         f"{streak}日目\n"
         f"増やした金額：+{reward:,} コイン",
         mention_author=False,

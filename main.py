@@ -32,6 +32,7 @@ LOG_CONFIG_FILE = Path("log_config.json")
 COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
 DAILY_FILE = Path("daily_logs.json")
+GUESS_FILE = Path("guess_data.json")
 
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
@@ -80,40 +81,29 @@ DEFAULT_SERVER_SETTINGS = {
 
 # ==================================================
 # 金額表示
-# 内部データ・計算は数値のまま維持する
 # ==================================================
 
 def money(amount):
-    """金額を $1,000 / -$1,000 / $0 の形式にする。"""
     amount = int(amount)
-
     if amount < 0:
         return f"-${abs(amount):,}"
-
     return f"${amount:,}"
 
 
 def money_change(amount):
-    """増減額を +$1,000 / -$1,000 / ±$0 の形式にする。"""
     amount = int(amount)
-
     if amount > 0:
         return f"+${amount:,}"
-
     if amount < 0:
         return f"-${abs(amount):,}"
-
     return "±$0"
 
 
 def parse_money_text(value):
-    """ログに記録された $ 表記を整数に戻す。"""
     value = str(value).strip()
     value = value.replace("$", "").replace(",", "").replace(" ", "")
-
     if value.startswith("＋"):
         value = "+" + value[1:]
-
     return int(value)
 
 
@@ -129,7 +119,6 @@ def load_json(path, default):
     except Exception:
         print(f"[JSON LOAD ERROR] {path}")
         traceback.print_exc()
-
     return default
 
 
@@ -149,13 +138,14 @@ log_configs = load_json(LOG_CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
+guess_data = load_json(GUESS_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
+GUESS_LOCKS = {}
 
 
 def get_balance(user_id):
     user_id = str(user_id)
-
     if user_id not in balances:
         balances[user_id] = STARTING_BALANCE
         save_json(BALANCES_FILE, balances)
@@ -169,7 +159,6 @@ def get_balance(user_id):
 
 
 def set_balance(user_id, amount):
-    # マイナス残高も許可する
     balances[str(user_id)] = int(amount)
     save_json(BALANCES_FILE, balances)
 
@@ -181,7 +170,6 @@ def get_server_settings(guild_id):
         return result
 
     guild_key = str(guild_id)
-
     if guild_key not in server_settings:
         server_settings[guild_key] = {}
 
@@ -189,18 +177,13 @@ def get_server_settings(guild_id):
 
     for key, value in DEFAULT_SERVER_SETTINGS.items():
         if key not in current:
-            current[key] = (
-                value.copy() if isinstance(value, dict) else value
-            )
+            current[key] = value.copy() if isinstance(value, dict) else value
 
     if not isinstance(current.get("weights"), dict):
         current["weights"] = DEFAULT_WEIGHTS.copy()
 
     for symbol in SYMBOLS:
-        current["weights"].setdefault(
-            symbol,
-            DEFAULT_WEIGHTS[symbol],
-        )
+        current["weights"].setdefault(symbol, DEFAULT_WEIGHTS[symbol])
 
     if current.get("emoji_mode") not in ("unicode", "custom"):
         current["emoji_mode"] = "unicode"
@@ -216,16 +199,10 @@ def save_server_settings(guild_id):
 
 # ==================================================
 # 賭け金の入力処理
-# 数字指定と all / ALL の両方に対応
 # ==================================================
 
 def resolve_bet(user_id, bet_text):
-    """
-    数字なら指定金額、allなら現在の所持金を返す。
-    不正な入力の場合は None を返す。
-    """
     bet_text = str(bet_text).strip()
-
     if bet_text.casefold() == "all":
         return get_balance(user_id)
 
@@ -240,15 +217,12 @@ def resolve_bet(user_id, bet_text):
 # ==================================================
 
 def is_owner_user(user):
-    """指定されたDiscord IDの本人だけをオーナーとして扱う。"""
     return getattr(user, "id", None) == OWNER_USER_ID
 
 
 def has_owner_role(member):
-    """スロットのownerロール設定用。管理コマンドの認証には使わない。"""
     if not isinstance(member, discord.Member):
         return False
-
     return any(
         role.name.lower() == OWNER_ROLE_NAME.lower()
         for role in member.roles
@@ -267,8 +241,6 @@ def is_admin_or_owner(member):
 
 
 def can_use_slot(member, settings):
-    """スロット自体の使用権限を確認する。"""
-
     if is_admin(member):
         return True, None
 
@@ -281,15 +253,12 @@ def can_use_slot(member, settings):
         return False, "現在、スロットは管理者のみ利用できます。"
 
     if permission == "owner" and not has_owner_role(member):
-        return False, (
-            f"`{OWNER_ROLE_NAME}` ロールを持つメンバーのみ利用できます。"
-        )
+        return False, f"`{OWNER_ROLE_NAME}` ロールを持つメンバーのみ利用できます。"
 
     return True, None
 
 
 async def require_owner(interaction):
-    """スラッシュコマンドのオーナー本人チェック。"""
     if is_owner_user(interaction.user):
         return True
 
@@ -298,10 +267,7 @@ async def require_owner(interaction):
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=True)
     else:
-        await interaction.response.send_message(
-            message,
-            ephemeral=True,
-        )
+        await interaction.response.send_message(message, ephemeral=True)
 
     return False
 
@@ -315,7 +281,6 @@ def find_custom_emoji(guild, symbol):
         return None
 
     emoji_name = CUSTOM_EMOJI_NAMES.get(symbol)
-
     if not emoji_name:
         return None
 
@@ -329,10 +294,8 @@ def find_custom_emoji(guild, symbol):
 def display_symbol(symbol, guild, settings):
     if settings.get("emoji_mode", "unicode") == "custom":
         custom_emoji = find_custom_emoji(guild, symbol)
-
         if custom_emoji is not None:
             return str(custom_emoji)
-
     return symbol
 
 
@@ -341,7 +304,6 @@ def grid_text(grid, guild=None, settings=None):
         settings = DEFAULT_SERVER_SETTINGS
 
     lines = []
-
     for row in grid:
         displayed_row = [
             display_symbol(symbol, guild, settings)
@@ -355,7 +317,6 @@ def grid_text(grid, guild=None, settings=None):
 def get_display_mode_name(settings):
     if settings.get("emoji_mode", "unicode") == "custom":
         return "サーバーのカスタム絵文字"
-
     return "通常の絵文字"
 
 
@@ -366,7 +327,6 @@ def get_custom_emoji_status(guild):
     for symbol in SYMBOLS:
         emoji_name = CUSTOM_EMOJI_NAMES[symbol]
         emoji = find_custom_emoji(guild, symbol)
-
         if emoji:
             found.append(f"{symbol} → {emoji_name}")
         else:
@@ -384,11 +344,9 @@ def get_weights_text(weights):
 
 # ==================================================
 # スロット盤面生成
-# 1列に同じ絵柄を重複させない
 # ==================================================
 
 def weighted_symbol_order(weights):
-    """比率に応じた順序を作る。同じ絵柄は1回だけ選ぶ。"""
     remaining = SYMBOLS.copy()
     result = []
 
@@ -400,7 +358,6 @@ def weighted_symbol_order(weights):
                 weight = max(0, int(weights.get(symbol, 0)))
             except (TypeError, ValueError):
                 weight = 0
-
             available_weights.append(weight)
 
         if sum(available_weights) <= 0:
@@ -419,11 +376,6 @@ def weighted_symbol_order(weights):
 
 
 def make_grid(positions, weights):
-    """
-    3列×3行の盤面を生成する。
-    各列には同じ絵柄が重複して出ない。
-    positionsは各列の表示位置として保存する。
-    """
     columns = []
 
     for index in range(3):
@@ -444,10 +396,8 @@ def make_grid(positions, weights):
 
 
 def get_paylines(grid):
-    """中央の横1列のみを当たり判定に使用する。"""
     if len(grid) < 2 or len(grid[1]) < 3:
         return []
-
     return [grid[1][:3]]
 
 
@@ -480,6 +430,25 @@ async def on_ready():
         print("[SLASH SYNC ERROR]")
         traceback.print_exc()
 
+    # 再起動後、保存されているゲームの状態に合わせて権限を復旧
+    for guild_key, game in guess_data.items():
+        try:
+            guild = bot.get_guild(int(guild_key))
+            if guild is None:
+                continue
+
+            channel = guild.get_channel(int(game.get("channel_id", 0)))
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                continue
+
+            await set_guess_channel_locked(
+                channel,
+                locked=not bool(game.get("active", False)),
+            )
+        except Exception:
+            print("[GUESS RESTORE ERROR]")
+            traceback.print_exc()
+
 
 @bot.event
 async def on_message(message):
@@ -493,6 +462,7 @@ async def on_message(message):
         f"content={message.content[:150]}"
     )
 
+    await process_guess_message(message)
     await bot.process_commands(message)
 
 
@@ -537,11 +507,7 @@ async def on_command_error(ctx, error):
         return
 
     print("[COMMAND ERROR]")
-    traceback.print_exception(
-        type(error),
-        error,
-        error.__traceback__,
-    )
+    traceback.print_exception(type(error), error, error.__traceback__)
 
     try:
         await ctx.reply(
@@ -555,11 +521,7 @@ async def on_command_error(ctx, error):
 @bot.tree.error
 async def on_app_command_error(interaction, error):
     print("[SLASH COMMAND ERROR]")
-    traceback.print_exception(
-        type(error),
-        error,
-        error.__traceback__,
-    )
+    traceback.print_exception(type(error), error, error.__traceback__)
 
     message = "スラッシュコマンドの実行中にエラーが発生したよ。"
 
@@ -567,10 +529,7 @@ async def on_app_command_error(interaction, error):
         if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=True)
         else:
-            await interaction.response.send_message(
-                message,
-                ephemeral=True,
-            )
+            await interaction.response.send_message(message, ephemeral=True)
     except Exception:
         pass
 
@@ -590,34 +549,22 @@ async def get_log_channel(guild):
             channel = await bot.fetch_channel(LOG_CHANNEL_ID)
 
         if not isinstance(channel, discord.TextChannel):
-            print(
-                "[LOG ERROR] 指定先がテキストチャンネルではありません: "
-                f"{LOG_CHANNEL_ID}"
-            )
+            print("[LOG ERROR] 指定先がテキストチャンネルではありません。")
             return None
 
         if channel.guild.id != guild.id:
-            print(
-                "[LOG ERROR] 固定ログチャンネルが実行サーバーと異なります。"
-                f"実行サーバー={guild.id}, "
-                f"ログチャンネルのサーバー={channel.guild.id}"
-            )
+            print("[LOG ERROR] 固定ログチャンネルが実行サーバーと異なります。")
             return None
 
         me = channel.guild.me
-
         if me is None:
             print("[LOG ERROR] Botのサーバーメンバー情報を取得できません。")
             return None
 
         permissions = channel.permissions_for(me)
 
-        if not permissions.view_channel:
-            print("[LOG ERROR] ログチャンネルを見る権限がありません。")
-            return None
-
-        if not permissions.send_messages:
-            print("[LOG ERROR] ログチャンネルに送信する権限がありません。")
+        if not permissions.view_channel or not permissions.send_messages:
+            print("[LOG ERROR] ログチャンネルの閲覧または送信権限がありません。")
             return None
 
         return channel
@@ -637,11 +584,7 @@ async def get_log_channel(guild):
 
 
 def record_slot(data):
-    data.setdefault(
-        "timestamp",
-        datetime.now(timezone.utc).timestamp(),
-    )
-
+    data.setdefault("timestamp", datetime.now(timezone.utc).timestamp())
     slot_logs.append(data)
 
     if len(slot_logs) > MAX_LOGS:
@@ -651,11 +594,7 @@ def record_slot(data):
 
 
 def record_coin(data):
-    data.setdefault(
-        "timestamp",
-        datetime.now(timezone.utc).timestamp(),
-    )
-
+    data.setdefault("timestamp", datetime.now(timezone.utc).timestamp())
     coin_logs.append(data)
 
     if len(coin_logs) > MAX_LOGS:
@@ -697,8 +636,7 @@ def transfer_to_house(player_id, profit, guild_id=None, game="game"):
 
     print(
         f"[HOUSE] game={game} player={player_id} "
-        f"player_profit={profit:+,} "
-        f"owner_change={owner_change:+,} "
+        f"player_profit={profit:+,} owner_change={owner_change:+,} "
         f"owner_balance={owner_after:,}"
     )
 
@@ -740,6 +678,522 @@ async def send_coin_log(guild, embed):
 
 
 # ==================================================
+# /guess 数字・言葉当てゲーム
+# ==================================================
+
+def get_guess_lock(guild_id):
+    key = str(guild_id)
+    if key not in GUESS_LOCKS:
+        GUESS_LOCKS[key] = asyncio.Lock()
+    return GUESS_LOCKS[key]
+
+
+async def set_guess_channel_locked(channel, locked):
+    """@everyone の送信権限を切り替える。他の権限設定は維持する。"""
+    guild = channel.guild
+    me = guild.me
+
+    if me is None:
+        raise RuntimeError("Botのサーバー情報を取得できません。")
+
+    permissions = channel.permissions_for(me)
+    if not permissions.manage_channels:
+        raise PermissionError("Botに「チャンネルの管理」権限が必要です。")
+
+    overwrite = channel.overwrites_for(guild.default_role)
+    overwrite.send_messages = not locked
+
+    await channel.set_permissions(
+        guild.default_role,
+        overwrite=overwrite,
+        reason="数字・言葉当てゲームの開催状態変更",
+    )
+
+
+class GuessConfigModal(discord.ui.Modal):
+    def __init__(self, view):
+        super().__init__(title="数字・言葉当ての設定")
+        self.parent_view = view
+
+        if view.mode == "number":
+            self.minimum_input = discord.ui.TextInput(
+                label="最小値",
+                placeholder="例：1",
+                required=True,
+                max_length=15,
+            )
+            self.maximum_input = discord.ui.TextInput(
+                label="最大値",
+                placeholder="例：100",
+                required=True,
+                max_length=15,
+            )
+            self.answer_input = discord.ui.TextInput(
+                label="正解の数字",
+                placeholder="範囲内の数字",
+                required=True,
+                max_length=15,
+            )
+
+            self.add_item(self.minimum_input)
+            self.add_item(self.maximum_input)
+            self.add_item(self.answer_input)
+        else:
+            self.answer_input = discord.ui.TextInput(
+                label="正解の言葉",
+                placeholder="正解となる言葉を入力",
+                required=True,
+                max_length=100,
+            )
+            self.add_item(self.answer_input)
+
+        self.reward_input = discord.ui.TextInput(
+            label="賞金（整数）",
+            placeholder="例：1000",
+            required=True,
+            max_length=15,
+        )
+        self.add_item(self.reward_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "サーバー管理者だけが設定できるよ。",
+                ephemeral=True,
+            )
+            return
+
+        if interaction.user.id != self.parent_view.owner_id:
+            await interaction.response.send_message(
+                "この設定パネルを開いた管理者だけが設定できるよ。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            reward = int(str(self.reward_input.value).strip())
+            if reward < 0:
+                raise ValueError
+
+            if self.parent_view.mode == "number":
+                minimum = int(str(self.minimum_input.value).strip())
+                maximum = int(str(self.maximum_input.value).strip())
+                answer_number = int(str(self.answer_input.value).strip())
+
+                if minimum > maximum:
+                    raise ValueError
+
+                if not minimum <= answer_number <= maximum:
+                    await interaction.response.send_message(
+                        "正解の数字は最小値と最大値の範囲内にしてね。",
+                        ephemeral=True,
+                    )
+                    return
+
+                self.parent_view.minimum = minimum
+                self.parent_view.maximum = maximum
+                self.parent_view.answer = str(answer_number)
+            else:
+                answer = str(self.answer_input.value).strip()
+                if not answer:
+                    raise ValueError
+                self.parent_view.answer = answer
+
+            self.parent_view.reward = reward
+            self.parent_view.configured = True
+
+        except ValueError:
+            await interaction.response.send_message(
+                "入力が正しくないよ。整数や数字の範囲を確認してね。",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            "設定を保存したよ！\n"
+            f"ゲーム：{'数字当て' if self.parent_view.mode == 'number' else '言葉当て'}\n"
+            f"賞金：**{money(reward)}**\n"
+            "設定パネルの「スタート」を押してね。",
+            ephemeral=True,
+        )
+
+
+class GuessModeSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="ゲームの種類を選択",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label="数字当て",
+                    value="number",
+                    description="最小値・最大値・正解の数字を設定",
+                    emoji="🔢",
+                ),
+                discord.SelectOption(
+                    label="言葉当て",
+                    value="word",
+                    description="正解となる言葉を設定",
+                    emoji="🔤",
+                ),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+
+        if interaction.user.id != view.owner_id or not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "この設定を操作できるのは、パネルを開いた管理者だけだよ。",
+                ephemeral=True,
+            )
+            return
+
+        view.mode = self.values[0]
+        view.configured = False
+
+        await interaction.response.send_message(
+            f"{'数字当て' if view.mode == 'number' else '言葉当て'}を選択したよ。\n"
+            "「正解・賞金を設定」から内容を入力してね。",
+            ephemeral=True,
+        )
+
+
+class GuessSetupView(discord.ui.View):
+    def __init__(self, owner_id, channel):
+        super().__init__(timeout=600)
+        self.owner_id = owner_id
+        self.channel = channel
+        self.mode = "number"
+        self.minimum = None
+        self.maximum = None
+        self.answer = None
+        self.reward = None
+        self.configured = False
+        self.started = False
+        self.add_item(GuessModeSelect())
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id or not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "このパネルを操作できるのは、開いた管理者だけだよ。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(
+        label="正解・賞金を設定",
+        style=discord.ButtonStyle.primary,
+        emoji="⚙️",
+    )
+    async def configure_button(self, interaction, button):
+        await interaction.response.send_modal(GuessConfigModal(self))
+
+    @discord.ui.button(
+        label="スタート",
+        style=discord.ButtonStyle.success,
+        emoji="▶️",
+    )
+    async def start_button(self, interaction, button):
+        if self.started:
+            await interaction.response.send_message(
+                "この設定パネルでは、すでに開始しているよ。",
+                ephemeral=True,
+            )
+            return
+
+        if not self.configured or self.answer is None or self.reward is None:
+            await interaction.response.send_message(
+                "先にゲーム種類を選んで、正解と賞金を設定してね。",
+                ephemeral=True,
+            )
+            return
+
+        guild_key = str(interaction.guild.id)
+        existing = guess_data.get(guild_key, {})
+
+        if existing.get("active", False):
+            await interaction.response.send_message(
+                "このサーバーでは、すでにゲームを開催中だよ。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await set_guess_channel_locked(self.channel, False)
+        except Exception as error:
+            await interaction.response.send_message(
+                f"チャンネルを開けなかったよ。\n"
+                f"Botの権限を確認してね。\n`{error}`",
+                ephemeral=True,
+            )
+            return
+
+        guess_data[guild_key] = {
+            "channel_id": self.channel.id,
+            "host_id": self.owner_id,
+            "mode": self.mode,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "answer": self.answer,
+            "reward": self.reward,
+            "active": True,
+            "finished": False,
+            "started_at": datetime.now(timezone.utc).timestamp(),
+        }
+        save_json(GUESS_FILE, guess_data)
+
+        self.started = True
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            content=(
+                "✅ **ゲームを開始したよ！**\n"
+                f"回答チャンネル：{self.channel.mention}\n"
+                f"ゲーム：{'数字当て' if self.mode == 'number' else '言葉当て'}\n"
+                f"賞金：**{money(self.reward)}**\n"
+                "回答チャンネルで答えを送信してね。"
+            ),
+            view=self,
+        )
+
+        await self.channel.send(
+            f"🎮 **数字・言葉当てゲーム開始！**\n"
+            f"賞金：**{money(self.reward)}**\n"
+            + (
+                f"範囲：**{self.minimum}〜{self.maximum}**"
+                if self.mode == "number"
+                else "正解の言葉を当ててね！"
+            )
+        )
+
+
+async def process_guess_message(message):
+    if message.guild is None:
+        return
+
+    guild_key = str(message.guild.id)
+    game = guess_data.get(guild_key)
+
+    if not game or not game.get("active", False):
+        return
+
+    if int(game.get("channel_id", 0)) != message.channel.id:
+        return
+
+    try:
+        await message.add_reaction("🎉")
+    except (discord.Forbidden, discord.HTTPException):
+        print("[GUESS] 回答メッセージへのリアクションに失敗しました。")
+
+    async with get_guess_lock(message.guild.id):
+        game = guess_data.get(guild_key)
+
+        if not game or not game.get("active", False):
+            return
+
+        content = message.content.strip()
+        answer = str(game.get("answer", ""))
+
+        if game.get("mode") == "number":
+            try:
+                correct = int(content) == int(answer)
+            except (TypeError, ValueError):
+                correct = False
+        else:
+            correct = content.casefold() == answer.casefold()
+
+        if not correct:
+            return
+
+        # 二重当選を防ぐため、先に終了状態を保存する
+        game["active"] = False
+        game["finished"] = True
+        game["winner_id"] = message.author.id
+        game["finished_at"] = datetime.now(timezone.utc).timestamp()
+        save_json(GUESS_FILE, guess_data)
+
+        reward = max(0, int(game.get("reward", 0)))
+        before = get_balance(message.author.id)
+        after = before + reward
+        set_balance(message.author.id, after)
+
+        record_coin({
+            "type": "guess_reward",
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "guild_id": message.guild.id,
+            "channel_id": message.channel.id,
+            "user_id": message.author.id,
+            "username": str(message.author),
+            "mode": game.get("mode"),
+            "answer": answer,
+            "amount": reward,
+            "before": before,
+            "after": after,
+        })
+
+        try:
+            await set_guess_channel_locked(message.channel, True)
+        except Exception:
+            print("[GUESS] 正解後のチャンネルロックに失敗しました。")
+            traceback.print_exc()
+
+        await message.channel.send(
+            f"🎉 **正解！**\n"
+            f"正解者：{message.author.mention}\n"
+            f"賞金：**{money_change(reward)}**\n"
+            f"現在の残高：**{money(after)}**"
+        )
+
+        log_embed = discord.Embed(
+            title="🎉 数字・言葉当てゲーム報酬ログ",
+            description=(
+                f"正解者：{message.author.mention} (`{message.author.id}`)\n"
+                f"回答チャンネル：{message.channel.mention}\n"
+                f"ゲーム種類：{'数字当て' if game.get('mode') == 'number' else '言葉当て'}\n"
+                f"正解：`{answer}`\n"
+                f"賞金：**{money_change(reward)}**\n"
+                f"変更前：**{money(before)}**\n"
+                f"変更後：**{money(after)}**"
+            ),
+            color=discord.Color.green(),
+        )
+        await send_coin_log(message.guild, log_embed)
+
+
+guess_group = app_commands.Group(
+    name="guess",
+    description="数字・言葉当てゲームを管理する",
+)
+
+
+@guess_group.command(
+    name="setup",
+    description="数字・言葉当てゲームの設定パネルを開く",
+)
+async def guess_setup_command(interaction: discord.Interaction):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "サーバーのテキストチャンネルで使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    if not is_admin(interaction.user):
+        await interaction.response.send_message(
+            "サーバー管理者だけがゲームを設定できるよ。",
+            ephemeral=True,
+        )
+        return
+
+    guild_key = str(interaction.guild.id)
+    current = guess_data.get(guild_key, {})
+
+    if current.get("active", False):
+        await interaction.response.send_message(
+            "このサーバーでは、すでにゲームを開催中だよ。",
+            ephemeral=True,
+        )
+        return
+
+    channel = interaction.channel
+
+    try:
+        await set_guess_channel_locked(channel, True)
+    except Exception as error:
+        await interaction.response.send_message(
+            f"回答チャンネルをロックできなかったよ。\n"
+            f"Botに「チャンネルの管理」権限があるか確認してね。\n`{error}`",
+            ephemeral=True,
+        )
+        return
+
+    guess_data[guild_key] = {
+        "channel_id": channel.id,
+        "host_id": interaction.user.id,
+        "active": False,
+        "finished": False,
+    }
+    save_json(GUESS_FILE, guess_data)
+
+    view = GuessSetupView(interaction.user.id, channel)
+
+    await interaction.response.send_message(
+        f"🎮 **数字・言葉当てゲーム設定**\n"
+        f"回答チャンネル：{channel.mention}\n"
+        "ゲーム種類を選び、「正解・賞金を設定」を押してね。\n"
+        "設定後に「スタート」を押すと回答受付が始まるよ。\n\n"
+        "※設定中は回答チャンネルをロックしているよ。",
+        view=view,
+        ephemeral=True,
+    )
+
+
+@guess_group.command(
+    name="stop",
+    description="開催中または設定中の数字・言葉当てゲームを停止する",
+)
+async def guess_stop_command(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "サーバー内で使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    if not is_admin(interaction.user):
+        await interaction.response.send_message(
+            "サーバー管理者だけが停止できるよ。",
+            ephemeral=True,
+        )
+        return
+
+    game = guess_data.get(str(interaction.guild.id))
+
+    if not game:
+        await interaction.response.send_message(
+            "停止できるゲーム設定がないよ。",
+            ephemeral=True,
+        )
+        return
+
+    channel = interaction.guild.get_channel(int(game.get("channel_id", 0)))
+
+    game["active"] = False
+    game["finished"] = True
+    save_json(GUESS_FILE, guess_data)
+
+    if channel is not None:
+        try:
+            await set_guess_channel_locked(channel, True)
+        except Exception as error:
+            await interaction.response.send_message(
+                "ゲームは停止したけど、チャンネルをロックできなかったよ。\n"
+                f"Botの権限を確認してね。\n`{error}`",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await channel.send(
+                f"🛑 管理者 {interaction.user.mention} がゲームを停止したよ。"
+            )
+        except discord.HTTPException:
+            pass
+
+    await interaction.response.send_message(
+        "ゲームを停止したよ。回答チャンネルをロックしたよ。",
+        ephemeral=True,
+    )
+
+
+bot.tree.add_command(guess_group)
+
+
+# ==================================================
 # .daily ログインボーナス
 # ==================================================
 
@@ -749,10 +1203,7 @@ async def daily_command(ctx):
         return
 
     if ctx.guild is None:
-        await ctx.reply(
-            "このコマンドはサーバー内で使ってね。",
-            mention_author=False,
-        )
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
 
     user_id = str(ctx.author.id)
@@ -774,16 +1225,11 @@ async def daily_command(ctx):
         else:
             already_received = False
             yesterday_text = (today - timedelta(days=1)).isoformat()
-
-            if last_date_text == yesterday_text:
-                streak += 1
-            else:
-                streak = 1
-
+            streak = streak + 1 if last_date_text == yesterday_text else 1
             reward = DAILY_REWARD + streak * DAILY_STREAK_BONUS
+
             current_balance = get_balance(ctx.author.id)
             new_balance = current_balance + reward
-
             set_balance(ctx.author.id, new_balance)
 
             daily_data[user_id] = {
@@ -792,7 +1238,6 @@ async def daily_command(ctx):
                 "last_reward": reward,
                 "last_balance": new_balance,
             }
-
             save_json(DAILY_FILE, daily_data)
 
             record_coin({
@@ -808,43 +1253,30 @@ async def daily_command(ctx):
             })
 
     if already_received:
-        await ctx.reply(
-            "今日はもうログインボーナスを受け取っているよ。",
-            mention_author=False,
-        )
+        await ctx.reply("今日はもうログインボーナスを受け取っているよ。", mention_author=False)
         return
 
     await ctx.reply(
-        f"{streak}日目\n"
-        f"増やした金額：{money_change(reward)}",
+        f"{streak}日目\n増やした金額：{money_change(reward)}",
         mention_author=False,
     )
 
     channel = await get_log_channel(ctx.guild)
-
-    if channel is None:
-        print("[DAILY LOG] 固定ログチャンネルを取得できませんでした。")
-        return
-
-    try:
-        await channel.send(
-            f"ログインボーナス\n"
-            f"やった人：{ctx.author.mention}\n"
-            f"増やした金額：{money_change(reward)}\n"
-            f"何日目か：{streak}日目"
-        )
-        print(
-            f"[DAILY LOG] 送信成功: "
-            f"user={ctx.author.id}, reward={reward}, streak={streak}"
-        )
-    except Exception:
-        print("[DAILY LOG SEND ERROR]")
-        traceback.print_exc()
+    if channel is not None:
+        try:
+            await channel.send(
+                f"ログインボーナス\n"
+                f"やった人：{ctx.author.mention}\n"
+                f"増やした金額：{money_change(reward)}\n"
+                f"何日目か：{streak}日目"
+            )
+        except Exception:
+            print("[DAILY LOG SEND ERROR]")
+            traceback.print_exc()
 
 
 # ==================================================
 # .color 2択ゲーム
-# .color all 対応
 # ==================================================
 
 class ColorBetView(discord.ui.View):
@@ -857,21 +1289,14 @@ class ColorBetView(discord.ui.View):
 
     async def choose_color(self, interaction, chosen_color):
         if self.finished:
-            await interaction.response.send_message(
-                "このゲームはもう終了しているよ。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("このゲームはもう終了しているよ。", ephemeral=True)
             return
 
         if interaction.user.id != self.ctx.author.id:
-            await interaction.response.send_message(
-                "このゲームを操作できるのは賭けた本人だけだよ。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("このゲームを操作できるのは賭けた本人だけだよ。", ephemeral=True)
             return
 
         self.finished = True
-
         winning_color = random.choice(["🌝", "🌚"])
         won = chosen_color == winning_color
         current_balance = get_balance(interaction.user.id)
@@ -880,43 +1305,31 @@ class ColorBetView(discord.ui.View):
             payout = self.bet * 2
             new_balance = current_balance + payout
             profit = self.bet
-
-            result_text = (
-                f"🎉 **当たり！**\n"
-                f"正解：{winning_color}\n"
-                f"配当：{money_change(payout)}"
-            )
+            result_text = f"🎉 **当たり！**\n正解：{winning_color}\n配当：{money_change(payout)}"
             color = discord.Color.green()
         else:
             payout = 0
             new_balance = current_balance
             profit = -self.bet
-
-            result_text = (
-                f"💸 **ハズレ！**\n"
-                f"正解：{winning_color}\n"
-                f"損失：{money_change(-self.bet)}"
-            )
+            result_text = f"💸 **ハズレ！**\n正解：{winning_color}\n損失：{money_change(-self.bet)}"
             color = discord.Color.red()
 
         set_balance(interaction.user.id, new_balance)
 
         house_result = transfer_to_house(
-            player_id=interaction.user.id,
-            profit=profit,
-            guild_id=interaction.guild.id if interaction.guild else None,
-            game="color",
+            interaction.user.id,
+            profit,
+            interaction.guild.id if interaction.guild else None,
+            "color",
         )
 
         for item in self.children:
             item.disabled = True
 
         house_text = ""
-
         if house_result is not None:
             house_text = (
-                f"\n胴元の残高変動："
-                f"{money_change(house_result['change'])}"
+                f"\n胴元の残高変動：{money_change(house_result['change'])}"
                 f"\n胴元の残高：{money(house_result['after'])}"
             )
 
@@ -924,20 +1337,14 @@ class ColorBetView(discord.ui.View):
             title="🌝🌚 2択ゲーム",
             description=(
                 f"プレイヤー：{interaction.user.mention}\n"
-                f"選んだ色：{chosen_color}\n\n"
-                f"{result_text}\n\n"
-                f"賭け金：{money(self.bet)}\n"
-                f"収支：{money_change(profit)}\n"
-                f"残高：{money(new_balance)}"
-                f"{house_text}"
+                f"選んだ色：{chosen_color}\n\n{result_text}\n\n"
+                f"賭け金：{money(self.bet)}\n収支：{money_change(profit)}\n"
+                f"残高：{money(new_balance)}{house_text}"
             ),
             color=color,
         )
 
-        await interaction.response.edit_message(
-            embed=embed,
-            view=self,
-        )
+        await interaction.response.edit_message(embed=embed, view=self)
 
         record_coin({
             "type": "color",
@@ -956,45 +1363,34 @@ class ColorBetView(discord.ui.View):
         })
 
         if interaction.guild is not None:
-            log_description = (
-                f"ユーザー：{interaction.user.mention} "
-                f"(`{interaction.user.id}`)\n"
-                f"選択：{chosen_color}\n"
-                f"正解：{winning_color}\n"
+            description = (
+                f"ユーザー：{interaction.user.mention} (`{interaction.user.id}`)\n"
+                f"選択：{chosen_color}\n正解：{winning_color}\n"
                 f"結果：{'当たり' if won else 'ハズレ'}\n"
-                f"賭け金：**{money(self.bet)}**\n"
-                f"配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n"
-                f"残高：**{money(new_balance)}**"
+                f"賭け金：**{money(self.bet)}**\n配当：**{money(payout)}**\n"
+                f"収支：**{money_change(profit)}**\n残高：**{money(new_balance)}**"
             )
 
             if house_result is not None:
-                log_description += (
-                    f"\n胴元の変動：**{money_change(house_result['change'])}**\n"
-                    f"胴元の残高：**{money(house_result['after'])}**"
+                description += (
+                    f"\n胴元の変動：**{money_change(house_result['change'])}**"
+                    f"\n胴元の残高：**{money(house_result['after'])}**"
                 )
 
-            log_embed = discord.Embed(
-                title="🌝🌚 2択ゲームログ",
-                description=log_description,
-                color=color,
+            await send_coin_log(
+                interaction.guild,
+                discord.Embed(
+                    title="🌝🌚 2択ゲームログ",
+                    description=description,
+                    color=color,
+                ),
             )
 
-            await send_coin_log(interaction.guild, log_embed)
-
-    @discord.ui.button(
-        label="表",
-        emoji="🌝",
-        style=discord.ButtonStyle.danger,
-    )
+    @discord.ui.button(label="表", emoji="🌝", style=discord.ButtonStyle.danger)
     async def red_button(self, interaction, button):
         await self.choose_color(interaction, "🌝")
 
-    @discord.ui.button(
-        label="裏",
-        emoji="🌚",
-        style=discord.ButtonStyle.primary,
-    )
+    @discord.ui.button(label="裏", emoji="🌚", style=discord.ButtonStyle.primary)
     async def blue_button(self, interaction, button):
         await self.choose_color(interaction, "🌚")
 
@@ -1003,7 +1399,6 @@ class ColorBetView(discord.ui.View):
             return
 
         self.finished = True
-
         current_balance = get_balance(self.ctx.author.id)
         refunded_balance = current_balance + self.bet
         set_balance(self.ctx.author.id, refunded_balance)
@@ -1040,65 +1435,46 @@ class ColorBetView(discord.ui.View):
         })
 
         if self.ctx.guild is not None:
-            log_embed = discord.Embed(
-                title="🌝🌚 2択ゲーム返金ログ",
-                description=(
-                    f"ユーザー：{self.ctx.author.mention} "
-                    f"(`{self.ctx.author.id}`)\n"
-                    f"理由：選択時間切れ\n"
-                    f"返金額：**{money(self.bet)}**\n"
-                    f"残高：**{money(refunded_balance)}**"
+            await send_coin_log(
+                self.ctx.guild,
+                discord.Embed(
+                    title="🌝🌚 2択ゲーム返金ログ",
+                    description=(
+                        f"ユーザー：{self.ctx.author.mention} (`{self.ctx.author.id}`)\n"
+                        "理由：選択時間切れ\n"
+                        f"返金額：**{money(self.bet)}**\n"
+                        f"残高：**{money(refunded_balance)}**"
+                    ),
+                    color=discord.Color.gold(),
                 ),
-                color=discord.Color.gold(),
             )
-
-            await send_coin_log(self.ctx.guild, log_embed)
 
 
 @bot.command(name="color", aliases=["色当て", "redblue"])
 async def color_command(ctx, bet_text: str):
     if ctx.guild is None:
-        await ctx.reply(
-            "このコマンドはサーバー内で使ってね。",
-            mention_author=False,
-        )
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
 
     bet = resolve_bet(ctx.author.id, bet_text)
-
     if bet is None:
-        await ctx.reply(
-            "賭け金は数字か `all` で指定してね。\n"
-            "例：`.color 500` / `.color all`",
-            mention_author=False,
-        )
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.color 500` / `.color all`", mention_author=False)
         return
 
     if bet <= 0:
-        await ctx.reply(
-            "賭け金に使える残高がないよ。",
-            mention_author=False,
-        )
+        await ctx.reply("賭け金に使える残高がないよ。", mention_author=False)
         return
 
     settings = get_server_settings(ctx.guild.id)
     minimum = int(settings.get("min_bet", 1))
 
     if bet < minimum:
-        await ctx.reply(
-            f"最低賭け金は {money(minimum)} だよ。",
-            mention_author=False,
-        )
+        await ctx.reply(f"最低賭け金は {money(minimum)} だよ。", mention_author=False)
         return
 
     current_balance = get_balance(ctx.author.id)
-
     if bet > current_balance:
-        await ctx.reply(
-            f"残高が足りないよ！\n"
-            f"残高：{money(current_balance)}",
-            mention_author=False,
-        )
+        await ctx.reply(f"残高が足りないよ！\n残高：{money(current_balance)}", mention_author=False)
         return
 
     set_balance(ctx.author.id, current_balance - bet)
@@ -1106,13 +1482,11 @@ async def color_command(ctx, bet_text: str):
     embed = discord.Embed(
         title="🌝🌚 2択ゲーム",
         description=(
-            f"プレイヤー：{ctx.author.mention}\n"
-            f"賭け金：**{money(bet)}**\n\n"
+            f"プレイヤー：{ctx.author.mention}\n賭け金：**{money(bet)}**\n\n"
             "🌝 表か 🌚 裏を選んでね！\n"
             "当たりなら賭け金込みで2倍が戻るよ。\n"
             "ハズレなら賭け金を失うよ。\n\n"
-            "60秒以内に選んでね。\n"
-            "時間切れになった場合は賭け金が返金されるよ。"
+            "60秒以内に選んでね。時間切れは返金されるよ。"
         ),
         color=discord.Color.blurple(),
     )
@@ -1120,11 +1494,7 @@ async def color_command(ctx, bet_text: str):
     view = ColorBetView(ctx, bet)
 
     try:
-        message = await ctx.reply(
-            embed=embed,
-            view=view,
-            mention_author=False,
-        )
+        message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
     except Exception:
         current_balance = get_balance(ctx.author.id)
@@ -1146,7 +1516,6 @@ async def cash_command(ctx, member: discord.Member = None):
         description=f"{member.mention} の残高：**{money(amount)}**",
         color=discord.Color.gold(),
     )
-
     await ctx.reply(embed=embed, mention_author=False)
 
 
@@ -1175,9 +1544,7 @@ class AllCashView(discord.ui.View):
             description=self.pages[self.page_index],
             color=discord.Color.gold(),
         )
-        embed.set_footer(
-            text=f"{self.page_index + 1} / {len(self.pages)} ページ"
-        )
+        embed.set_footer(text=f"{self.page_index + 1} / {len(self.pages)} ページ")
         return embed
 
     async def interaction_check(self, interaction):
@@ -1189,31 +1556,17 @@ class AllCashView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(
-        label="前へ",
-        emoji="◀️",
-        style=discord.ButtonStyle.secondary,
-    )
+    @discord.ui.button(label="前へ", emoji="◀️", style=discord.ButtonStyle.secondary)
     async def previous_button(self, interaction, button):
         self.page_index -= 1
         self.update_buttons()
-        await interaction.response.edit_message(
-            embed=self.make_embed(),
-            view=self,
-        )
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
 
-    @discord.ui.button(
-        label="次へ",
-        emoji="▶️",
-        style=discord.ButtonStyle.secondary,
-    )
+    @discord.ui.button(label="次へ", emoji="▶️", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction, button):
         self.page_index += 1
         self.update_buttons()
-        await interaction.response.edit_message(
-            embed=self.make_embed(),
-            view=self,
-        )
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
 
 
 @bot.tree.command(
@@ -1225,28 +1578,20 @@ async def all_cash_command(interaction: discord.Interaction):
         return
 
     if interaction.guild is None:
-        await interaction.response.send_message(
-            "このコマンドはサーバー内で使ってね。",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("このコマンドはサーバー内で使ってね。", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=True)
 
     try:
         members = [
-            member
-            async for member in interaction.guild.fetch_members(limit=None)
+            member async for member in interaction.guild.fetch_members(limit=None)
             if not member.bot
         ]
     except Exception:
         print("[ALL CASH] メンバー取得に失敗。キャッシュを使用します。")
         traceback.print_exc()
-        members = [
-            member
-            for member in interaction.guild.members
-            if not member.bot
-        ]
+        members = [member for member in interaction.guild.members if not member.bot]
 
     members.sort(
         key=lambda member: (
@@ -1256,19 +1601,13 @@ async def all_cash_command(interaction: discord.Interaction):
     )
 
     if not members:
-        await interaction.followup.send(
-            "表示できるメンバーがいないよ。",
-            ephemeral=True,
-        )
+        await interaction.followup.send("表示できるメンバーがいないよ。", ephemeral=True)
         return
 
     lines = []
-
     for number, member in enumerate(members, start=1):
         amount = int(balances.get(str(member.id), STARTING_BALANCE))
-        lines.append(
-            f"`{number:>3}.` {member.mention} — **{money(amount)}**"
-        )
+        lines.append(f"`{number:>3}.` {member.mention} — **{money(amount)}**")
 
     pages = [
         "\n".join(lines[index:index + BALANCE_LIST_PER_PAGE])
@@ -1276,26 +1615,17 @@ async def all_cash_command(interaction: discord.Interaction):
     ]
 
     view = AllCashView(pages, interaction.user.id)
-
-    await interaction.followup.send(
-        embed=view.make_embed(),
-        view=view,
-        ephemeral=True,
-    )
+    await interaction.followup.send(embed=view.make_embed(), view=view, ephemeral=True)
 
 
 # ==================================================
 # .slot スロット
-# .slot all 対応
 # ==================================================
 
 @bot.command(name="slot")
 async def slot_command(ctx, bet_text: str):
     if ctx.guild is None:
-        await ctx.reply(
-            "このコマンドはサーバー内で使ってね。",
-            mention_author=False,
-        )
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
 
     settings = get_server_settings(ctx.guild.id)
@@ -1306,45 +1636,25 @@ async def slot_command(ctx, bet_text: str):
         return
 
     bet = resolve_bet(ctx.author.id, bet_text)
-
     if bet is None:
-        await ctx.reply(
-            "賭け金は数字か `all` で指定してね。\n"
-            "例：`.slot 500` / `.slot all`",
-            mention_author=False,
-        )
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 500` / `.slot all`", mention_author=False)
         return
 
     if bet <= 0:
-        await ctx.reply(
-            "賭け金に使える残高がないよ。",
-            mention_author=False,
-        )
+        await ctx.reply("賭け金に使える残高がないよ。", mention_author=False)
         return
 
     minimum = int(settings.get("min_bet", 1))
-
     if bet < minimum:
-        await ctx.reply(
-            f"最低賭け金は **{money(minimum)}** だよ。",
-            mention_author=False,
-        )
+        await ctx.reply(f"最低賭け金は **{money(minimum)}** だよ。", mention_author=False)
         return
 
     current_balance = get_balance(ctx.author.id)
-
     if bet > current_balance:
-        await ctx.reply(
-            f"残高が足りないよ！\n残高：**{money(current_balance)}**",
-            mention_author=False,
-        )
+        await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
         return
 
-    positions = [
-        random.randrange(len(LANE_PATTERNS[index]))
-        for index in range(3)
-    ]
-
+    positions = [random.randrange(len(LANE_PATTERNS[index])) for index in range(3)]
     slot_positions[str(ctx.author.id)] = positions
     save_json(POSITIONS_FILE, slot_positions)
 
@@ -1363,12 +1673,10 @@ async def slot_command(ctx, bet_text: str):
 
     new_balance = current_balance - bet
     payout = bet * multiplier
-
     if payout > 0:
         new_balance += payout
 
     set_balance(ctx.author.id, new_balance)
-
     profit = payout - bet
 
     house_result = transfer_to_house(
@@ -1379,12 +1687,8 @@ async def slot_command(ctx, bet_text: str):
     )
 
     profit_text = money_change(profit)
-
     displayed_rows = [
-        [
-            display_symbol(symbol, ctx.guild, settings)
-            for symbol in row
-        ]
+        [display_symbol(symbol, ctx.guild, settings) for symbol in row]
         for row in grid
     ]
 
@@ -1406,18 +1710,12 @@ async def slot_command(ctx, bet_text: str):
     else:
         color = discord.Color.red()
 
-    embed = discord.Embed(
-        description=slot_display,
-        color=color,
+    await ctx.reply(
+        embed=discord.Embed(description=slot_display, color=color),
+        mention_author=False,
     )
 
-    await ctx.reply(embed=embed, mention_author=False)
-
-    displayed_grid = grid_text(
-        grid,
-        guild=ctx.guild,
-        settings=settings,
-    )
+    displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
 
     log_data = {
         "type": "slot",
@@ -1443,26 +1741,21 @@ async def slot_command(ctx, bet_text: str):
 
     log_description = (
         f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-        f"賭け金：**{money(bet)}**\n"
-        f"配当：**{money(payout)}**\n"
-        f"収支：**{profit_text}**\n"
-        f"残高：**{money(new_balance)}**\n\n"
+        f"賭け金：**{money(bet)}**\n配当：**{money(payout)}**\n"
+        f"収支：**{profit_text}**\n残高：**{money(new_balance)}**\n\n"
         f"{displayed_grid}"
     )
 
     if house_result is not None:
         log_description += (
             f"\n\n胴元の残高変動：**{money_change(house_result['change'])}**\n"
-            f"胴元の残高：**{money(house_result['after'])}**"
+            f"胴元の残高：**{house_result['after']}**"
         )
 
-    log_embed = discord.Embed(
-        title="🎰 スロットログ",
-        description=log_description,
-        color=color,
+    await send_slot_log(
+        ctx.guild,
+        discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
-
-    await send_slot_log(ctx.guild, log_embed)
 
 
 # ==================================================
@@ -1472,17 +1765,11 @@ async def slot_command(ctx, bet_text: str):
 @bot.command(name="Payment", aliases=["pay", "送金"])
 async def payment_command(ctx, member: discord.Member, amount: int):
     if not is_owner_user(ctx.author):
-        await ctx.reply(
-            "このコマンドを使えるのは指定されたオーナー本人だけだよ。",
-            mention_author=False,
-        )
+        await ctx.reply("このコマンドを使えるのは指定されたオーナー本人だけだよ。", mention_author=False)
         return
 
     if ctx.guild is None:
-        await ctx.reply(
-            "このコマンドはサーバー内で使ってね。",
-            mention_author=False,
-        )
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
 
     if member.bot:
@@ -1495,21 +1782,17 @@ async def payment_command(ctx, member: discord.Member, amount: int):
 
     before = get_balance(member.id)
     after = before + amount
-
     set_balance(member.id, after)
 
     embed = discord.Embed(
         title="💸 Payment",
         description=(
-            f"対象：{member.mention}\n"
-            f"変更額：**{money_change(amount)}**\n"
-            f"変更前：**{money(before)}**\n"
-            f"変更後：**{money(after)}**\n"
+            f"対象：{member.mention}\n変更額：**{money_change(amount)}**\n"
+            f"変更前：**{money(before)}**\n変更後：**{money(after)}**\n"
             f"実行者：{ctx.author.mention}"
         ),
         color=discord.Color.blurple(),
     )
-
     await ctx.reply(embed=embed, mention_author=False)
 
     record_coin({
@@ -1525,19 +1808,19 @@ async def payment_command(ctx, member: discord.Member, amount: int):
         "after": after,
     })
 
-    log_embed = discord.Embed(
-        title="💸 Paymentログ",
-        description=(
-            f"対象：{member.mention} (`{member.id}`)\n"
-            f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
-            f"変更額：**{money_change(amount)}**\n"
-            f"変更前：**{money(before)}**\n"
-            f"変更後：**{money(after)}**"
+    await send_coin_log(
+        ctx.guild,
+        discord.Embed(
+            title="💸 Paymentログ",
+            description=(
+                f"対象：{member.mention} (`{member.id}`)\n"
+                f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                f"変更額：**{money_change(amount)}**\n"
+                f"変更前：**{money(before)}**\n変更後：**{money(after)}**"
+            ),
+            color=discord.Color.blurple(),
         ),
-        color=discord.Color.blurple(),
     )
-
-    await send_coin_log(ctx.guild, log_embed)
 
 
 # ==================================================
@@ -1552,14 +1835,16 @@ async def help_command(ctx):
             "**一般コマンド**\n"
             "`.slot 賭け金` — スロットを回す\n"
             "`.slot all` — 所持金を全額賭ける\n"
-            "`.color 賭け金` — 🌝🌚の2択ゲーム（当たりで2倍）\n"
+            "`.color 賭け金` — 🌝🌚の2択ゲーム\n"
             "`.color all` — 所持金を全額賭ける\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
-            "`.daily` — ログインボーナスを受け取る\n"
-            "`/settinginfo` — 現在の設定を確認する\n\n"
+            "`.daily` — ログインボーナス\n"
+            "`/settinginfo` — 現在の設定\n"
+            "`/guess setup` — 数字・言葉当てゲームの設定（管理者）\n"
+            "`/guess stop` — ゲーム停止（管理者）\n\n"
             "**オーナー本人専用**\n"
-            "`.Payment @ユーザー 金額` — 残高を増減する\n"
+            "`.Payment @ユーザー 金額` — 残高を増減\n"
             "`/all_cash` — 全メンバーの残高一覧\n"
             "`/setting` — Botの設定パネル\n"
             "`/log panel` — 固定ログ送信先の確認\n"
@@ -1567,7 +1852,6 @@ async def help_command(ctx):
         ),
         color=discord.Color.blurple(),
     )
-
     await ctx.reply(embed=embed, mention_author=False)
 
 
@@ -1600,10 +1884,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         if not await require_owner(interaction):
@@ -1611,8 +1892,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
 
         await interaction.response.send_message(
             "ログ送信先は固定されているよ。\n"
-            f"スロットログ・Paymentログ・ログインボーナス共通："
-            f"<#{LOG_CHANNEL_ID}>",
+            f"スロットログ・Paymentログ・ログインボーナス共通：<#{LOG_CHANNEL_ID}>",
             ephemeral=True,
         )
 
@@ -1627,25 +1907,16 @@ class LogChannelView(discord.ui.View):
 # /log panel
 # ==================================================
 
-log_group = app_commands.Group(
-    name="log",
-    description="ログ設定",
-)
+log_group = app_commands.Group(name="log", description="ログ設定")
 
 
-@log_group.command(
-    name="panel",
-    description="固定ログ送信先を確認する（オーナー本人専用）",
-)
+@log_group.command(name="panel", description="固定ログ送信先を確認する（オーナー本人専用）")
 async def log_panel(interaction: discord.Interaction):
     if not await require_owner(interaction):
         return
 
     if interaction.guild is None:
-        await interaction.response.send_message(
-            "サーバー内で使ってね。",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return
 
     channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -1655,29 +1926,22 @@ async def log_panel(interaction: discord.Interaction):
         description=(
             "スロットログ・Paymentログ・ログインボーナスは、"
             "次のチャンネルに送信されるよ。\n\n"
-            f"<#{LOG_CHANNEL_ID}>\n\n"
-            f"チャンネルID：`{LOG_CHANNEL_ID}`"
+            f"<#{LOG_CHANNEL_ID}>\n\nチャンネルID：`{LOG_CHANNEL_ID}`"
         ),
         color=discord.Color.blurple(),
     )
 
-    if channel is None:
-        embed.add_field(
-            name="状態",
-            value="チャンネルを取得できません。IDとBotの権限を確認してね。",
-            inline=False,
-        )
-    else:
-        embed.add_field(
-            name="状態",
-            value="固定チャンネルを取得できました。",
-            inline=False,
-        )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True,
+    embed.add_field(
+        name="状態",
+        value=(
+            "固定チャンネルを取得できました。"
+            if channel is not None
+            else "チャンネルを取得できません。IDとBotの権限を確認してね。"
+        ),
+        inline=False,
     )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 bot.tree.add_command(log_group)
@@ -1700,7 +1964,6 @@ class BetSettingModal(discord.ui.Modal):
             min_length=1,
             max_length=15,
         )
-
         self.add_item(self.amount_input)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -1708,26 +1971,17 @@ class BetSettingModal(discord.ui.Modal):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         try:
             amount = int(str(self.amount_input.value).strip())
         except ValueError:
-            await interaction.response.send_message(
-                "整数で入力してね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("整数で入力してね。", ephemeral=True)
             return
 
         if amount < 1:
-            await interaction.response.send_message(
-                "最低賭け金は1以上にしてね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("最低賭け金は1以上にしてね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
@@ -1757,7 +2011,6 @@ class WeightsSettingModal(discord.ui.Modal):
             max_length=200,
             style=discord.TextStyle.paragraph,
         )
-
         self.add_item(self.weights_input)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -1765,10 +2018,7 @@ class WeightsSettingModal(discord.ui.Modal):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         raw = str(self.weights_input.value).strip()
@@ -1783,18 +2033,12 @@ class WeightsSettingModal(discord.ui.Modal):
                 symbol = symbol.strip()
                 value = int(value.strip())
 
-                if symbol not in SYMBOLS:
-                    raise ValueError
-
-                if value < 0 or value > 1000:
+                if symbol not in SYMBOLS or value < 0 or value > 1000:
                     raise ValueError
 
                 parsed[symbol] = value
 
-            if any(symbol not in parsed for symbol in SYMBOLS):
-                raise ValueError
-
-            if sum(parsed.values()) <= 0:
+            if any(symbol not in parsed for symbol in SYMBOLS) or sum(parsed.values()) <= 0:
                 raise ValueError
 
         except ValueError:
@@ -1810,14 +2054,12 @@ class WeightsSettingModal(discord.ui.Modal):
         settings["weights"] = parsed
         save_server_settings(interaction.guild.id)
 
-        embed = discord.Embed(
-            title="🎰 出現比率を更新したよ",
-            description=get_weights_text(parsed),
-            color=discord.Color.green(),
-        )
-
         await interaction.response.send_message(
-            embed=embed,
+            embed=discord.Embed(
+                title="🎰 出現比率を更新したよ",
+                description=get_weights_text(parsed),
+                color=discord.Color.green(),
+            ),
             ephemeral=True,
         )
 
@@ -1828,26 +2070,24 @@ class WeightsSettingModal(discord.ui.Modal):
 
 class EmojiModeSelect(discord.ui.Select):
     def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="通常の絵文字",
-                description="🍒 🍋 ⭐ 🔔 7️⃣ を使用する",
-                value="unicode",
-                emoji="🍒",
-            ),
-            discord.SelectOption(
-                label="サーバーのカスタム絵文字",
-                description="emoji_12〜emoji_16 を使用する",
-                value="custom",
-                emoji="⭐",
-            ),
-        ]
-
         super().__init__(
             placeholder="表示する絵文字タイプを選択",
             min_values=1,
             max_values=1,
-            options=options,
+            options=[
+                discord.SelectOption(
+                    label="通常の絵文字",
+                    description="🍒 🍋 ⭐ 🔔 7️⃣ を使用する",
+                    value="unicode",
+                    emoji="🍒",
+                ),
+                discord.SelectOption(
+                    label="サーバーのカスタム絵文字",
+                    description="emoji_12〜emoji_16 を使用する",
+                    value="custom",
+                    emoji="⭐",
+                ),
+            ],
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -1855,42 +2095,31 @@ class EmojiModeSelect(discord.ui.Select):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         selected_mode = self.values[0]
         settings = get_server_settings(interaction.guild.id)
+        settings["emoji_mode"] = selected_mode
+        save_server_settings(interaction.guild.id)
 
         if selected_mode == "custom":
-            found, missing = get_custom_emoji_status(interaction.guild)
-            settings["emoji_mode"] = "custom"
-            save_server_settings(interaction.guild.id)
-
+            _, missing = get_custom_emoji_status(interaction.guild)
             if missing:
                 await interaction.response.send_message(
                     "カスタム絵文字モードに変更したよ。\n\n"
-                    "ただし、次の絵文字は見つからなかったため、"
-                    "通常の絵文字で表示するよ。\n"
-                    + "\n".join(missing)
-                    + "\n\nサーバー内の絵文字名が正しいか確認してね。",
+                    "見つからない絵文字は通常の絵文字で表示するよ。\n"
+                    + "\n".join(missing),
                     ephemeral=True,
                 )
             else:
                 await interaction.response.send_message(
-                    "出目の表示を **サーバーのカスタム絵文字** "
-                    "に変更したよ。\n次のスロットから反映されるよ。",
+                    "出目の表示を **サーバーのカスタム絵文字** に変更したよ。",
                     ephemeral=True,
                 )
         else:
-            settings["emoji_mode"] = "unicode"
-            save_server_settings(interaction.guild.id)
-
             await interaction.response.send_message(
-                "出目の表示を **通常の絵文字** に変更したよ。\n"
-                "次のスロットから反映されるよ。",
+                "出目の表示を **通常の絵文字** に変更したよ。",
                 ephemeral=True,
             )
 
@@ -1908,42 +2137,12 @@ class EmojiModeSettingView(discord.ui.View):
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(
-                label="最低賭け金",
-                description="スロットの最低賭け金を変更",
-                value="min_bet",
-                emoji="🪙",
-            ),
-            discord.SelectOption(
-                label="絵柄・出現確率",
-                description="スロットの絵柄ごとの比率を変更",
-                value="weights",
-                emoji="🎰",
-            ),
-            discord.SelectOption(
-                label="出目の絵文字タイプ",
-                description="通常の絵文字とカスタム絵文字を切り替え",
-                value="emoji_mode",
-                emoji="🎨",
-            ),
-            discord.SelectOption(
-                label="ログ送信先",
-                description="固定ログ送信先を確認",
-                value="log_channel",
-                emoji="📝",
-            ),
-            discord.SelectOption(
-                label="コマンド使用権限",
-                description="スロットを使えるメンバーを変更",
-                value="permissions",
-                emoji="🔐",
-            ),
-            discord.SelectOption(
-                label="メンテナンスモード",
-                description="一般メンバーのスロットを停止・再開",
-                value="maintenance",
-                emoji="🛠️",
-            ),
+            discord.SelectOption(label="最低賭け金", description="最低賭け金を変更", value="min_bet", emoji="🪙"),
+            discord.SelectOption(label="絵柄・出現確率", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
+            discord.SelectOption(label="出目の絵文字タイプ", description="絵文字の種類を切り替え", value="emoji_mode", emoji="🎨"),
+            discord.SelectOption(label="ログ送信先", description="固定ログ送信先を確認", value="log_channel", emoji="📝"),
+            discord.SelectOption(label="コマンド使用権限", description="スロットの利用権限を変更", value="permissions", emoji="🔐"),
+            discord.SelectOption(label="メンテナンスモード", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
         ]
 
         super().__init__(
@@ -1958,10 +2157,7 @@ class SettingActionSelect(discord.ui.Select):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         selected = self.values[0]
@@ -1969,47 +2165,33 @@ class SettingActionSelect(discord.ui.Select):
 
         if selected == "min_bet":
             await interaction.response.send_modal(BetSettingModal("min_bet"))
-
         elif selected == "weights":
-            await interaction.response.send_modal(
-                WeightsSettingModal(settings["weights"])
-            )
-
+            await interaction.response.send_modal(WeightsSettingModal(settings["weights"]))
         elif selected == "emoji_mode":
-            embed = discord.Embed(
-                title="出目の絵文字タイプ",
-                description=(
-                    "スロット盤面に表示する絵文字を選択してね。\n\n"
-                    "**通常の絵文字**\n"
-                    "🍒 🍋 ⭐ 🔔 7️⃣\n\n"
-                    "**サーバーのカスタム絵文字**\n"
-                    "emoji_12〜emoji_16\n\n"
-                    "変更は次のスロットから反映されるよ。"
-                ),
-                color=discord.Color.blurple(),
-            )
-
             await interaction.response.send_message(
-                embed=embed,
+                embed=discord.Embed(
+                    title="出目の絵文字タイプ",
+                    description=(
+                        "スロット盤面に表示する絵文字を選択してね。\n\n"
+                        "**通常の絵文字**\n🍒 🍋 ⭐ 🔔 7️⃣\n\n"
+                        "**サーバーのカスタム絵文字**\nemoji_12〜emoji_16"
+                    ),
+                    color=discord.Color.blurple(),
+                ),
                 view=EmojiModeSettingView(),
                 ephemeral=True,
             )
-
         elif selected == "log_channel":
             await interaction.response.send_message(
-                "ログ送信先は固定されているよ。\n"
-                "スロットログ・Paymentログ・ログインボーナス共通："
-                f"<#{LOG_CHANNEL_ID}>",
+                f"ログ送信先は固定されているよ。\n<#{LOG_CHANNEL_ID}>",
                 ephemeral=True,
             )
-
         elif selected == "permissions":
             await interaction.response.send_message(
                 "スロットを利用できるメンバーを選択してね。",
                 view=PermissionSettingView(),
                 ephemeral=True,
             )
-
         elif selected == "maintenance":
             await interaction.response.send_message(
                 "メンテナンスモードを切り替えるよ。",
@@ -2030,32 +2212,15 @@ class SettingPanelView(discord.ui.View):
 
 class PermissionSelect(discord.ui.Select):
     def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="全メンバー",
-                description="全員がスロットを使える",
-                value="everyone",
-                emoji="👥",
-            ),
-            discord.SelectOption(
-                label="ownerロール以上",
-                description="ownerロールまたは管理者のみ",
-                value="owner",
-                emoji="👑",
-            ),
-            discord.SelectOption(
-                label="管理者のみ",
-                description="サーバー管理者のみ",
-                value="admin",
-                emoji="🔐",
-            ),
-        ]
-
         super().__init__(
             placeholder="利用できるメンバーを選択",
             min_values=1,
             max_values=1,
-            options=options,
+            options=[
+                discord.SelectOption(label="全メンバー", description="全員が使える", value="everyone", emoji="👥"),
+                discord.SelectOption(label="ownerロール以上", description="ownerロールまたは管理者", value="owner", emoji="👑"),
+                discord.SelectOption(label="管理者のみ", description="サーバー管理者のみ", value="admin", emoji="🔐"),
+            ],
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -2063,10 +2228,7 @@ class PermissionSelect(discord.ui.Select):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
@@ -2099,20 +2261,13 @@ class MaintenanceSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
 
-    @discord.ui.button(
-        label="メンテナンス開始",
-        style=discord.ButtonStyle.danger,
-        emoji="🔴",
-    )
+    @discord.ui.button(label="メンテナンス開始", style=discord.ButtonStyle.danger, emoji="🔴")
     async def enable_maintenance(self, interaction, button):
         if not await require_owner(interaction):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
@@ -2120,25 +2275,17 @@ class MaintenanceSettingView(discord.ui.View):
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            "メンテナンスモードを **ON** にしたよ。\n"
-            "一般メンバーはスロットを使えなくなるよ。管理者は利用可能。",
+            "メンテナンスモードを **ON** にしたよ。\n一般メンバーはスロットを使えなくなるよ。",
             ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="メンテナンス終了",
-        style=discord.ButtonStyle.success,
-        emoji="🟢",
-    )
+    @discord.ui.button(label="メンテナンス終了", style=discord.ButtonStyle.success, emoji="🟢")
     async def disable_maintenance(self, interaction, button):
         if not await require_owner(interaction):
             return
 
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "サーバー内で使ってね。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
@@ -2155,19 +2302,13 @@ class MaintenanceSettingView(discord.ui.View):
 # /setting
 # ==================================================
 
-@bot.tree.command(
-    name="setting",
-    description="Botの設定パネルを開く（オーナー本人専用）",
-)
+@bot.tree.command(name="setting", description="Botの設定パネルを開く（オーナー本人専用）")
 async def setting_command(interaction: discord.Interaction):
     if not await require_owner(interaction):
         return
 
     if interaction.guild is None:
-        await interaction.response.send_message(
-            "サーバー内で使ってね。",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return
 
     settings = get_server_settings(interaction.guild.id)
@@ -2181,57 +2322,26 @@ async def setting_command(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="Bot設定パネル",
-        description=(
-            "下のメニューから変更したい設定を選んでね。\n"
-            "設定を変更できるのは指定されたオーナー本人だけだよ。"
-        ),
+        description="下のメニューから変更したい設定を選んでね。",
         color=discord.Color.blurple(),
     )
 
-    embed.add_field(
-        name="最低賭け金",
-        value=money(int(settings["min_bet"])),
-        inline=True,
-    )
-
+    embed.add_field(name="最低賭け金", value=money(int(settings["min_bet"])), inline=True)
     embed.add_field(
         name="スロット使用権限",
-        value=permission_labels.get(
-            settings.get("slot_permission", "everyone"),
-            "全メンバー",
-        ),
+        value=permission_labels.get(settings.get("slot_permission", "everyone"), "全メンバー"),
         inline=True,
     )
-
-    embed.add_field(
-        name="メンテナンス",
-        value="ON" if settings.get("maintenance", False) else "OFF",
-        inline=True,
-    )
-
+    embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
     embed.add_field(
         name="ログ送信先（固定）",
         value=log_channel.mention if log_channel else f"チャンネルID: {LOG_CHANNEL_ID}",
         inline=True,
     )
+    embed.add_field(name="出目の絵文字タイプ", value=get_display_mode_name(settings), inline=True)
+    embed.add_field(name="絵柄・出現比率", value=get_weights_text(settings["weights"]), inline=False)
 
-    embed.add_field(
-        name="出目の絵文字タイプ",
-        value=get_display_mode_name(settings),
-        inline=True,
-    )
-
-    embed.add_field(
-        name="絵柄・出現比率",
-        value=get_weights_text(settings["weights"]),
-        inline=False,
-    )
-
-    await interaction.response.send_message(
-        embed=embed,
-        view=SettingPanelView(),
-        ephemeral=True,
-    )
+    await interaction.response.send_message(embed=embed, view=SettingPanelView(), ephemeral=True)
 
 
 # ==================================================
@@ -2247,10 +2357,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
         return
 
     if interaction.guild is None:
-        await interaction.response.send_message(
-            "このコマンドはサーバー内で使ってね。",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("このコマンドはサーバー内で使ってね。", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=True)
@@ -2284,93 +2391,58 @@ async def coinrecovery_command(interaction: discord.Interaction):
         errors.append("固定ログチャンネルを取得できなかったよ。")
     else:
         try:
-            async for message in channel.history(
-                limit=None,
-                oldest_first=True,
-            ):
+            async for message in channel.history(limit=None, oldest_first=True):
                 for embed in message.embeds:
                     title = embed.title or ""
                     description = embed.description or ""
 
                     if "スロットログ" in title:
-                        user_match = re.search(
-                            r"ユーザー：.*?`(\d+)`",
-                            description,
-                        )
-                        balance_match = re.search(
-                            r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
+                        user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
+                        balance_match = re.search(r"残高：\*\*([+-]?\$?[\d,]+)\*\*", description)
 
-                        if not user_match or not balance_match:
-                            continue
-
-                        combined_logs.append({
-                            "type": "slot",
-                            "timestamp": message.created_at.timestamp(),
-                            "guild_id": guild_id,
-                            "user_id": user_match.group(1),
-                            "balance": parse_money_text(
-                                balance_match.group(1)
-                            ),
-                            "source": "discord",
-                        })
-                        discord_log_count += 1
+                        if user_match and balance_match:
+                            combined_logs.append({
+                                "type": "slot",
+                                "timestamp": message.created_at.timestamp(),
+                                "guild_id": guild_id,
+                                "user_id": user_match.group(1),
+                                "balance": parse_money_text(balance_match.group(1)),
+                                "source": "discord",
+                            })
+                            discord_log_count += 1
 
                     elif "Paymentログ" in title:
-                        user_match = re.search(
-                            r"対象：.*?`(\d+)`",
-                            description,
-                        )
-                        after_match = re.search(
-                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
+                        user_match = re.search(r"対象：.*?`(\d+)`", description)
+                        after_match = re.search(r"変更後：\*\*([+-]?\$?[\d,]+)\*\*", description)
 
-                        if not user_match or not after_match:
-                            continue
-
-                        combined_logs.append({
-                            "type": "payment",
-                            "timestamp": message.created_at.timestamp(),
-                            "guild_id": guild_id,
-                            "user_id": user_match.group(1),
-                            "after": parse_money_text(
-                                after_match.group(1)
-                            ),
-                            "source": "discord",
-                        })
-                        discord_log_count += 1
+                        if user_match and after_match:
+                            combined_logs.append({
+                                "type": "payment",
+                                "timestamp": message.created_at.timestamp(),
+                                "guild_id": guild_id,
+                                "user_id": user_match.group(1),
+                                "after": parse_money_text(after_match.group(1)),
+                                "source": "discord",
+                            })
+                            discord_log_count += 1
 
                     elif "胴元残高ログ" in title:
-                        user_match = re.search(
-                            r"オーナーID：`(\d+)`",
-                            description,
-                        )
-                        after_match = re.search(
-                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
+                        user_match = re.search(r"オーナーID：`(\d+)`", description)
+                        after_match = re.search(r"変更後：\*\*([+-]?\$?[\d,]+)\*\*", description)
 
-                        if not user_match or not after_match:
-                            continue
-
-                        combined_logs.append({
-                            "type": "house_transfer",
-                            "timestamp": message.created_at.timestamp(),
-                            "guild_id": guild_id,
-                            "user_id": user_match.group(1),
-                            "after": parse_money_text(
-                                after_match.group(1)
-                            ),
-                            "source": "discord",
-                        })
-                        discord_log_count += 1
+                        if user_match and after_match:
+                            combined_logs.append({
+                                "type": "house_transfer",
+                                "timestamp": message.created_at.timestamp(),
+                                "guild_id": guild_id,
+                                "user_id": user_match.group(1),
+                                "after": parse_money_text(after_match.group(1)),
+                                "source": "discord",
+                            })
+                            discord_log_count += 1
 
         except discord.Forbidden:
-            errors.append(
-                "ログチャンネルの閲覧権限またはメッセージ履歴を読む権限がないよ。"
-            )
+            errors.append("ログチャンネルの閲覧権限またはメッセージ履歴を読む権限がないよ。")
         except discord.HTTPException:
             errors.append("Discordからログを取得できなかったよ。")
             traceback.print_exc()
@@ -2378,13 +2450,10 @@ async def coinrecovery_command(interaction: discord.Interaction):
             errors.append("ログの読み取り中にエラーが発生したよ。")
             traceback.print_exc()
 
-    combined_logs.sort(
-        key=lambda item: float(item.get("timestamp", 0))
-    )
+    combined_logs.sort(key=lambda item: float(item.get("timestamp", 0)))
 
     for item in combined_logs:
         user_id = item.get("user_id")
-
         if user_id is None:
             continue
 
@@ -2393,13 +2462,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
         except (TypeError, ValueError):
             continue
 
-        balance_value = None
-
-        if "balance" in item:
-            balance_value = item["balance"]
-        elif "after" in item:
-            balance_value = item["after"]
-
+        balance_value = item.get("balance", item.get("after"))
         if balance_value is None:
             continue
 
@@ -2411,10 +2474,8 @@ async def coinrecovery_command(interaction: discord.Interaction):
     if not latest_balances:
         message = (
             "復旧に使える残高ログが見つからなかったよ。\n\n"
-            f"JSONログ件数：{json_log_count}\n"
-            f"Discordログ件数：{discord_log_count}\n\n"
-            "固定ログチャンネルにスロットログやPaymentログが"
-            "残っているか確認してね。"
+            f"JSONログ件数：{json_log_count}\nDiscordログ件数：{discord_log_count}\n\n"
+            "固定ログチャンネルにスロットログやPaymentログが残っているか確認してね。"
         )
 
         if errors:
@@ -2423,18 +2484,15 @@ async def coinrecovery_command(interaction: discord.Interaction):
         await interaction.followup.send(message, ephemeral=True)
         return
 
-    restored_count = 0
-
     for user_id, amount in latest_balances.items():
         balances[user_id] = amount
-        restored_count += 1
 
     save_json(BALANCES_FILE, balances)
 
     embed = discord.Embed(
         title="残高復旧完了",
         description=(
-            f"復旧対象：**{restored_count}人**\n"
+            f"復旧対象：**{len(latest_balances)}人**\n"
             f"JSONログ：**{json_log_count}件**\n"
             f"Discordログ：**{discord_log_count}件**\n\n"
             "確認できたログのうち、最も新しい残高を保存したよ。"
@@ -2443,11 +2501,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
     )
 
     if errors:
-        embed.add_field(
-            name="確認事項",
-            value="\n".join(errors)[:1000],
-            inline=False,
-        )
+        embed.add_field(name="確認事項", value="\n".join(errors)[:1000], inline=False)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -2456,16 +2510,10 @@ async def coinrecovery_command(interaction: discord.Interaction):
 # /settinginfo 設定の確認
 # ==================================================
 
-@bot.tree.command(
-    name="settinginfo",
-    description="現在のBot設定を表示する",
-)
+@bot.tree.command(name="settinginfo", description="現在のBot設定を表示する")
 async def setting_info_command(interaction: discord.Interaction):
     if interaction.guild is None:
-        await interaction.response.send_message(
-            "サーバー内で使ってね。",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return
 
     settings = get_server_settings(interaction.guild.id)
@@ -2476,54 +2524,19 @@ async def setting_info_command(interaction: discord.Interaction):
         "admin": "管理者のみ",
     }
 
-    embed = discord.Embed(
-        title="現在の設定",
-        color=discord.Color.blurple(),
-    )
-
-    embed.add_field(
-        name="最低賭け金",
-        value=money(int(settings["min_bet"])),
-        inline=True,
-    )
-
+    embed = discord.Embed(title="現在の設定", color=discord.Color.blurple())
+    embed.add_field(name="最低賭け金", value=money(int(settings["min_bet"])), inline=True)
     embed.add_field(
         name="使用権限",
-        value=permission_labels.get(
-            settings.get("slot_permission", "everyone"),
-            "全メンバー",
-        ),
+        value=permission_labels.get(settings.get("slot_permission", "everyone"), "全メンバー"),
         inline=True,
     )
+    embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance") else "OFF", inline=True)
+    embed.add_field(name="出目の絵文字タイプ", value=get_display_mode_name(settings), inline=True)
+    embed.add_field(name="絵柄ごとの比率", value=get_weights_text(settings["weights"]), inline=False)
+    embed.add_field(name="固定ログ送信先", value=f"<#{LOG_CHANNEL_ID}>", inline=False)
 
-    embed.add_field(
-        name="メンテナンス",
-        value="ON" if settings.get("maintenance") else "OFF",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="出目の絵文字タイプ",
-        value=get_display_mode_name(settings),
-        inline=True,
-    )
-
-    embed.add_field(
-        name="絵柄ごとの比率",
-        value=get_weights_text(settings["weights"]),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="固定ログ送信先",
-        value=f"<#{LOG_CHANNEL_ID}>",
-        inline=False,
-    )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True,
-    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==================================================
@@ -2545,12 +2558,7 @@ def health():
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
-
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        use_reloader=False,
-    )
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 # ==================================================
@@ -2559,9 +2567,7 @@ def run_web():
 
 if __name__ == "__main__":
     if not TOKEN:
-        raise RuntimeError(
-            "環境変数 DISCORD_TOKEN が設定されていません。"
-        )
+        raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません。")
 
     Thread(target=run_web, daemon=True).start()
     bot.run(TOKEN)

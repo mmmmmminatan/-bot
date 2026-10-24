@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import os
@@ -77,6 +76,45 @@ DEFAULT_SERVER_SETTINGS = {
     "maintenance": False,
     "emoji_mode": "unicode",
 }
+
+
+# ==================================================
+# 金額表示
+# 内部データ・計算は数値のまま維持する
+# ==================================================
+
+def money(amount):
+    """金額を $1,000 / -$1,000 / $0 の形式にする。"""
+    amount = int(amount)
+
+    if amount < 0:
+        return f"-${abs(amount):,}"
+
+    return f"${amount:,}"
+
+
+def money_change(amount):
+    """増減額を +$1,000 / -$1,000 / ±$0 の形式にする。"""
+    amount = int(amount)
+
+    if amount > 0:
+        return f"+${amount:,}"
+
+    if amount < 0:
+        return f"-${abs(amount):,}"
+
+    return "±$0"
+
+
+def parse_money_text(value):
+    """ログに記録された $ 表記を整数に戻す。"""
+    value = str(value).strip()
+    value = value.replace("$", "").replace(",", "").replace(" ", "")
+
+    if value.startswith("＋"):
+        value = "+" + value[1:]
+
+    return int(value)
 
 
 # ==================================================
@@ -778,7 +816,7 @@ async def daily_command(ctx):
 
     await ctx.reply(
         f"{streak}日目\n"
-        f"増やした金額：+{reward:,} コイン",
+        f"増やした金額：{money_change(reward)}",
         mention_author=False,
     )
 
@@ -792,7 +830,7 @@ async def daily_command(ctx):
         await channel.send(
             f"ログインボーナス\n"
             f"やった人：{ctx.author.mention}\n"
-            f"増やした金額：+{reward:,} コイン\n"
+            f"増やした金額：{money_change(reward)}\n"
             f"何日目か：{streak}日目"
         )
         print(
@@ -846,7 +884,7 @@ class ColorBetView(discord.ui.View):
             result_text = (
                 f"🎉 **当たり！**\n"
                 f"正解：{winning_color}\n"
-                f"配当：+{payout:,} コイン"
+                f"配当：{money_change(payout)}"
             )
             color = discord.Color.green()
         else:
@@ -857,7 +895,7 @@ class ColorBetView(discord.ui.View):
             result_text = (
                 f"💸 **ハズレ！**\n"
                 f"正解：{winning_color}\n"
-                f"損失：-{self.bet:,} コイン"
+                f"損失：{money_change(-self.bet)}"
             )
             color = discord.Color.red()
 
@@ -878,8 +916,8 @@ class ColorBetView(discord.ui.View):
         if house_result is not None:
             house_text = (
                 f"\n胴元の残高変動："
-                f"{house_result['change']:+,} コイン"
-                f"\n胴元の残高：{house_result['after']:,} コイン"
+                f"{money_change(house_result['change'])}"
+                f"\n胴元の残高：{money(house_result['after'])}"
             )
 
         embed = discord.Embed(
@@ -888,9 +926,9 @@ class ColorBetView(discord.ui.View):
                 f"プレイヤー：{interaction.user.mention}\n"
                 f"選んだ色：{chosen_color}\n\n"
                 f"{result_text}\n\n"
-                f"賭け金：{self.bet:,} コイン\n"
-                f"収支：{profit:+,} コイン\n"
-                f"残高：{new_balance:,} コイン"
+                f"賭け金：{money(self.bet)}\n"
+                f"収支：{money_change(profit)}\n"
+                f"残高：{money(new_balance)}"
                 f"{house_text}"
             ),
             color=color,
@@ -924,16 +962,16 @@ class ColorBetView(discord.ui.View):
                 f"選択：{chosen_color}\n"
                 f"正解：{winning_color}\n"
                 f"結果：{'当たり' if won else 'ハズレ'}\n"
-                f"賭け金：**{self.bet:,}**\n"
-                f"配当：**{payout:,}**\n"
-                f"収支：**{profit:+,}**\n"
-                f"残高：**{new_balance:,}**"
+                f"賭け金：**{money(self.bet)}**\n"
+                f"配当：**{money(payout)}**\n"
+                f"収支：**{money_change(profit)}**\n"
+                f"残高：**{money(new_balance)}**"
             )
 
             if house_result is not None:
                 log_description += (
-                    f"\n胴元の変動：**{house_result['change']:+,}**\n"
-                    f"胴元の残高：**{house_result['after']:,}**"
+                    f"\n胴元の変動：**{money_change(house_result['change'])}**\n"
+                    f"胴元の残高：**{money(house_result['after'])}**"
                 )
 
             log_embed = discord.Embed(
@@ -978,8 +1016,8 @@ class ColorBetView(discord.ui.View):
             description=(
                 f"プレイヤー：{self.ctx.author.mention}\n\n"
                 "時間切れ！今回はゲームをキャンセルしたよ。\n"
-                f"賭け金 **{self.bet:,} コイン** を返したよ。\n"
-                f"残高：**{refunded_balance:,} コイン**"
+                f"賭け金 **{money(self.bet)}** を返したよ。\n"
+                f"残高：**{money(refunded_balance)}**"
             ),
             color=discord.Color.gold(),
         )
@@ -1008,8 +1046,8 @@ class ColorBetView(discord.ui.View):
                     f"ユーザー：{self.ctx.author.mention} "
                     f"(`{self.ctx.author.id}`)\n"
                     f"理由：選択時間切れ\n"
-                    f"返金額：**{self.bet:,}**\n"
-                    f"残高：**{refunded_balance:,}**"
+                    f"返金額：**{money(self.bet)}**\n"
+                    f"残高：**{money(refunded_balance)}**"
                 ),
                 color=discord.Color.gold(),
             )
@@ -1026,7 +1064,6 @@ async def color_command(ctx, bet_text: str):
         )
         return
 
-    # 数字指定ならその金額、allなら所持金全額
     bet = resolve_bet(ctx.author.id, bet_text)
 
     if bet is None:
@@ -1049,7 +1086,7 @@ async def color_command(ctx, bet_text: str):
 
     if bet < minimum:
         await ctx.reply(
-            f"最低賭け金は {minimum:,} コインだよ。",
+            f"最低賭け金は {money(minimum)} だよ。",
             mention_author=False,
         )
         return
@@ -1059,7 +1096,7 @@ async def color_command(ctx, bet_text: str):
     if bet > current_balance:
         await ctx.reply(
             f"残高が足りないよ！\n"
-            f"残高：{current_balance:,} コイン",
+            f"残高：{money(current_balance)}",
             mention_author=False,
         )
         return
@@ -1070,7 +1107,7 @@ async def color_command(ctx, bet_text: str):
         title="🌝🌚 2択ゲーム",
         description=(
             f"プレイヤー：{ctx.author.mention}\n"
-            f"賭け金：**{bet:,} コイン**\n\n"
+            f"賭け金：**{money(bet)}**\n\n"
             "🌝 表か 🌚 裏を選んでね！\n"
             "当たりなら賭け金込みで2倍が戻るよ。\n"
             "ハズレなら賭け金を失うよ。\n\n"
@@ -1106,7 +1143,7 @@ async def cash_command(ctx, member: discord.Member = None):
 
     embed = discord.Embed(
         title="💰 残高",
-        description=f"{member.mention} の残高：**{amount:,} コイン**",
+        description=f"{member.mention} の残高：**{money(amount)}**",
         color=discord.Color.gold(),
     )
 
@@ -1230,7 +1267,7 @@ async def all_cash_command(interaction: discord.Interaction):
     for number, member in enumerate(members, start=1):
         amount = int(balances.get(str(member.id), STARTING_BALANCE))
         lines.append(
-            f"`{number:>3}.` {member.mention} — **{amount:,} コイン**"
+            f"`{number:>3}.` {member.mention} — **{money(amount)}**"
         )
 
     pages = [
@@ -1268,7 +1305,6 @@ async def slot_command(ctx, bet_text: str):
         await ctx.reply(reason, mention_author=False)
         return
 
-    # 数字指定ならその金額、allなら所持金全額
     bet = resolve_bet(ctx.author.id, bet_text)
 
     if bet is None:
@@ -1290,7 +1326,7 @@ async def slot_command(ctx, bet_text: str):
 
     if bet < minimum:
         await ctx.reply(
-            f"最低賭け金は **{minimum:,} コイン** だよ。",
+            f"最低賭け金は **{money(minimum)}** だよ。",
             mention_author=False,
         )
         return
@@ -1299,7 +1335,7 @@ async def slot_command(ctx, bet_text: str):
 
     if bet > current_balance:
         await ctx.reply(
-            f"残高が足りないよ！\n残高：**{current_balance:,}** コイン",
+            f"残高が足りないよ！\n残高：**{money(current_balance)}**",
             mention_author=False,
         )
         return
@@ -1342,12 +1378,7 @@ async def slot_command(ctx, bet_text: str):
         game="slot",
     )
 
-    if profit > 0:
-        profit_text = f"+{profit:,}"
-    elif profit < 0:
-        profit_text = f"-{abs(profit):,}"
-    else:
-        profit_text = "±0"
+    profit_text = money_change(profit)
 
     displayed_rows = [
         [
@@ -1363,8 +1394,8 @@ async def slot_command(ctx, bet_text: str):
         f"|{'|'.join(displayed_rows[1])}|\n"
         f"|{'|'.join(displayed_rows[2])}|\n"
         f"￣￣￣￣￣￣\n"
-        f"賭け金：{bet:,}コイン\n"
-        f"収支：{profit_text}コイン\n"
+        f"賭け金：{money(bet)}\n"
+        f"収支：{profit_text}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
 
@@ -1412,17 +1443,17 @@ async def slot_command(ctx, bet_text: str):
 
     log_description = (
         f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-        f"賭け金：**{bet:,}**\n"
-        f"配当：**{payout:,}**\n"
+        f"賭け金：**{money(bet)}**\n"
+        f"配当：**{money(payout)}**\n"
         f"収支：**{profit_text}**\n"
-        f"残高：**{new_balance:,}**\n\n"
+        f"残高：**{money(new_balance)}**\n\n"
         f"{displayed_grid}"
     )
 
     if house_result is not None:
         log_description += (
-            f"\n\n胴元の残高変動：**{house_result['change']:+,}**\n"
-            f"胴元の残高：**{house_result['after']:,}**"
+            f"\n\n胴元の残高変動：**{money_change(house_result['change'])}**\n"
+            f"胴元の残高：**{money(house_result['after'])}**"
         )
 
     log_embed = discord.Embed(
@@ -1471,9 +1502,9 @@ async def payment_command(ctx, member: discord.Member, amount: int):
         title="💸 Payment",
         description=(
             f"対象：{member.mention}\n"
-            f"変更額：**{amount:+,} コイン**\n"
-            f"変更前：**{before:,} コイン**\n"
-            f"変更後：**{after:,} コイン**\n"
+            f"変更額：**{money_change(amount)}**\n"
+            f"変更前：**{money(before)}**\n"
+            f"変更後：**{money(after)}**\n"
             f"実行者：{ctx.author.mention}"
         ),
         color=discord.Color.blurple(),
@@ -1499,9 +1530,9 @@ async def payment_command(ctx, member: discord.Member, amount: int):
         description=(
             f"対象：{member.mention} (`{member.id}`)\n"
             f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
-            f"変更額：**{amount:+,}**\n"
-            f"変更前：**{before:,}**\n"
-            f"変更後：**{after:,}**"
+            f"変更額：**{money_change(amount)}**\n"
+            f"変更前：**{money(before)}**\n"
+            f"変更後：**{money(after)}**"
         ),
         color=discord.Color.blurple(),
     )
@@ -1704,7 +1735,7 @@ class BetSettingModal(discord.ui.Modal):
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            f"最低賭け金を **{amount:,} コイン** に設定したよ。",
+            f"最低賭け金を **{money(amount)}** に設定したよ。",
             ephemeral=True,
         )
 
@@ -2159,7 +2190,7 @@ async def setting_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="最低賭け金",
-        value=f"{int(settings['min_bet']):,} コイン",
+        value=money(int(settings["min_bet"])),
         inline=True,
     )
 
@@ -2267,7 +2298,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             description,
                         )
                         balance_match = re.search(
-                            r"残高：\*\*([\d,]+)\*\*",
+                            r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
                             description,
                         )
 
@@ -2279,8 +2310,8 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             "timestamp": message.created_at.timestamp(),
                             "guild_id": guild_id,
                             "user_id": user_match.group(1),
-                            "balance": int(
-                                balance_match.group(1).replace(",", "")
+                            "balance": parse_money_text(
+                                balance_match.group(1)
                             ),
                             "source": "discord",
                         })
@@ -2292,7 +2323,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             description,
                         )
                         after_match = re.search(
-                            r"変更後：\*\*([\d,]+)\*\*",
+                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
                             description,
                         )
 
@@ -2304,8 +2335,8 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             "timestamp": message.created_at.timestamp(),
                             "guild_id": guild_id,
                             "user_id": user_match.group(1),
-                            "after": int(
-                                after_match.group(1).replace(",", "")
+                            "after": parse_money_text(
+                                after_match.group(1)
                             ),
                             "source": "discord",
                         })
@@ -2317,7 +2348,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             description,
                         )
                         after_match = re.search(
-                            r"変更後：\*\*([+-]?[\d,]+)\*\*",
+                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
                             description,
                         )
 
@@ -2329,8 +2360,8 @@ async def coinrecovery_command(interaction: discord.Interaction):
                             "timestamp": message.created_at.timestamp(),
                             "guild_id": guild_id,
                             "user_id": user_match.group(1),
-                            "after": int(
-                                after_match.group(1).replace(",", "")
+                            "after": parse_money_text(
+                                after_match.group(1)
                             ),
                             "source": "discord",
                         })
@@ -2452,7 +2483,7 @@ async def setting_info_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="最低賭け金",
-        value=f"{int(settings['min_bet']):,}",
+        value=money(int(settings["min_bet"])),
         inline=True,
     )
 

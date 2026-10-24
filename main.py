@@ -971,6 +971,7 @@ class GuessSetupView(discord.ui.View):
         )
 
 
+
 async def process_guess_message(message):
     if message.guild is None:
         return
@@ -983,11 +984,6 @@ async def process_guess_message(message):
 
     if int(game.get("channel_id", 0)) != message.channel.id:
         return
-
-    try:
-        await message.add_reaction("🎉")
-    except (discord.Forbidden, discord.HTTPException):
-        print("[GUESS] 回答メッセージへのリアクションに失敗しました。")
 
     async with get_guess_lock(message.guild.id):
         game = guess_data.get(guild_key)
@@ -1006,8 +1002,15 @@ async def process_guess_message(message):
         else:
             correct = content.casefold() == answer.casefold()
 
+        # 不正解ならリアクションを付けずに終了
         if not correct:
             return
+
+        # 正解メッセージにだけリアクション
+        try:
+            await message.add_reaction("🎉")
+        except (discord.Forbidden, discord.HTTPException):
+            print("[GUESS] 正解メッセージへのリアクションに失敗しました。")
 
         # 二重当選を防ぐため、先に終了状態を保存する
         game["active"] = False
@@ -1063,11 +1066,6 @@ async def process_guess_message(message):
         )
         await send_coin_log(message.guild, log_embed)
 
-
-guess_group = app_commands.Group(
-    name="guess",
-    description="数字・言葉当てゲームを管理する",
-)
 
 
 @guess_group.command(

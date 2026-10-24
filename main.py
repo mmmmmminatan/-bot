@@ -834,7 +834,7 @@ class ColorBetView(discord.ui.View):
 
         self.finished = True
 
-        winning_color = random.choice(["🟥", "🟦"])
+        winning_color = random.choice(["🌝", "🌚"])
         won = chosen_color == winning_color
         current_balance = get_balance(interaction.user.id)
 
@@ -883,7 +883,7 @@ class ColorBetView(discord.ui.View):
             )
 
         embed = discord.Embed(
-            title="🟥🟦 2択ゲーム",
+            title="🌝🌚 2択ゲーム",
             description=(
                 f"プレイヤー：{interaction.user.mention}\n"
                 f"選んだ色：{chosen_color}\n\n"
@@ -937,7 +937,7 @@ class ColorBetView(discord.ui.View):
                 )
 
             log_embed = discord.Embed(
-                title="🟥🟦 2択ゲームログ",
+                title="🌝🌚 2択ゲームログ",
                 description=log_description,
                 color=color,
             )
@@ -945,20 +945,20 @@ class ColorBetView(discord.ui.View):
             await send_coin_log(interaction.guild, log_embed)
 
     @discord.ui.button(
-        label="赤",
-        emoji="🟥",
+        label="表",
+        emoji="🌝",
         style=discord.ButtonStyle.danger,
     )
     async def red_button(self, interaction, button):
-        await self.choose_color(interaction, "🟥")
+        await self.choose_color(interaction, "🌝")
 
     @discord.ui.button(
-        label="青",
-        emoji="🟦",
+        label="裏",
+        emoji="🌚",
         style=discord.ButtonStyle.primary,
     )
     async def blue_button(self, interaction, button):
-        await self.choose_color(interaction, "🟦")
+        await self.choose_color(interaction, "🌚")
 
     async def on_timeout(self):
         if self.finished:
@@ -974,7 +974,7 @@ class ColorBetView(discord.ui.View):
             item.disabled = True
 
         embed = discord.Embed(
-            title="🟥🟦 2択ゲーム",
+            title="🌝🌚 2択ゲーム",
             description=(
                 f"プレイヤー：{self.ctx.author.mention}\n\n"
                 "時間切れ！今回はゲームをキャンセルしたよ。\n"
@@ -1003,7 +1003,7 @@ class ColorBetView(discord.ui.View):
 
         if self.ctx.guild is not None:
             log_embed = discord.Embed(
-                title="🟥🟦 2択ゲーム返金ログ",
+                title="🌝🌚 2択ゲーム返金ログ",
                 description=(
                     f"ユーザー：{self.ctx.author.mention} "
                     f"(`{self.ctx.author.id}`)\n"
@@ -1067,11 +1067,11 @@ async def color_command(ctx, bet_text: str):
     set_balance(ctx.author.id, current_balance - bet)
 
     embed = discord.Embed(
-        title="🟥🟦 2択ゲーム",
+        title="🌝🌚 2択ゲーム",
         description=(
             f"プレイヤー：{ctx.author.mention}\n"
             f"賭け金：**{bet:,} コイン**\n\n"
-            "🟥 赤か 🟦 青を選んでね！\n"
+            "🌝 表か 🌚 裏を選んでね！\n"
             "当たりなら賭け金込みで2倍が戻るよ。\n"
             "ハズレなら賭け金を失うよ。\n\n"
             "60秒以内に選んでね。\n"
@@ -1521,7 +1521,7 @@ async def help_command(ctx):
             "**一般コマンド**\n"
             "`.slot 賭け金` — スロットを回す\n"
             "`.slot all` — 所持金を全額賭ける\n"
-            "`.color 賭け金` — 🟥🟦の2択ゲーム（当たりで2倍）\n"
+            "`.color 賭け金` — 🌝🌚の2択ゲーム（当たりで2倍）\n"
             "`.color all` — 所持金を全額賭ける\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"

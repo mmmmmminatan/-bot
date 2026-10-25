@@ -1737,7 +1737,7 @@ class DiceBetView(discord.ui.View):
                 pass
 
 
-@bot.command(name="dice", aliases=["ダイス", "サイコロ"])
+@bot.command(name="mdice", aliases=["ダイス", "サイコロ"])
 async def dice_command(ctx, bet_text: str, color_text: str):
     if ctx.guild is None:
         await ctx.reply(

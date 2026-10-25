@@ -25,6 +25,11 @@ STARTING_BALANCE = 1000
 MAX_LOGS = 10000
 LOG_CHANNEL_ID = 1561184711571939438
 
+QUEST_CHANNEL_ID = 1561249240204714087
+QUEST_REQUIRED_MESSAGES = 5
+QUEST_REWARD_POINTS = 1000
+QUEST_FILE = Path("quest_progress.json")
+
 BALANCES_FILE = Path("balances.json")
 POSITIONS_FILE = Path("slot_positions.json")
 SLOT_LOGS_FILE = Path("slot_logs.json")
@@ -132,6 +137,7 @@ log_configs = load_json(LOG_CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
+quest_data = load_json(QUEST_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
@@ -450,16 +456,34 @@ async def on_message(message):
         f"content={message.content[:150]}"
     )
 
+    # クエストのメッセージ数をカウント
+    if (
+        message.guild
+        and message.channel.id == QUEST_CHANNEL_ID
+        and message.content.strip()
+        and not message.content.startswith(".")
+    ):
+        today = datetime.now(JST).date().isoformat()
+        user_id = str(message.author.id)
+
+        if user_id not in quest_data:
+            quest_data[user_id] = {
+                "date": today,
+                "count": 0,
+                "claimed": False,
+                "points": 0
+            }
+
+        if quest_data[user_id].get("date") != today:
+            quest_data[user_id]["date"] = today
+            quest_data[user_id]["count"] = 0
+            quest_data[user_id]["claimed"] = False
+
+        quest_data[user_id]["count"] += 1
+        save_json(QUEST_FILE, quest_data)
+
     await process_guess_message(message)
     await bot.process_commands(message)
-
-@bot.event
-async def on_disconnect():
-    print("[BOT] Discordから切断")
-
-@bot.event
-async def on_resumed():
-    print("[BOT] Discordに再接続")
 
 # ==================================================
 # エラーハンドラー

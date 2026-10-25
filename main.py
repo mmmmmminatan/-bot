@@ -136,6 +136,7 @@ guess_data = load_json(GUESS_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
+AUTO_COIN_RECOVERY_DONE = False
 
 def get_balance(user_id):
     user_id = str(user_id)
@@ -421,6 +422,22 @@ async def on_ready():
             print("[GUESS RESTORE ERROR]")
             traceback.print_exc()
 
+    global AUTO_COIN_RECOVERY_DONE
+
+    if not AUTO_COIN_RECOVERY_DONE:
+        AUTO_COIN_RECOVERY_DONE = True
+
+        for guild in bot.guilds:
+            try:
+                result = await recover_coins_for_guild(guild)
+                print(
+                    f"[COIN RECOVERY] "
+                    f"{guild.name}: {result}"
+                )
+            except Exception:
+                print("[COIN RECOVERY ERROR]")
+                traceback.print_exc()
+                
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -2735,7 +2752,80 @@ class MaintenanceSettingView(discord.ui.View):
             "メンテナンスモードを **OFF** にしたよ。",
             ephemeral=True,
         )
+async def recover_coins_for_guild(guild):
+    guild_id = guild.id
+    latest_balances = {}
+    combined_logs = []
 
+    for item in slot_logs + coin_logs:
+        try:
+            if int(item.get("guild_id", 0)) == guild_id:
+                combined_logs.append(item)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    channel = await get_log_channel(guild)
+    if channel is not None:
+        try:
+            async for message in channel.history(limit=None, oldest_first=True):
+                for embed in message.embeds:
+                    title = embed.title or ""
+                    description = embed.description or ""
+
+                    if "スロットログ" in title:
+                        user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
+                        balance_match = re.search(
+                            r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                            description,
+                        )
+                    elif "Paymentログ" in title:
+                        user_match = re.search(r"対象：.*?`(\d+)`", description)
+                        balance_match = re.search(
+                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
+                            description,
+                        )
+                    elif "胴元残高ログ" in title:
+                        user_match = re.search(r"オーナーID：`(\d+)`", description)
+                        balance_match = re.search(
+                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
+                            description,
+                        )
+                    else:
+                        continue
+
+                    if user_match and balance_match:
+                        combined_logs.append({
+                            "timestamp": message.created_at.timestamp(),
+                            "user_id": user_match.group(1),
+                            "balance": parse_money_text(balance_match.group(1)),
+                        })
+        except discord.Forbidden:
+            print("[COIN RECOVERY] ログ閲覧権限がありません")
+            return "権限エラー"
+        except discord.HTTPException:
+            traceback.print_exc()
+            return "Discord取得エラー"
+
+    combined_logs.sort(
+        key=lambda item: float(item.get("timestamp", 0))
+    )
+
+    for item in combined_logs:
+        try:
+            user_id = str(int(item["user_id"]))
+            amount = int(item.get("balance", item.get("after")))
+            latest_balances[user_id] = amount
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    if not latest_balances:
+        return "復旧ログなし"
+
+    balances.update(latest_balances)
+    save_json(BALANCES_FILE, balances)
+
+    return f"{len(latest_balances)}人の残高を復旧"
+    
 # ==================================================
 # /setting
 # ==================================================

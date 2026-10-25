@@ -2464,6 +2464,44 @@ async def payment_command(ctx, target: str, amount: int):
             await send_coin_log(ctx.guild, log_embed)
         except Exception:
             traceback.print_exc()
+            
+            @bot.command(name="quest")
+async def quest_command(ctx):
+    user_id = str(ctx.author.id)
+    today = datetime.now(JST).date().isoformat()
+
+    if user_id not in quest_data:
+        quest_data[user_id] = {
+            "date": today,
+            "count": 0,
+            "claimed": False,
+            "points": 0
+        }
+
+    data = quest_data[user_id]
+
+    if data.get("date") != today:
+        data["date"] = today
+        data["count"] = 0
+        data["claimed"] = False
+
+    save_json(QUEST_FILE, quest_data)
+
+    count = data.get("count", 0)
+    claimed = data.get("claimed", False)
+
+    embed = discord.Embed(
+        title="📜 デイリークエスト",
+        description=(
+            f"指定チャンネルでメッセージを5回送信\n"
+            f"進捗：**{count}/5**\n"
+            f"報酬：**1000ポイント**\n"
+            f"状態：{'受取済み' if claimed else '達成済み' if count >= 5 else '挑戦中'}"
+        ),
+        color=discord.Color.gold()
+    )
+
+    await ctx.send(embed=embed)
 
 # ==================================================
 # .help / .mhelp

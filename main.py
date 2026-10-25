@@ -25,11 +25,6 @@ STARTING_BALANCE = 1000
 MAX_LOGS = 10000
 LOG_CHANNEL_ID = 1561184711571939438
 
-QUEST_CHANNEL_ID = 1561249240204714087
-QUEST_REQUIRED_MESSAGES = 5
-QUEST_REWARD_POINTS = 1000
-QUEST_FILE = Path("quest_progress.json")
-
 BALANCES_FILE = Path("balances.json")
 POSITIONS_FILE = Path("slot_positions.json")
 SLOT_LOGS_FILE = Path("slot_logs.json")
@@ -137,7 +132,6 @@ log_configs = load_json(LOG_CONFIG_FILE, {})
 coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
-quest_data = load_json(QUEST_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
@@ -456,34 +450,16 @@ async def on_message(message):
         f"content={message.content[:150]}"
     )
 
-    # クエストのメッセージ数をカウント
-    if (
-        message.guild
-        and message.channel.id == QUEST_CHANNEL_ID
-        and message.content.strip()
-        and not message.content.startswith(".")
-    ):
-        today = datetime.now(JST).date().isoformat()
-        user_id = str(message.author.id)
-
-        if user_id not in quest_data:
-            quest_data[user_id] = {
-                "date": today,
-                "count": 0,
-                "claimed": False,
-                "points": 0
-            }
-
-        if quest_data[user_id].get("date") != today:
-            quest_data[user_id]["date"] = today
-            quest_data[user_id]["count"] = 0
-            quest_data[user_id]["claimed"] = False
-
-        quest_data[user_id]["count"] += 1
-        save_json(QUEST_FILE, quest_data)
-
     await process_guess_message(message)
     await bot.process_commands(message)
+
+@bot.event
+async def on_disconnect():
+    print("[BOT] Discordから切断")
+
+@bot.event
+async def on_resumed():
+    print("[BOT] Discordに再接続")
 
 # ==================================================
 # エラーハンドラー
@@ -2256,252 +2232,68 @@ async def slot_command(ctx, bet_text: str):
     )
 
 # ==================================================
-# .Payment 残高の増減（個別・全員対応）
+# .Payment 残高の増減
 # ==================================================
 
 @bot.command(name="Payment", aliases=["pay", "送金"])
-async def payment_command(ctx, target: str, amount: int):
+async def payment_command(ctx, member: discord.Member, amount: int):
     if not is_owner_user(ctx.author):
-        await ctx.reply(
-            "このコマンドを使えるのは指定されたオーナー本人だけだよ。",
-            mention_author=False
-        )
+        await ctx.reply("このコマンドを使えるのは指定されたオーナー本人だけだよ。", mention_author=False)
         return
 
     if ctx.guild is None:
-        await ctx.reply(
-            "このコマンドはサーバー内で使ってね。",
-            mention_author=False
-        )
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    if member.bot:
+        await ctx.reply("Botには送金できないよ。", mention_author=False)
         return
 
     if amount == 0:
-        await ctx.reply(
-            "金額は0以外にしてね。",
-            mention_author=False
-        )
+        await ctx.reply("金額は0以外にしてね。", mention_author=False)
         return
 
-    # ----------------------------------------------
-    # 対象メンバーを決定
-    # ----------------------------------------------
+    before = get_balance(member.id)
+    after = before + amount
+    set_balance(member.id, after)
 
-    target = target.lower()
-
-    if target == "all":
-        # サーバー内の人間メンバーのみ
-        members = [
-            member
-            for member in ctx.guild.members
-            if not member.bot
-        ]
-
-        if not members:
-            await ctx.reply(
-                "対象となる人間メンバーがいないよ。",
-                mention_author=False
-            )
-            return
-
-        # 大量変更の誤操作を防止
-        if len(members) > 100:
-            await ctx.reply(
-                f"対象が{len(members)}人いるよ。"
-                "誤操作防止のため、一度に変更できるのは100人までだよ。",
-                mention_author=False
-            )
-            return
-
-    else:
-        # メンションまたはユーザーIDに対応
-        member = None
-
-        if ctx.message.mentions:
-            member = ctx.message.mentions[0]
-        else:
-            try:
-                member_id = int(target.strip("<@!>"))
-                member = ctx.guild.get_member(member_id)
-            except (ValueError, TypeError):
-                member = None
-
-        if member is None:
-            await ctx.reply(
-                "対象メンバーが見つからないよ。"
-                "メンションするか、`all` を指定してね。",
-                mention_author=False
-            )
-            return
-
-        if member.bot:
-            await ctx.reply(
-                "Botアカウントは対象にできないよ。",
-                mention_author=False
-            )
-            return
-
-        members = [member]
-
-    # ----------------------------------------------
-    # 残高変更
-    # ----------------------------------------------
-
-    results = []
-    now = datetime.now(timezone.utc).timestamp()
-
-    for member in members:
-        try:
-            before = get_balance(member.id)
-            after = before + amount
-
-            set_balance(member.id, after)
-
-            record_coin({
-                "type": "payment",
-                "timestamp": now,
-                "guild_id": ctx.guild.id,
-                "user_id": member.id,
-                "username": str(member),
-                "actor_id": ctx.author.id,
-                "actor_name": str(ctx.author),
-                "amount": amount,
-                "before": before,
-                "after": after,
-            })
-
-            results.append({
-                "member": member,
-                "before": before,
-                "after": after,
-            })
-
-        except Exception:
-            traceback.print_exc()
-
-    if not results:
-        await ctx.reply(
-            "残高を変更できなかったよ。ログを確認してね。",
-            mention_author=False
-        )
-        return
-
-    # ----------------------------------------------
-    # 実行結果
-    # ----------------------------------------------
-
-    if len(results) == 1:
-        result = results[0]
-        member = result["member"]
-        before = result["before"]
-        after = result["after"]
-
-        embed = discord.Embed(
-            title="💸 Payment",
-            description=(
-                f"対象：{member.mention}\n"
-                f"変更額：**{money_change(amount)}**\n"
-                f"変更前：**{money(before)}**\n"
-                f"変更後：**{money(after)}**\n"
-                f"実行者：{ctx.author.mention}"
-            ),
-            color=discord.Color.blurple(),
-        )
-    else:
-        embed = discord.Embed(
-            title="💸 Payment（全員）",
-            description=(
-                f"対象人数：**{len(results)}人**\n"
-                f"1人あたりの変更額：**{money_change(amount)}**\n"
-                f"実行者：{ctx.author.mention}"
-            ),
-            color=discord.Color.blurple(),
-        )
-
-        # DiscordのEmbed上限対策
-        summary = []
-        for result in results[:15]:
-            member = result["member"]
-            summary.append(
-                f"{member.mention}："
-                f"{money(result['before'])} → {money(result['after'])}"
-            )
-
-        embed.add_field(
-            name="変更結果（一部）",
-            value="\n".join(summary)[:1024],
-            inline=False,
-        )
-
-        if len(results) > 15:
-            embed.set_footer(
-                text=f"ほか{len(results) - 15}人。全件はログを確認してね。"
-            )
-
+    embed = discord.Embed(
+        title="💸 Payment",
+        description=(
+            f"対象：{member.mention}\n変更額：**{money_change(amount)}**\n"
+            f"変更前：**{money(before)}**\n変更後：**{money(after)}**\n"
+            f"実行者：{ctx.author.mention}"
+        ),
+        color=discord.Color.blurple(),
+    )
     await ctx.reply(embed=embed, mention_author=False)
 
-    # ----------------------------------------------
-    # Discordログ
-    # ----------------------------------------------
+    record_coin({
+        "type": "payment",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": ctx.guild.id,
+        "user_id": member.id,
+        "username": str(member),
+        "actor_id": ctx.author.id,
+        "actor_name": str(ctx.author),
+        "amount": amount,
+        "before": before,
+        "after": after,
+    })
 
-    for result in results:
-        member = result["member"]
-        before = result["before"]
-        after = result["after"]
-
-        log_embed = discord.Embed(
+    await send_coin_log(
+        ctx.guild,
+        discord.Embed(
             title="💸 Paymentログ",
             description=(
                 f"対象：{member.mention} (`{member.id}`)\n"
                 f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
                 f"変更額：**{money_change(amount)}**\n"
-                f"変更前：**{money(before)}**\n"
-                f"変更後：**{money(after)}**"
+                f"変更前：**{money(before)}**\n変更後：**{money(after)}**"
             ),
             color=discord.Color.blurple(),
-        )
-
-        try:
-            await send_coin_log(ctx.guild, log_embed)
-        except Exception:
-            traceback.print_exc()
-            
-            @bot.command(name="quest")
-async def quest_command(ctx):
-    user_id = str(ctx.author.id)
-    today = datetime.now(JST).date().isoformat()
-
-    if user_id not in quest_data:
-        quest_data[user_id] = {
-            "date": today,
-            "count": 0,
-            "claimed": False,
-            "points": 0
-        }
-
-    data = quest_data[user_id]
-
-    if data.get("date") != today:
-        data["date"] = today
-        data["count"] = 0
-        data["claimed"] = False
-
-    save_json(QUEST_FILE, quest_data)
-
-    count = data.get("count", 0)
-    claimed = data.get("claimed", False)
-
-    embed = discord.Embed(
-        title="📜 デイリークエスト",
-        description=(
-            f"指定チャンネルでメッセージを5回送信\n"
-            f"進捗：**{count}/5**\n"
-            f"報酬：**1000ポイント**\n"
-            f"状態：{'受取済み' if claimed else '達成済み' if count >= 5 else '挑戦中'}"
         ),
-        color=discord.Color.gold()
     )
-
-    await ctx.send(embed=embed)
 
 # ==================================================
 # .help / .mhelp

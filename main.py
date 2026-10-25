@@ -1468,7 +1468,7 @@ DICE_COLORS = {
     "r": {"name": "赤", "emoji": "🔴", "custom": "aka"},
     "b": {"name": "青", "emoji": "🔵", "custom": "ao"},
     "y": {"name": "黄色", "emoji": "🟡", "custom": "kiro"},
-    "o": {"name": "オレンジ", "emoji": "🟠", "custom": "orenji"},
+    "o": {"name": "オレンジ", "emoji": "🟠", "custom": "orengi"},
     "g": {"name": "緑", "emoji": "🟢", "custom": "midori"},
     "p": {"name": "紫", "emoji": "🟣", "custom": "murasaki"},
 }

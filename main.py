@@ -1158,7 +1158,7 @@ bot.tree.add_command(guess_group)
 # .daily ログインボーナス
 # ==================================================
 
-@bot.command(name="daily")
+@bot.command(name="mdaily")
 async def daily_command(ctx):
     if ctx.author.bot:
         return

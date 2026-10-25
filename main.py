@@ -1791,7 +1791,7 @@ async def help_command(ctx):
             "`.color all` — 所持金を全額賭ける\n"
             "`.cash` — 自分の残高を見る\n"
             "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
-            "`.daily` — ログインボーナス\n"
+            "`.mdaily` — ログインボーナス\n"
             "`/settinginfo` — 現在の設定\n"
             "`/guess setup` — 数字・言葉当てゲームの設定（管理者）\n"
             "`/guess stop` — ゲーム停止（管理者）\n\n"

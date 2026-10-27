@@ -2234,7 +2234,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         for row in grid
     ]
 
-     bet_money_str = f"{total_bet:03d}"
+    bet_money_str = f"{total_bet:03d}"
     won_money_str = money(total_payout)
 
     emoji_bet = number_emoji(bet_money_str)

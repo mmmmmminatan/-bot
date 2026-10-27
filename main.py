@@ -75,7 +75,7 @@ DEFAULT_SERVER_SETTINGS = {
     "weights": DEFAULT_WEIGHTS.copy(),
     "slot_permission": "everyone",
     "maintenance": False,
-    "emoji_mode": "unicode",
+    "emoji_mode": "custom",
 }
 # ==================================================
 # 数字カスタム絵文字（0〜9）

@@ -2203,9 +2203,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(reason, mention_author=False)
         return
 
-    # 🔽 5レーン（5倍）の倍率設定を追加
-    line_multipliers = {1: 1, 2: 3, 3: 5, 5: 5}
-    active_lines_count = line_multipliers.get(line_choice, line_choice)
+    # 🔽 1, 2, 3ラインのみの倍率設定に戻す
+    line_multipliers = {1: 1, 2: 3, 3: 5}
+    active_lines_count = line_multipliers[line_choice]
     total_bet = base_bet * active_lines_count
 
     if total_bet <= 0:
@@ -2379,16 +2379,16 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     base_bet = resolve_bet(ctx.author.id, bet_text)
     if base_bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 5`", mention_author=False)
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
         return
 
     try:
         line_choice = int(lines_text)
-        # 🔽 5も入力できるようにチェックを拡張
-        if line_choice not in (1, 2, 3, 5):
+        # 🔽 1, 2, 3 のみに制限に戻す
+        if line_choice not in (1, 2, 3):
             raise ValueError
     except ValueError:
-        await ctx.reply("ライン数は `1`、`2`、`3`、または `5` で指定してね。\n例：`.slot 100 5`", mention_author=False)
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 3`", mention_author=False)
         return
 
     await execute_slot(ctx, base_bet, line_choice)

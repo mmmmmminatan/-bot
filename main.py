@@ -403,10 +403,26 @@ def make_grid(positions, weights):
         for row in range(3)
     ]
 
-def get_paylines(grid):
-    if len(grid) < 2 or len(grid[1]) < 3:
+def get_paylines(grid, line_choice):
+    if len(grid) < 3:
         return []
-    return [grid[1][:3]]
+    
+    paylines = []
+    # 1: 真ん中（横1本）
+    if line_choice >= 1:
+        paylines.append([grid[1][0], grid[1][1], grid[1][2]])
+        
+    # 2: 上・中・下（横3本）
+    if line_choice >= 2:
+        paylines.append([grid[0][0], grid[0][1], grid[0][2]]) # 上段
+        paylines.append([grid[2][0], grid[2][1], grid[2][2]]) # 下段
+        
+    # 3: 上・中・下 ＋ 斜め2本（計5本）
+    if line_choice >= 3:
+        paylines.append([grid[0][0], grid[1][1], grid[2][2]]) # 斜め（左上→右下）
+        paylines.append([grid[2][0], grid[1][1], grid[0][2]]) # 斜め（左下→右上）
+        
+    return paylines
 
 # ==================================================
 # Bot本体
@@ -2130,7 +2146,7 @@ async def all_cash_command(interaction: discord.Interaction):
 # ==================================================
 
 @bot.command(name="slot")
-async def slot_command(ctx, bet_text: str):
+async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     if ctx.guild is None:
         await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
@@ -2142,23 +2158,38 @@ async def slot_command(ctx, bet_text: str):
         await ctx.reply(reason, mention_author=False)
         return
 
-    bet = resolve_bet(ctx.author.id, bet_text)
-    if bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 500` / `.slot all`", mention_author=False)
+    # 1ラインあたりの賭け金
+    base_bet = resolve_bet(ctx.author.id, bet_text)
+    if base_bet is None:
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
         return
 
-    if bet <= 0:
+    # ライン数の指定 (1, 2, 3)
+    try:
+        line_choice = int(lines_text)
+        if line_choice not in (1, 2, 3):
+            raise ValueError
+    except ValueError:
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 2`", mention_author=False)
+        return
+
+    # ライン数に応じた総賭け金の倍率（1→1倍, 2→3倍, 3→5倍）
+    line_multipliers = {1: 1, 2: 3, 3: 5}
+    active_lines_count = line_multipliers[line_choice]
+    total_bet = base_bet * active_lines_count
+
+    if total_bet <= 0:
         await ctx.reply("賭け金に使える残高がないよ。", mention_author=False)
         return
 
     minimum = int(settings.get("min_bet", 1))
-    if bet < minimum:
-        await ctx.reply(f"最低賭け金は **{money(minimum)}** だよ。", mention_author=False)
+    if base_bet < minimum:
+        await ctx.reply(f"1ラインあたりの最低賭け金は **{money(minimum)}** だよ。", mention_author=False)
         return
 
     current_balance = get_balance(ctx.author.id)
-    if bet > current_balance:
-        await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
+    if total_bet > current_balance:
+        await ctx.reply(f"残高が足りないよ！\n必要額（総額）：**{money(total_bet)}**\n残高：**{money(current_balance)}**", mention_author=False)
         return
 
     positions = [random.randrange(len(LANE_PATTERNS[index])) for index in range(3)]
@@ -2167,24 +2198,28 @@ async def slot_command(ctx, bet_text: str):
 
     weights = settings.get("weights", DEFAULT_WEIGHTS)
     grid = make_grid(positions, weights)
-    paylines = get_paylines(grid)
+    
+    # 選択されたライン数に応じて有効なラインを取得
+    paylines = get_paylines(grid, line_choice)
 
     winning_symbol = None
     multiplier = 0
+    total_payout = 0
 
+    # すべての有効ラインをチェックして当たりの配当を合算
     for line in paylines:
         if line[0] == line[1] == line[2]:
-            winning_symbol = line[0]
-            multiplier = PAYOUTS.get(winning_symbol, 0)
-            break
+            sym = line[0]
+            mult = PAYOUTS.get(sym, 0)
+            total_payout += base_bet * mult
+            winning_symbol = sym # ログ用（複数当たった場合は最後のものなどが保持されます）
 
-    new_balance = current_balance - bet
-    payout = bet * multiplier
-    if payout > 0:
-        new_balance += payout
+    new_balance = current_balance - total_bet
+    if total_payout > 0:
+        new_balance += total_payout
 
     set_balance(ctx.author.id, new_balance)
-    profit = payout - bet
+    profit = total_payout - total_bet
 
     house_result = transfer_to_house(
         player_id=ctx.author.id,
@@ -2199,22 +2234,13 @@ async def slot_command(ctx, bet_text: str):
         for row in grid
     ]
 
-    bet_money_str = money(bet)
-    won_money_str = money(payout)
+    bet_money_str = money(total_bet)
+    won_money_str = money(total_payout)
 
     emoji_bet = number_emoji(bet_money_str)
     emoji_won = number_emoji(won_money_str)
 
-    # 左右の装飾に使うカスタム絵文字を設定
-    # ※位置や上下の組み合わせに合わせて変えられます
-    left_top = "<:emoji_20:1564565447448199220>"
-    left_mid = "<:emoji_22:1564567674162516089>"
-    left_bot = "<:emoji_20:1564565432327741440>"
-
-    right_top = "<:emoji_21:1564565471817244832>"
-    right_mid = "<:emoji_22:1564567647927017522>"
-    right_bot = "<:emoji_22:1564565484307877988>"
-
+    # 左右の装飾絵文字
     slot_display = (
         f"{left_top} |{'|'.join(displayed_rows[0])}| {right_top}\n"
         f"{left_mid} |{'|'.join(displayed_rows[1])}| {right_mid}\n"
@@ -2224,8 +2250,7 @@ async def slot_command(ctx, bet_text: str):
         f"まわしたひと：{ctx.author.mention}"
     )
 
-
-    if payout > 0:
+    if total_payout > 0:
         color = discord.Color.green()
     elif profit == 0:
         color = discord.Color.gold()
@@ -2245,13 +2270,12 @@ async def slot_command(ctx, bet_text: str):
         "guild_id": ctx.guild.id,
         "user_id": ctx.author.id,
         "username": str(ctx.author),
-        "bet": bet,
-        "payout": payout,
+        "bet": total_bet,
+        "payout": total_payout,
         "profit": profit,
         "balance": new_balance,
         "grid": grid,
-        "winning_symbol": winning_symbol,
-        "multiplier": multiplier,
+        "line_choice": line_choice,
         "emoji_mode": settings.get("emoji_mode", "unicode"),
     }
 
@@ -2263,7 +2287,8 @@ async def slot_command(ctx, bet_text: str):
 
     log_description = (
         f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-        f"賭け金：**{money(bet)}**\n配当：**{money(payout)}**\n"
+        f"選択ライン：{line_choice} （{active_lines_count}ライン）\n"
+        f"賭け金（総額）：**{money(total_bet)}**\n配当：**{money(total_payout)}**\n"
         f"収支：**{profit_text}**\n残高：**{money(new_balance)}**\n\n"
         f"{displayed_grid}"
     )

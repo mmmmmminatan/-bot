@@ -2240,6 +2240,14 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     emoji_bet = number_emoji(bet_money_str)
     emoji_won = number_emoji(won_money_str)
 
+    left_top = "<:emoji_20:1564565447448199220>"
+    left_mid = "<:emoji_22:1564567674162516089>"
+    left_bot = "<:emoji_20:1564565432327741440>"
+
+    right_top = "<:emoji_21:1564565471817244832>"
+    right_mid = "<:emoji_22:1564567647927017522>"
+    right_bot = "<:emoji_22:1564565484307877988>"
+
     # 左右の装飾絵文字
     slot_display = (
         f"{left_top} |{'|'.join(displayed_rows[0])}| {right_top}\n"

@@ -2273,6 +2273,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     gray_emoji = "<:emoji_25:1564584610820657203>"
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
+    # 灰色プレートを10個並べて横長のフタにする
+    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
+
     slot_display = (
         f"{top_bottom_gray}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
@@ -2280,6 +2283,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )
+
 
     if total_payout > 0:
         color = discord.Color.green()

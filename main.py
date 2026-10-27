@@ -2493,6 +2493,44 @@ async def log_panel(interaction: discord.Interaction):
 bot.tree.add_command(log_group)
 
 # ==================================================
+# .slothelp スロットの説明
+# ==================================================
+
+@bot.command(name="slothelp", aliases=["スロットヘルプ", "slot_help"])
+async def slot_help_command(ctx):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    settings = get_server_settings(ctx.guild.id)
+    minimum = int(settings.get("min_bet", 1))
+
+    embed = discord.Embed(
+        title="🎰 スロットの遊び方・ルール",
+        description=(
+            "選んだライン数に応じて、当たり判定のラインと総賭け金が変わるよ！\n\n"
+            "**【コマンドの使い方】**\n"
+            "`.slot 賭け金 ライン数`\n"
+            "例：`.slot 100 2` （1ラインあたり100コインで、2を指定）\n\n"
+            "**【選べるライン数】**\n"
+            "* **`1`（1ライン）**: 真ん中の横1列（総賭け金 = 1倍）\n"
+            "* **`2`（3ライン）**: 上・中・下の横3列（総賭け金 = 3倍）\n"
+            "* **`3`（5ライン）**: 上・中・下 ＋ 斜め2本（総賭け金 = 5倍）\n\n"
+            "**【配当倍率】**\n"
+            "* 🍒 ＝ **2倍**\n"
+            "* 🍋 ＝ **3倍**\n"
+            "* 🔔 ＝ **5倍**\n"
+            "* 💣 ＝ **20倍**\n"
+            "* ⭐ ＝ **10倍**\n"
+            "* 7️⃣ ＝ **50倍**\n\n"
+            f"※1ラインあたりの最低賭け金：**{money(minimum)}**\n"
+            "※所持金を全額賭けたいときは、数字の代わりに `all` が使えるよ！"
+        ),
+        color=discord.Color.gold(),
+    )
+    await ctx.reply(embed=embed, mention_author=False)
+
+# ==================================================
 # /setting モーダル
 # ==================================================
 

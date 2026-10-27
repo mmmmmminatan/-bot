@@ -2263,8 +2263,8 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     # 【構成】
     # 1. 出目（3行）
-    # 2. BET行（BET絵文字 ＋ 数字3つ ＋ 灰色絵文字 ※数字間の線なし）
-    # 3. WON行（WON絵文字 ＋ 数字3つ ＋ 灰色絵文字 ※数字間の線なし）
+    # 2. BET行（数字間の線なし）
+    # 3. WON行（数字間の線なし）
     slot_display = (
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
@@ -2274,6 +2274,48 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         f"まわしたひと：{ctx.author.mention}"
     )
 
+    if total_payout > 0:
+        color = discord.Color.green()
+    elif profit == 0:
+        color = discord.Color.gold()
+    else:
+        color = discord.Color.red()
+
+    await ctx.reply(
+        embed=discord.Embed(description=slot_display, color=color),
+        mention_author=False,
+    )
+
+    displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
+
+    log_data = {
+        "type": "slot",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": ctx.guild.id,
+        "user_id": ctx.author.id,
+        "username": str(ctx.author),
+        "bet": total_bet,
+        "payout": total_payout,
+        "profit": profit,
+        "balance": new_balance,
+        "grid": grid,
+        "line_choice": line_choice,
+        "emoji_mode": settings.get("emoji_mode", "unicode"),
+    }
+
+    if house_result is not None:
+        log_data["house_change"] = house_result["change"]
+        log_data["house_balance"] = house_result["after"]
+
+    record_slot(log_data)
+
+    log_description = (
+        f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+        f"選択ライン：{line_choice} （{active_lines_count}ライン）\n"
+        f"賭け金（総額）：**{money(total_bet)}**\n配当：**{money(total_payout)}**\n"
+        f"収支：**{profit_text}**\n残高：**{money(new_balance)}**\n\n"
+        f"{displayed_grid}"
+    )
 
     if house_result is not None:
         log_description += (
@@ -2285,6 +2327,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         ctx.guild,
         discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
+
 
 # ==================================================
 # .Payment 残高の増減

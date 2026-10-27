@@ -301,6 +301,7 @@ def display_symbol(symbol, guild, settings):
             return str(custom_emoji)
     return symbol
 
+
 def grid_text(grid, guild=None, settings=None):
     if settings is None:
         settings = DEFAULT_SERVER_SETTINGS
@@ -308,12 +309,15 @@ def grid_text(grid, guild=None, settings=None):
     lines = []
     for row in grid:
         displayed_row = [
-            display_symbol(symbol, guild, settings)
+            number_emoji(symbol)
+            if str(symbol).isdigit()
+            else display_symbol(symbol, guild, settings)
             for symbol in row
         ]
         lines.append("|" + "|".join(displayed_row) + "|")
 
     return "\n".join(lines)
+
 
 def get_display_mode_name(settings):
     if settings.get("emoji_mode", "unicode") == "custom":

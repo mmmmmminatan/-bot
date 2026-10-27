@@ -2234,20 +2234,29 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         for row in grid
     ]
 
-    # 賭け金と獲得額をそれぞれ3桁（または必要桁数）の数字絵文字に変換
+    # 賭け金と獲得額をそれぞれ3桁の数字絵文字に変換
     bet_money_str = f"{total_bet:03d}"
-    won_money_str = f"{total_payout:03d}"  # wonも数字絵文字で統一
+    won_money_str = f"{total_payout:03d}"
 
     emoji_bet = number_emoji(bet_money_str)
     emoji_won = number_emoji(won_money_str)
 
+    # 左右のプレート絵文字の定義
+    left_top = "<:emoji_20:1564565447448199220>"
+    left_mid = "<:emoji_22:1564567674162516089>"
+    left_bot = "<:emoji_20:1564565432327741440>"
+
+    right_top = "<:emoji_21:1564565471817244832>"
+    right_mid = "<:emoji_22:1564567647927017522>"
+    right_bot = "<:emoji_22:1564565484307877988>"
+
     # 上下ヘッダー・フッター用のプレート絵文字
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
-    # ※もし「WON」専用の絵文字がある場合は下の絵文字IDを差し替えてね！
+    # ※「WON」専用絵文字があればIDを書き換えてください
     won_label_emoji = "<:emoji_24:1564584196926611516>"
 
-    # 出目の下に bet と won を並べて形を綺麗に揃える
+    # 出目の下に bet と won を並べて配置
     slot_display = (
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
@@ -2256,7 +2265,6 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         f"{won_label_emoji}{emoji_won}{gray_emoji}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
-
 
     if total_payout > 0:
         color = discord.Color.green()
@@ -2311,6 +2319,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         ctx.guild,
         discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
+
 
 # ==================================================
 # .Payment 残高の増減

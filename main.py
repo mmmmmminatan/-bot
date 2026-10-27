@@ -2203,10 +2203,11 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(reason, mention_author=False)
         return
 
-    # 🔽 1, 2, 3ラインのみの倍率設定に戻す
+    # 選択したライン数に応じた倍率（1：1倍, 2：3倍, 3：5倍）
     line_multipliers = {1: 1, 2: 3, 3: 5}
     active_lines_count = line_multipliers[line_choice]
     total_bet = base_bet * active_lines_count
+
 
     if total_bet <= 0:
         msg = "賭け金に使える残高がないよ。"

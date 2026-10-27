@@ -2266,11 +2266,11 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     # 2. BET行（数字間の線なし）
     # 3. WON行（数字間の線なし）
 
-    # スロットの右側にBET、WONを並べ、3行目にメンションをスッキリ配置する
+    # スロットの右側に、上から「メンション」「BET」「WON」の順で並べる
     slot_display = (
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top} {bet_label_emoji}{b1}{b2}{b3}{gray_emoji}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid} {won_label_emoji}{w1}{w2}{w3}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot} {ctx.author.mention}"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}{ctx.author.mention}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}{bet_label_emoji}{b1}{b2}{b3}{gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}{won_label_emoji}{w1}{w2}{w3}{gray_emoji}"
     )
 
 

@@ -2246,15 +2246,15 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    # 🔽 マックス11桁・カンマなし（ゼロ埋め表示）
-    bet_money_str = f"{total_bet:011d}"
-    won_money_str = f"{total_payout:011d}"
+    # 🔽 BETとWONは5桁、クレジット（残高）だけ11桁・カンマなし
+    bet_money_str = f"{total_bet:05d}"
+    won_money_str = f"{total_payout:05d}"
     bal_money_str = f"{new_balance:011d}"
 
-    # 11桁分の数字絵文字をそれぞれ取得
-    b = [number_emoji(c) for c in bet_money_str]
-    w = [number_emoji(c) for c in won_money_str]
-    c = [number_emoji(c) for c in bal_money_str]
+    # それぞれの数字絵文字リストを取得
+    b = [number_emoji(ch) for ch in bet_money_str]  # 5桁分 (0〜4)
+    w = [number_emoji(ch) for ch in won_money_str]  # 5桁分 (0〜4)
+    c = [number_emoji(ch) for ch in bal_money_str]  # 11桁分 (0〜10)
 
     left_top = "<:emoji_20:1564565447448199220>"
     left_mid = "<:emoji_22:1564567674162516089>"
@@ -2271,12 +2271,12 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
-    # 🛠️ スロット画面のレイアウト（左下にクレジット＋残高11桁を表示）
+    # 🛠️ スロット画面のレイアウト（BET/WONは5桁、左下のクレジット行だけ11桁）
     slot_display = (
         f"{top_bottom_gray}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{b[5]}{b[6]}{b[7]}{b[8]}{b[9]}{b[10]}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{w[5]}{w[6]}{w[7]}{w[8]}{w[9]}{w[10]}{gray_emoji}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}\n"
         f"  {credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}      \n"
         f"{top_bottom_gray}"
     )

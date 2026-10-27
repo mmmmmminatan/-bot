@@ -2249,16 +2249,22 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    bet_money_str = f"{total_bet:03d}"
-    won_money_str = f"{total_payout:03d}"
+    # 5桁用の文字列に変換（例: 100 -> "00100"）
+    bet_money_str = f"{total_bet:05d}"
+    won_money_str = f"{total_payout:05d}"
 
+    # 5桁分の数字絵文字を取得
     b1 = number_emoji(bet_money_str[0])
     b2 = number_emoji(bet_money_str[1])
     b3 = number_emoji(bet_money_str[2])
+    b4 = number_emoji(bet_money_str[3])
+    b5 = number_emoji(bet_money_str[4])
 
     w1 = number_emoji(won_money_str[0])
     w2 = number_emoji(won_money_str[1])
     w3 = number_emoji(won_money_str[2])
+    w4 = number_emoji(won_money_str[3])
+    w5 = number_emoji(won_money_str[4])
 
     left_top = "<:emoji_20:1564565447448199220>"
     left_mid = "<:emoji_22:1564567674162516089>"
@@ -2271,18 +2277,18 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
     won_label_emoji = "<:emoji_27:1564590865165328455>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
-    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
-
-    # 灰色プレートを11個並べて横幅を調整する
-    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
+    
+    # 5桁化したことで右側が広くなった分に合わせて、上のグレー枠を＋2個（13個に）調整
+    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
     slot_display = (
         f"{top_bottom_gray}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b1}{b2}{b3}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{gray_emoji}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b1}{b2}{b3}{b4}{b5}{gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{w4}{w5}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )
+
 
 
     if total_payout > 0:

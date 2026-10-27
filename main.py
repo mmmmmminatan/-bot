@@ -2273,8 +2273,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     gray_emoji = "<:emoji_25:1564584610820657203>"
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
-    # 灰色プレートを10個並べて横長のフタにする
-    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
+    # 灰色プレートを11個並べて横幅を調整する
+    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
     slot_display = (
         f"{top_bottom_gray}\n"

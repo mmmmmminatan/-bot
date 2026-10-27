@@ -2191,11 +2191,6 @@ async def slot_command(ctx, bet_text: str):
         for row in grid
     ]
 
-    profit_text = money_change(profit)
-    displayed_rows = [
-        [display_symbol(symbol, ctx.guild, settings) for symbol in row]
-        for row in grid
-    ]
 
     # 賭け金と配当金（won）を絵文字化
     bet_money_str = money(bet)

@@ -2254,7 +2254,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
     # ※「WON」専用絵文字があればIDを書き換えてください
-    won_label_emoji = "<:emoji_24:1564584196926611516>"
+    won_label_emoji = "<:emoji_27:1564590865165328455>"
 
     # 出目の下に bet と won を並べて配置
     slot_display = (

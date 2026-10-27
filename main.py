@@ -2142,7 +2142,8 @@ async def all_cash_command(interaction: discord.Interaction):
     await interaction.followup.send(embed=view.make_embed(), view=view, ephemeral=True)
 
 # ==================================================
-# スロット用 View (もう一度回すボタン)
+# 1. スロット用 View (もう一度回すボタン)
+# ※必ず execute_slot より上に定義してください！
 # ==================================================
 class SlotView(discord.ui.View):
     def __init__(self, original_author_id, base_bet, line_choice):
@@ -2153,7 +2154,7 @@ class SlotView(discord.ui.View):
 
     @discord.ui.button(label="もう一度回す", style=discord.ButtonStyle.primary, emoji="🎰")
     async def spin_again(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ボタンを押した人が、最初にスロットを回した本人かどうかチェック
+        # ボタンを押した人が本人かチェック
         if interaction.user.id != self.original_author_id:
             await interaction.response.send_message("他の人が回したスロのボタンは押せないよ！自分のコマンドで回してね。", ephemeral=True)
             return
@@ -2162,12 +2163,12 @@ class SlotView(discord.ui.View):
         ctx.author = interaction.user
         ctx.guild = interaction.guild
 
-        # 再びスロットの処理を実行
+        # スロットを再実行
         await execute_slot(ctx, self.base_bet, self.line_choice, interaction=interaction)
 
 
 # ==================================================
-# スロット実行の共通処理
+# 2. スロット実行の共通処理
 # ==================================================
 async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     settings = get_server_settings(ctx.guild.id)
@@ -2180,7 +2181,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(reason, mention_author=False)
         return
 
-    # 🔽 ライン数の数字がそのまま倍率になるよう計算（.slot 3 3 なら 3 × 3 = 9）
+    # 掛け金の計算: (base_bet) × (line_choice)
     active_lines_count = line_choice
     total_bet = base_bet * line_choice
 
@@ -2249,6 +2250,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
+    # 5桁用の数字絵文字を取得
     bet_money_str = f"{total_bet:05d}"
     won_money_str = f"{total_payout:05d}"
 
@@ -2296,6 +2298,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     embed = discord.Embed(description=slot_display, color=color)
     view = SlotView(ctx.author.id, base_bet, line_choice)
 
+    # インタラクション（ボタン押し）からの実行か、コマンド入力からの実行かを分岐
     if interaction:
         await interaction.response.edit_message(embed=embed, view=view)
     else:
@@ -2342,6 +2345,31 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         ctx.guild,
         discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
+
+
+# ==================================================
+# 3. .slot コマンド本体
+# ==================================================
+@bot.command(name="slot")
+async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    base_bet = resolve_bet(ctx.author.id, bet_text)
+    if base_bet is None:
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
+        return
+
+    try:
+        line_choice = int(lines_text)
+        if line_choice not in (1, 2, 3):
+            raise ValueError
+    except ValueError:
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 3`", mention_author=False)
+        return
+
+    await execute_slot(ctx, base_bet, line_choice)
 
 
 # ==================================================

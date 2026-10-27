@@ -2234,7 +2234,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         for row in grid
     ]
 
-    bet_money_str = money(total_bet)
+     bet_money_str = f"{total_bet:03d}"
     won_money_str = money(total_payout)
 
     emoji_bet = number_emoji(bet_money_str)
@@ -2248,15 +2248,20 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     right_mid = "<:emoji_22:1564567647927017522>"
     right_bot = "<:emoji_22:1564565484307877988>"
 
-    # 左右のプレートと出目の間の線だけを消す
+    # BET行用の絵文字（左側：BET、右側：灰色）
+    bet_label_emoji = "<:emoji_24:1564584196926611516>"
+    gray_emoji = "<:emoji_25:1564584610820657203>"
+
+    # 左右の縦線を消し、一番上に【BET絵文字】【賭け金数字】【灰色絵文字】を配置
     slot_display = (
+        f"{bet_label_emoji}{emoji_bet}{gray_emoji}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}\n"
-        f"bet：{emoji_bet}\n"
         f"won：{emoji_won}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
+
 
     if total_payout > 0:
         color = discord.Color.green()

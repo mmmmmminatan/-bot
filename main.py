@@ -2221,21 +2221,6 @@ async def slot_command(ctx, bet_text: str):
         mention_author=False,
     )
 
-
-
-
-    if payout > 0:
-        color = discord.Color.green()
-    elif profit == 0:
-        color = discord.Color.gold()
-    else:
-        color = discord.Color.red()
-
-    await ctx.reply(
-        embed=discord.Embed(description=slot_display, color=color),
-        mention_author=False,
-    )
-
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
 
     log_data = {

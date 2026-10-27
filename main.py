@@ -2142,54 +2142,72 @@ async def all_cash_command(interaction: discord.Interaction):
     await interaction.followup.send(embed=view.make_embed(), view=view, ephemeral=True)
 
 # ==================================================
-# .slot スロット
+# スロット用 View (もう一度回すボタン)
 # ==================================================
+class SlotView(discord.ui.View):
+    def __init__(self, original_author_id, base_bet, line_choice):
+        super().__init__(timeout=180) # 3分間ボタン有効
+        self.original_author_id = original_author_id
+        self.base_bet = base_bet
+        self.line_choice = line_choice
 
-@bot.command(name="slot")
-async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
-    if ctx.guild is None:
-        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
-        return
+    @discord.ui.button(label="もう一度回す", style=discord.ButtonStyle.primary, emoji="🎰")
+    async def spin_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # ボタンを押した人が、最初にスロットを回した本人かどうかチェック
+        if interaction.user.id != self.original_author_id:
+            await interaction.response.send_message("他の人が回したスロのボタンは押せないよ！自分のコマンドで回してね。", ephemeral=True)
+            return
 
+        ctx = await interaction.client.get_context(interaction.message)
+        ctx.author = interaction.user
+        ctx.guild = interaction.guild
+
+        # 再びスロットの処理を実行
+        await execute_slot(ctx, self.base_bet, self.line_choice, interaction=interaction)
+
+
+# ==================================================
+# スロット実行の共通処理
+# ==================================================
+async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     settings = get_server_settings(ctx.guild.id)
     allowed, reason = can_use_slot(ctx.author, settings)
 
     if not allowed:
-        await ctx.reply(reason, mention_author=False)
+        if interaction:
+            await interaction.response.send_message(reason, ephemeral=True)
+        else:
+            await ctx.reply(reason, mention_author=False)
         return
 
-    # 1ラインあたりの賭け金
-    base_bet = resolve_bet(ctx.author.id, bet_text)
-    if base_bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
-        return
-
-    # ライン数の指定 (1, 2, 3)
-    try:
-        line_choice = int(lines_text)
-        if line_choice not in (1, 2, 3):
-            raise ValueError
-    except ValueError:
-        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 2`", mention_author=False)
-        return
-
-    # ライン数に応じた総賭け金の倍率（1→1倍, 2→3倍, 3→5倍）
     line_multipliers = {1: 1, 2: 3, 3: 5}
     active_lines_count = line_multipliers[line_choice]
     total_bet = base_bet * active_lines_count
 
     if total_bet <= 0:
-        await ctx.reply("賭け金に使える残高がないよ。", mention_author=False)
+        msg = "賭け金に使える残高がないよ。"
+        if interaction:
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await ctx.reply(msg, mention_author=False)
         return
 
     minimum = int(settings.get("min_bet", 1))
     if base_bet < minimum:
-        await ctx.reply(f"1ラインあたりの最低賭け金は **{money(minimum)}** だよ。", mention_author=False)
+        msg = f"1ラインあたりの最低賭け金は **{money(minimum)}** だよ。"
+        if interaction:
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await ctx.reply(msg, mention_author=False)
         return
 
     current_balance = get_balance(ctx.author.id)
     if total_bet > current_balance:
-        await ctx.reply(f"残高が足りないよ！\n必要額（総額）：**{money(total_bet)}**\n残高：**{money(current_balance)}**", mention_author=False)
+        msg = f"残高が足りないよ！\n必要額（総額）：**{money(total_bet)}**\n残高：**{money(current_balance)}**"
+        if interaction:
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await ctx.reply(msg, mention_author=False)
         return
 
     positions = [random.randrange(len(LANE_PATTERNS[index])) for index in range(3)]
@@ -2199,20 +2217,17 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     weights = settings.get("weights", DEFAULT_WEIGHTS)
     grid = make_grid(positions, weights)
     
-    # 選択されたライン数に応じて有効なラインを取得
     paylines = get_paylines(grid, line_choice)
 
     winning_symbol = None
-    multiplier = 0
     total_payout = 0
 
-    # すべての有効ラインをチェックして当たりの配当を合算
     for line in paylines:
         if line[0] == line[1] == line[2]:
             sym = line[0]
             mult = PAYOUTS.get(sym, 0)
             total_payout += base_bet * mult
-            winning_symbol = sym # ログ用
+            winning_symbol = sym
 
     new_balance = current_balance - total_bet
     if total_payout > 0:
@@ -2234,11 +2249,9 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         for row in grid
     ]
 
-    # 賭け金と獲得額をそれぞれ3桁の文字列に変換
     bet_money_str = f"{total_bet:03d}"
     won_money_str = f"{total_payout:03d}"
 
-    # それぞれ1桁ずつに分解して個別の絵文字に変換
     b1 = number_emoji(bet_money_str[0])
     b2 = number_emoji(bet_money_str[1])
     b3 = number_emoji(bet_money_str[2])
@@ -2247,7 +2260,6 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     w2 = number_emoji(won_money_str[1])
     w3 = number_emoji(won_money_str[2])
 
-    # 左右のプレート絵文字の定義
     left_top = "<:emoji_20:1564565447448199220>"
     left_mid = "<:emoji_22:1564567674162516089>"
     left_bot = "<:emoji_20:1564565432327741440>"
@@ -2256,29 +2268,18 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     right_mid = "<:emoji_22:1564567647927017522>"
     right_bot = "<:emoji_22:1564565484307877988>"
 
-    # BET行・WON行用のパーツ
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
     won_label_emoji = "<:emoji_27:1564590865165328455>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
+    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
-    # 【構成】
-    # 1. 出目（3行）
-    # 2. BET行（数字間の線なし）
-    # 3. WON行（数字間の線なし）
-
-    # 灰色プレートを綺麗に並べるためのパーツ（横に5個並べる想定）
-    # ※もし灰色のパーツが1個で足りない場合は、必要分だけ並べて調整できます
-    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
-
-    # スロットの上下に灰色プレートを置き、右側に「メンション・BET・WON」を配置する
     slot_display = (
         f"{top_bottom_gray}\n"
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top} {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid} {bet_label_emoji}{b1}{b2}{b3}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot} {won_label_emoji}{w1}{w2}{w3}{gray_emoji}\n"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b1}{b2}{b3}{gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )
-
 
     if total_payout > 0:
         color = discord.Color.green()
@@ -2287,10 +2288,13 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     else:
         color = discord.Color.red()
 
-    await ctx.reply(
-        embed=discord.Embed(description=slot_display, color=color),
-        mention_author=False,
-    )
+    embed = discord.Embed(description=slot_display, color=color)
+    view = SlotView(ctx.author.id, base_bet, line_choice)
+
+    if interaction:
+        await interaction.response.edit_message(embed=embed, view=view)
+    else:
+        await ctx.reply(embed=embed, view=view, mention_author=False)
 
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
 
@@ -2333,6 +2337,31 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         ctx.guild,
         discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
+
+
+# ==================================================
+# .slot コマンド本体
+# ==================================================
+@bot.command(name="slot")
+async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    base_bet = resolve_bet(ctx.author.id, bet_text)
+    if base_bet is None:
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
+        return
+
+    try:
+        line_choice = int(lines_text)
+        if line_choice not in (1, 2, 3):
+            raise ValueError
+    except ValueError:
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 2`", mention_author=False)
+        return
+
+    await execute_slot(ctx, base_bet, line_choice)
 
 
 # ==================================================

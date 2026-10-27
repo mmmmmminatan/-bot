@@ -2216,9 +2216,9 @@ async def slot_command(ctx, bet_text: str):
     right_bot = "<:emoji_22:1564565484307877988>"
 
     slot_display = (
-        f"　{left_top} |{'|'.join(displayed_rows[0])}| {right_top}\n"
-        f"　{left_mid} |{'|'.join(displayed_rows[1])}| {right_mid}\n"
-        f"　{left_bot} |{'|'.join(displayed_rows[2])}| {right_bot}\n"
+        f"{left_top} |{'|'.join(displayed_rows[0])}| {right_top}\n"
+        f"{left_mid} |{'|'.join(displayed_rows[1])}| {right_mid}\n"
+        f"{left_bot} |{'|'.join(displayed_rows[2])}| {right_bot}\n"
         f"bet：{emoji_bet}\n"
         f"won：{emoji_won}\n"
         f"まわしたひと：{ctx.author.mention}"

@@ -2191,13 +2191,18 @@ async def slot_command(ctx, bet_text: str):
         for row in grid
     ]
 
-    # 賭け金や収支の数字を絵文字に変換するための加工
-    bet_money_str = money(bet).replace("$", "$") # 例: $1,000
-    profit_money_str = profit_text               # 例: +$500 または -$500 など
+    profit_text = money_change(profit)
+    displayed_rows = [
+        [display_symbol(symbol, ctx.guild, settings) for symbol in row]
+        for row in grid
+    ]
 
-    # number_emoji関数を使って数字を絵文字に変換
+    # 賭け金と配当金（won）を絵文字化
+    bet_money_str = money(bet)      # 例: $1,000
+    won_money_str = money(payout)   # 例: $0 や $2,000
+
     emoji_bet = number_emoji(bet_money_str)
-    emoji_profit = number_emoji(profit_money_str)
+    emoji_won = number_emoji(won_money_str)
 
     slot_display = (
         f"\\_\\_\\_SLOT\\_\\_\\_\n"
@@ -2205,10 +2210,11 @@ async def slot_command(ctx, bet_text: str):
         f"|{'|'.join(displayed_rows[1])}|\n"
         f"|{'|'.join(displayed_rows[2])}|\n"
         f"￣￣￣￣￣￣\n"
-        f"賭け金：{emoji_bet}\n"
-        f"収支：{emoji_profit}\n"
+        f"bet：{emoji_bet}\n"
+        f"won：{emoji_won}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
+
 
 
     if payout > 0:

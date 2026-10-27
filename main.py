@@ -2167,6 +2167,29 @@ class SlotView(discord.ui.View):
 
 
 # ==================================================
+# スロット用 View (もう一度回すボタン)
+# ==================================================
+class SlotView(discord.ui.View):
+    def __init__(self, original_author_id, base_bet, line_choice):
+        super().__init__(timeout=180) # 3分間ボタン有効
+        self.original_author_id = original_author_id
+        self.base_bet = base_bet
+        self.line_choice = line_choice
+
+    @discord.ui.button(label="もう一度回す", style=discord.ButtonStyle.primary, emoji="🎰")
+    async def spin_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_author_id:
+            await interaction.response.send_message("他の人が回したスロのボタンは押せないよ！自分のコマンドで回してね。", ephemeral=True)
+            return
+
+        ctx = await interaction.client.get_context(interaction.message)
+        ctx.author = interaction.user
+        ctx.guild = interaction.guild
+
+        await execute_slot(ctx, self.base_bet, self.line_choice, interaction=interaction)
+
+
+# ==================================================
 # スロット実行の共通処理
 # ==================================================
 async def execute_slot(ctx, base_bet, line_choice, interaction=None):
@@ -2180,8 +2203,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(reason, mention_author=False)
         return
 
-    line_multipliers = {1: 1, 2: 3, 3: 5}
-    active_lines_count = line_multipliers[line_choice]
+    # 🔽 5レーン（5倍）の倍率設定を追加
+    line_multipliers = {1: 1, 2: 3, 3: 5, 5: 5}
+    active_lines_count = line_multipliers.get(line_choice, line_choice)
     total_bet = base_bet * active_lines_count
 
     if total_bet <= 0:
@@ -2249,11 +2273,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    # 5桁用の文字列に変換（例: 100 -> "00100"）
     bet_money_str = f"{total_bet:05d}"
     won_money_str = f"{total_payout:05d}"
 
-    # 5桁分の数字絵文字を取得
     b1 = number_emoji(bet_money_str[0])
     b2 = number_emoji(bet_money_str[1])
     b3 = number_emoji(bet_money_str[2])
@@ -2278,7 +2300,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     won_label_emoji = "<:emoji_27:1564590865165328455>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
     
-    # 5桁化したことで右側が広くなった分に合わせて、上のグレー枠を＋2個（13個に）調整
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
     slot_display = (
@@ -2288,8 +2309,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{w4}{w5}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )
-
-
 
     if total_payout > 0:
         color = discord.Color.green()
@@ -2360,15 +2379,16 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     base_bet = resolve_bet(ctx.author.id, bet_text)
     if base_bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 5`", mention_author=False)
         return
 
     try:
         line_choice = int(lines_text)
-        if line_choice not in (1, 2, 3):
+        # 🔽 5も入力できるようにチェックを拡張
+        if line_choice not in (1, 2, 3, 5):
             raise ValueError
     except ValueError:
-        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 2`", mention_author=False)
+        await ctx.reply("ライン数は `1`、`2`、`3`、または `5` で指定してね。\n例：`.slot 100 5`", mention_author=False)
         return
 
     await execute_slot(ctx, base_bet, line_choice)

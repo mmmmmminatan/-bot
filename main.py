@@ -2246,15 +2246,17 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    # 🔽 BETとWONは5桁、クレジット（残高）だけ11桁・カンマなし
+    # BETとWONは5桁のままでゼロ埋め
     bet_money_str = f"{total_bet:05d}"
     won_money_str = f"{total_payout:05d}"
-    bal_money_str = f"{new_balance:011d}"
+    
+    # クレジットは下位11桁のみを抽出し、11桁を超えた上位の数字はカット（カンスト部分は書かない）
+    bal_money_str = str(new_balance)[-11:]
 
     # それぞれの数字絵文字リストを取得
-    b = [number_emoji(ch) for ch in bet_money_str]  # 5桁分 (0〜4)
-    w = [number_emoji(ch) for ch in won_money_str]  # 5桁分 (0〜4)
-    c = [number_emoji(ch) for ch in bal_money_str]  # 11桁分 (0〜10)
+    b = [number_emoji(ch) for ch in bet_money_str]  # 5桁分
+    w = [number_emoji(ch) for ch in won_money_str]  # 5桁分
+    c = [number_emoji(ch) for ch in bal_money_str]  # 最大11桁分（足りない分やあふれた分を調整）
 
     left_top = "<:emoji_20:1564565447448199220>"
     left_mid = "<:emoji_22:1564567674162516089>"

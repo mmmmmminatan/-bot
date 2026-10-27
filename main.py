@@ -2277,7 +2277,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{gray_emoji}\n"
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}\n"
-        f"  {credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}      \n"
+        f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}      \n"
         f"{top_bottom_gray}"
     )
 

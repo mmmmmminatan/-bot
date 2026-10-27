@@ -2268,7 +2268,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     # 灰色プレートを綺麗に並べるためのパーツ（横に5個並べる想定）
     # ※もし灰色のパーツが1個で足りない場合は、必要分だけ並べて調整できます
-    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
+    top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
     # スロットの上下に灰色プレートを置き、右側に「メンション・BET・WON」を配置する
     slot_display = (

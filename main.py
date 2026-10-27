@@ -1457,6 +1457,10 @@ async def color_command(ctx, bet_text: str):
         await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
         return
 
+    bet = resolve_bet(ctx.author.id, bet_text)
+    if bet is None:
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.color 500` / `.color all`", mention_author=False)
+        return
 
     if bet <= 0:
         await ctx.reply("賭け金に使える残高がないよ。", mention_author=False)

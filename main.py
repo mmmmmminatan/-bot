@@ -2191,25 +2191,23 @@ async def slot_command(ctx, bet_text: str):
         for row in grid
     ]
 
-
-    # 賭け金と配当金（won）を絵文字化
     bet_money_str = money(bet)
     won_money_str = money(payout)
 
     emoji_bet = number_emoji(bet_money_str)
     emoji_won = number_emoji(won_money_str)
 
-    # 全角スペース（　）を使って全体を右側に寄せ、真ん中風に調整
     slot_display = (
-        f"　　__**✨ SLOT ✨**__\n\n"
-        f"　　|{'|'.join(displayed_rows[0])}|\n"
-        f"　　|{'|'.join(displayed_rows[1])}|\n"
-        f"　　|{'|'.join(displayed_rows[2])}|\n"
-        f"　　￣￣￣￣￣￣\n\n"
+        f"　\\_\\_\\_SLOT\\_\\_\\_\n"
+        f"　|{'|'.join(displayed_rows[0])}|\n"
+        f"　|{'|'.join(displayed_rows[1])}|\n"
+        f"　|{'|'.join(displayed_rows[2])}|\n"
+        f"　￣￣￣￣￣￣\n"
         f"bet：{emoji_bet}\n"
         f"won：{emoji_won}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
+
 
     if payout > 0:
         color = discord.Color.green()

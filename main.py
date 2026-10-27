@@ -2205,12 +2205,20 @@ async def slot_command(ctx, bet_text: str):
     emoji_bet = number_emoji(bet_money_str)
     emoji_won = number_emoji(won_money_str)
 
+    # 左右の装飾に使うカスタム絵文字を設定
+    # ※位置や上下の組み合わせに合わせて変えられます
+    left_top = "<:emoji_20:1564565447448199220>"
+    left_mid = "<:emoji_22:1564567674162516089>"
+    left_bot = "<:emoji_20:1564565432327741440>"
+
+    right_top = "<:emoji_21:1564565471817244832>"
+    right_mid = "<:emoji_22:1564567647927017522>"
+    right_bot = "<:emoji_22:1564565484307877988>"
+
     slot_display = (
-        f"　\\_\\_\\_SLOT\\_\\_\\_\n"
-        f"　|{'|'.join(displayed_rows[0])}|\n"
-        f"　|{'|'.join(displayed_rows[1])}|\n"
-        f"　|{'|'.join(displayed_rows[2])}|\n"
-        f"　￣￣￣￣￣￣\n"
+        f"　{left_top} |{'|'.join(displayed_rows[0])}| {right_top}\n"
+        f"　{left_mid} |{'|'.join(displayed_rows[1])}| {right_mid}\n"
+        f"　{left_bot} |{'|'.join(displayed_rows[2])}| {right_bot}\n"
         f"bet：{emoji_bet}\n"
         f"won：{emoji_won}\n"
         f"まわしたひと：{ctx.author.mention}"

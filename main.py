@@ -2234,12 +2234,18 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         for row in grid
     ]
 
-    # 賭け金と獲得額をそれぞれ3桁の数字絵文字に変換
+    # 賭け金と獲得額をそれぞれ3桁の文字列に変換
     bet_money_str = f"{total_bet:03d}"
     won_money_str = f"{total_payout:03d}"
 
-    emoji_bet = number_emoji(bet_money_str)
-    emoji_won = number_emoji(won_money_str)
+    # それぞれ1桁ずつに分解して、個別のカスタム絵文字（number_emoji）に変換する
+    b1 = number_emoji(bet_money_str[0])
+    b2 = number_emoji(bet_money_str[1])
+    b3 = number_emoji(bet_money_str[2])
+
+    w1 = number_emoji(won_money_str[0])
+    w2 = number_emoji(won_money_str[1])
+    w3 = number_emoji(won_money_str[2])
 
     # 左右のプレート絵文字の定義
     left_top = "<:emoji_20:1564565447448199220>"
@@ -2250,18 +2256,18 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     right_mid = "<:emoji_22:1564567647927017522>"
     right_bot = "<:emoji_22:1564565484307877988>"
 
-    # 上下ヘッダー・フッター用のプレート絵文字
+    # BET行・WON行用のパーツ
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
-    gray_emoji = "<:emoji_25:1564584610820657203>"
     won_label_emoji = "<:emoji_27:1564590865165328455>"
+    gray_emoji = "<:emoji_25:1564584610820657203>"
 
-    # BET行・WON行にもスロットと同じ縦線（|）を入れて形を綺麗に揃える
+    # スロット全体を「5列（左・数字3つ・右）」の完全な格子状レイアウトで統一
     slot_display = (
-        f"{bet_label_emoji}|{emoji_bet[0]}|{emoji_bet[1]}|{emoji_bet[2]}|{gray_emoji}\n"
+        f"{bet_label_emoji} |{b1}|{b2}|{b3}| {gray_emoji}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}\n"
-        f"{won_label_emoji}|{emoji_won[0]}|{emoji_won[1]}|{emoji_won[2]}|{gray_emoji}\n"
+        f"{won_label_emoji} |{w1}|{w2}|{w3}| {gray_emoji}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
 

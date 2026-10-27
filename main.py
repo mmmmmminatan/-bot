@@ -106,16 +106,16 @@ def number_emoji(value):
 def money(amount):
     amount = int(amount)
     if amount < 0:
-        return f"-${number_emoji(f'{abs(amount):,}')}"
-    return f"${number_emoji(f'{amount:,}')}"
+        return f"-${abs(amount):,}"
+    return f"${amount:,}"
 
 def money_change(amount):
     amount = int(amount)
     if amount > 0:
-        return f"+${number_emoji(f'{amount:,}')}"
+        return f"+${amount:,}"
     if amount < 0:
-        return f"-${number_emoji(f'{abs(amount):,}')}"
-    return f"±${number_emoji('0')}"
+        return f"-${abs(amount):,}"
+    return "±$0"
 
 def parse_money_text(value):
     value = str(value).strip()

@@ -2143,7 +2143,6 @@ async def all_cash_command(interaction: discord.Interaction):
 
 # ==================================================
 # 1. スロット用 View (もう一度回すボタン)
-# ※必ず execute_slot より上に定義してください！
 # ==================================================
 class SlotView(discord.ui.View):
     def __init__(self, original_author_id, base_bet, line_choice):
@@ -2154,7 +2153,6 @@ class SlotView(discord.ui.View):
 
     @discord.ui.button(label="もう一度回す", style=discord.ButtonStyle.primary, emoji="🎰")
     async def spin_again(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ボタンを押した人が本人かチェック
         if interaction.user.id != self.original_author_id:
             await interaction.response.send_message("他の人が回したスロのボタンは押せないよ！自分のコマンドで回してね。", ephemeral=True)
             return
@@ -2163,7 +2161,6 @@ class SlotView(discord.ui.View):
         ctx.author = interaction.user
         ctx.guild = interaction.guild
 
-        # スロットを再実行
         await execute_slot(ctx, self.base_bet, self.line_choice, interaction=interaction)
 
 
@@ -2181,7 +2178,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(reason, mention_author=False)
         return
 
-    # 掛け金の計算: (base_bet) × (line_choice)
     active_lines_count = line_choice
     total_bet = base_bet * line_choice
 
@@ -2250,21 +2246,15 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    # 5桁用の数字絵文字を取得
-    bet_money_str = f"{total_bet:05d}"
-    won_money_str = f"{total_payout:05d}"
+    # 🔽 マックス11桁・カンマなし（ゼロ埋め表示）
+    bet_money_str = f"{total_bet:011d}"
+    won_money_str = f"{total_payout:011d}"
+    bal_money_str = f"{new_balance:011d}"
 
-    b1 = number_emoji(bet_money_str[0])
-    b2 = number_emoji(bet_money_str[1])
-    b3 = number_emoji(bet_money_str[2])
-    b4 = number_emoji(bet_money_str[3])
-    b5 = number_emoji(bet_money_str[4])
-
-    w1 = number_emoji(won_money_str[0])
-    w2 = number_emoji(won_money_str[1])
-    w3 = number_emoji(won_money_str[2])
-    w4 = number_emoji(won_money_str[3])
-    w5 = number_emoji(won_money_str[4])
+    # 11桁分の数字絵文字をそれぞれ取得
+    b = [number_emoji(c) for c in bet_money_str]
+    w = [number_emoji(c) for c in won_money_str]
+    c = [number_emoji(c) for c in bal_money_str]
 
     left_top = "<:emoji_20:1564565447448199220>"
     left_mid = "<:emoji_22:1564567674162516089>"
@@ -2276,15 +2266,18 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
 
     bet_label_emoji = "<:emoji_24:1564584196926611516>"
     won_label_emoji = "<:emoji_27:1564590865165328455>"
+    credit_label_emoji = "<:emoji_28:1564643181700849765>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
     
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
+    # 🛠️ スロット画面のレイアウト（左下にクレジット＋残高11桁を表示）
     slot_display = (
         f"{top_bottom_gray}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b1}{b2}{b3}{b4}{b5}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w1}{w2}{w3}{w4}{w5}{gray_emoji}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{b[5]}{b[6]}{b[7]}{b[8]}{b[9]}{b[10]}{gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{w[5]}{w[6]}{w[7]}{w[8]}{w[9]}{w[10]}{gray_emoji}\n"
+        f"  {credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}      \n"
         f"{top_bottom_gray}"
     )
 
@@ -2298,7 +2291,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     embed = discord.Embed(description=slot_display, color=color)
     view = SlotView(ctx.author.id, base_bet, line_choice)
 
-    # インタラクション（ボタン押し）からの実行か、コマンド入力からの実行かを分岐
     if interaction:
         await interaction.response.edit_message(embed=embed, view=view)
     else:
@@ -2358,7 +2350,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     base_bet = resolve_bet(ctx.author.id, bet_text)
     if base_bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 100 3`", mention_author=False)
+        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 3 3`", mention_author=False)
         return
 
     try:
@@ -2366,7 +2358,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         if line_choice not in (1, 2, 3):
             raise ValueError
     except ValueError:
-        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 100 3`", mention_author=False)
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 3 3`", mention_author=False)
         return
 
     await execute_slot(ctx, base_bet, line_choice)

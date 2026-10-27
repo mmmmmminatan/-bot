@@ -2238,7 +2238,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     bet_money_str = f"{total_bet:03d}"
     won_money_str = f"{total_payout:03d}"
 
-    # それぞれ1桁ずつに分解して、個別のカスタム絵文字（number_emoji）に変換する
+    # それぞれ1桁ずつに分解して個別の絵文字に変換
     b1 = number_emoji(bet_money_str[0])
     b2 = number_emoji(bet_money_str[1])
     b3 = number_emoji(bet_money_str[2])
@@ -2261,58 +2261,19 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     won_label_emoji = "<:emoji_27:1564590865165328455>"
     gray_emoji = "<:emoji_25:1564584610820657203>"
 
-    # スロット全体を「5列（左・数字3つ・右）」の完全な格子状レイアウトで統一
+    # 【構成】
+    # 1. 出目（3行）
+    # 2. BET行（BET絵文字 ＋ 数字3つ ＋ 灰色絵文字 ※数字間の線なし）
+    # 3. WON行（WON絵文字 ＋ 数字3つ ＋ 灰色絵文字 ※数字間の線なし）
     slot_display = (
-        f"{bet_label_emoji} |{b1}|{b2}|{b3}| {gray_emoji}\n"
         f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
         f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}\n"
-        f"{won_label_emoji} |{w1}|{w2}|{w3}| {gray_emoji}\n"
+        f"{bet_label_emoji} {b1}{b2}{b3} {gray_emoji}\n"
+        f"{won_label_emoji} {w1}{w2}{w3} {gray_emoji}\n"
         f"まわしたひと：{ctx.author.mention}"
     )
 
-    if total_payout > 0:
-        color = discord.Color.green()
-    elif profit == 0:
-        color = discord.Color.gold()
-    else:
-        color = discord.Color.red()
-
-    await ctx.reply(
-        embed=discord.Embed(description=slot_display, color=color),
-        mention_author=False,
-    )
-
-    displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
-
-    log_data = {
-        "type": "slot",
-        "timestamp": datetime.now(timezone.utc).timestamp(),
-        "guild_id": ctx.guild.id,
-        "user_id": ctx.author.id,
-        "username": str(ctx.author),
-        "bet": total_bet,
-        "payout": total_payout,
-        "profit": profit,
-        "balance": new_balance,
-        "grid": grid,
-        "line_choice": line_choice,
-        "emoji_mode": settings.get("emoji_mode", "unicode"),
-    }
-
-    if house_result is not None:
-        log_data["house_change"] = house_result["change"]
-        log_data["house_balance"] = house_result["after"]
-
-    record_slot(log_data)
-
-    log_description = (
-        f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-        f"選択ライン：{line_choice} （{active_lines_count}ライン）\n"
-        f"賭け金（総額）：**{money(total_bet)}**\n配当：**{money(total_payout)}**\n"
-        f"収支：**{profit_text}**\n残高：**{money(new_balance)}**\n\n"
-        f"{displayed_grid}"
-    )
 
     if house_result is not None:
         log_description += (

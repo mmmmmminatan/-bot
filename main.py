@@ -2264,7 +2264,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
-    bet_money_str = f"{total_bet:05d}"
+        # 3桁制限とゼロ埋め（3桁を超える場合は下3桁にするなどの処理）
+    bet_money_str = f"{total_bet:03d}"[-3:]
     won_money_str = f"{total_payout:05d}"
     bal_money_str = str(new_balance)[-11:]
 
@@ -2287,12 +2288,14 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
+    # 出目の下にBET、その右側にWONを配置したレイアウト
     slot_display = (
         f"{top_bottom_gray}\n"
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}\n"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {ctx.author.mention}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}\n"
         f"{top_bottom_gray}\n"
+        f"{bet_label_emoji}{b[0]}{b[1]}{b[2]} {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}\n"
         f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )

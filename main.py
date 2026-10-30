@@ -2402,25 +2402,31 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
 
 # ==================================================
-# .Payment 残高の増減
+# /payment 残高の増減（スラッシュコマンド版）
 # ==================================================
 
-@bot.command(name="Payment", aliases=["pay", "送金"])
-async def payment_command(ctx, member: discord.Member, amount: int):
-    if not is_owner_user(ctx.author):
-        await ctx.reply("このコマンドを使えるのは指定されたオーナー本人だけだよ。", mention_author=False)
+@bot.tree.command(
+    name="payment",
+    description="指定したメンバーの残高を増減させる（オーナー本人専用）",
+)
+@app_commands.describe(
+    member="対象のメンバー",
+    amount="変更する金額（プラスまたはマイナス）",
+)
+async def payment_command(interaction: discord.Interaction, member: discord.Member, amount: int):
+    if not await require_owner(interaction):
         return
 
-    if ctx.guild is None:
-        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+    if interaction.guild is None:
+        await interaction.response.send_message("このコマンドはサーバー内で使ってね。", ephemeral=True)
         return
 
     if member.bot:
-        await ctx.reply("Botには送金できないよ。", mention_author=False)
+        await interaction.response.send_message("Botには送金できないよ。", ephemeral=True)
         return
 
     if amount == 0:
-        await ctx.reply("金額は0以外にしてね。", mention_author=False)
+        await interaction.response.send_message("金額は0以外にしてね。", ephemeral=True)
         return
 
     before = get_balance(member.id)
@@ -2432,38 +2438,40 @@ async def payment_command(ctx, member: discord.Member, amount: int):
         description=(
             f"対象：{member.mention}\n変更額：**{money_change(amount)}**\n"
             f"変更前：**{money(before)}**\n変更後：**{money(after)}**\n"
-            f"実行者：{ctx.author.mention}"
+            f"実行者：{interaction.user.mention}"
         ),
         color=discord.Color.blurple(),
     )
-    await ctx.reply(embed=embed, mention_author=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
     record_coin({
         "type": "payment",
         "timestamp": datetime.now(timezone.utc).timestamp(),
-        "guild_id": ctx.guild.id,
+        "guild_id": interaction.guild.id,
         "user_id": member.id,
         "username": str(member),
-        "actor_id": ctx.author.id,
-        "actor_name": str(ctx.author),
+        "actor_id": interaction.user.id,
+        "actor_name": str(interaction.user),
         "amount": amount,
         "before": before,
         "after": after,
     })
 
     await send_coin_log(
-        ctx.guild,
+        interaction.guild,
         discord.Embed(
             title="💸 Paymentログ",
             description=(
                 f"対象：{member.mention} (`{member.id}`)\n"
-                f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                f"実行者：{interaction.user.mention} (`{interaction.user.id}`)\n"
                 f"変更額：**{money_change(amount)}**\n"
                 f"変更前：**{money(before)}**\n変更後：**{money(after)}**"
             ),
             color=discord.Color.blurple(),
         ),
     )
+
 
 # ==================================================
 # .help / .mhelp

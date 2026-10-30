@@ -2264,6 +2264,12 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         for row in grid
     ]
 
+    # ジャックポットのプール金額を数字絵文字に変換
+    jp_pool_val = get_jackpot_pool()
+    jp_pool_str = f"{jp_pool_val}"
+    jp_nums = [number_emoji(ch) for ch in jp_pool_str]
+    jp_display_parts = "<:emoji_20:1565598463154982972>" + "".join(jp_nums)
+
     # 3桁制限とゼロ埋め
     bet_money_str = f"{total_bet:03d}"[-3:]
     won_money_str = f"{total_payout:05d}"
@@ -2287,15 +2293,17 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     gray_emoji = "<:emoji_25:1564584610820657203>"
     
     top_bottom_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
+    divider_gray = f"{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}{gray_emoji}"
 
-    # メンションをなくし、指定された位置にグレーを配置したレイアウト
+    # スロット盤面の右側（青線部分）にJP絵文字と数値を配置し、指定された箇所にグレーを配置
     slot_display = (
         f"{top_bottom_gray}\n"
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}\n"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top} {gray_emoji}\n"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid} {jp_display_parts}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot} {gray_emoji}\n"
         f"{top_bottom_gray}\n"
         f"{bet_label_emoji}{b[0]}{b[1]}{b[2]}{gray_emoji}{won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}{gray_emoji}\n"
+        f"{divider_gray}\n"
         f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\n"
         f"{top_bottom_gray}"
     )

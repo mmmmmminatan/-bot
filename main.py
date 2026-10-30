@@ -1,4 +1,4 @@
-import asyncio
+　import asyncio
 import json
 import os
 import random
@@ -33,12 +33,13 @@ COIN_LOGS_FILE = Path("coin_logs.json")
 SETTINGS_FILE = Path("server_settings.json")
 DAILY_FILE = Path("daily_logs.json")
 GUESS_FILE = Path("guess_data.json")
+JACKPOT_FILE = Path("jackpot_data.json")
 
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
 JST = timezone(timedelta(hours=9))
 
-SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣", "💣"]  # 💣を追加
+SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣", "💣", "JP"]
 
 
 PAYOUTS = {
@@ -47,7 +48,8 @@ PAYOUTS = {
     "🔔": 5,
     "⭐": 10,
     "7️⃣": 50,
-    "💣": 20,  # ← 💣の配当倍率を追加
+    "💣": 20,
+    "JP": 100,
 }
 
 
@@ -57,14 +59,14 @@ CUSTOM_EMOJI_NAMES = {
     "🔔": "emoji_14",
     "🍒": "emoji_15",
     "7️⃣": "emoji_16",
-    "💣": "emoji_19",  # ← カスタム絵文字名を追加
+    "💣": "emoji_19",
 }
 
 
 LANE_PATTERNS = [
-    ["🍒", "🍋", "💣", "🔔", "7️⃣", "⭐️"],
+    ["🍒", "🍋", "💣", "🔔", "7️⃣", "JP"],
     ["⭐", "🍒", "💣", "🍋", "🔔", "7️⃣"],
-    ["💣", "7️⃣", "🍋", "⭐", "🍒", "🔔"],
+    ["💣", "7️⃣", "🍋", "JP", "🍒", "🔔"],
 ]
 
 
@@ -74,7 +76,8 @@ DEFAULT_WEIGHTS = {
     "⭐": 20,
     "🔔": 20,
     "7️⃣": 20,
-    "💣": 20,  # ← 出現比率を追加（合計が気になる場合は他の数値を調整してもOKです）
+    "💣": 20,
+    "JP": 5,
 }
 
 
@@ -162,10 +165,27 @@ coin_logs = load_json(COIN_LOGS_FILE, [])
 server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
+jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
 AUTO_COIN_RECOVERY_DONE = False
+
+def get_jackpot_pool():
+    if "pool" not in jackpot_data:
+        jackpot_data["pool"] = 10000
+        save_json(JACKPOT_FILE, jackpot_data)
+    return int(jackpot_data["pool"])
+
+def add_jackpot_pool(amount):
+    current = get_jackpot_pool()
+    jackpot_data["pool"] = current + int(amount)
+    save_json(JACKPOT_FILE, jackpot_data)
+    return jackpot_data["pool"]
+
+def reset_jackpot_pool(amount=10000):
+    jackpot_data["pool"] = int(amount)
+    save_json(JACKPOT_FILE, jackpot_data)
 
 def get_balance(user_id):
     user_id = str(user_id)
@@ -303,6 +323,8 @@ def find_custom_emoji(guild, symbol):
     return None
 
 def display_symbol(symbol, guild, settings):
+    if symbol == "JP":
+        return "🟥"
     if settings.get("emoji_mode", "unicode") == "custom":
         custom_emoji = find_custom_emoji(guild, symbol)
         if custom_emoji is not None:
@@ -324,7 +346,8 @@ def grid_text(grid, guild=None, settings=None):
         ]
         lines.append("|" + "|".join(displayed_row) + "|")
 
-    return "\n".join(lines)
+    return "
+".join(lines)
 
 
 def get_display_mode_name(settings):
@@ -337,7 +360,9 @@ def get_custom_emoji_status(guild):
     missing = []
 
     for symbol in SYMBOLS:
-        emoji_name = CUSTOM_EMOJI_NAMES[symbol]
+        if symbol == "JP":
+            continue
+        emoji_name = CUSTOM_EMOJI_NAMES.get(symbol)
         emoji = find_custom_emoji(guild, symbol)
         if emoji:
             found.append(f"{symbol} → {emoji_name}")
@@ -347,7 +372,8 @@ def get_custom_emoji_status(guild):
     return found, missing
 
 def get_weights_text(weights):
-    return "\n".join(
+    return "
+".join(
         f"{symbol}：{int(weights.get(symbol, 0))}"
         for symbol in SYMBOLS
     )
@@ -521,7 +547,8 @@ async def on_command_error(ctx, error):
 
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.reply(
-            f"引数が足りないよ。\nコマンド: `{ctx.prefix}{ctx.command}`",
+            f"引数が足りないよ。
+コマンド: `{ctx.prefix}{ctx.command}`",
             mention_author=False,
         )
         return
@@ -834,9 +861,12 @@ class GuessConfigModal(discord.ui.Modal):
             return
 
         await interaction.response.send_message(
-            "設定を保存したよ！\n"
-            f"ゲーム：{'数字当て' if self.parent_view.mode == 'number' else '言葉当て'}\n"
-            f"賞金：**{money(reward)}**\n"
+            "設定を保存したよ！
+"
+            f"ゲーム：{'数字当て' if self.parent_view.mode == 'number' else '言葉当て'}
+"
+            f"賞金：**{money(reward)}**
+"
             "設定パネルの「スタート」を押してね。",
             ephemeral=True,
         )
@@ -877,7 +907,8 @@ class GuessModeSelect(discord.ui.Select):
         view.configured = False
 
         await interaction.response.send_message(
-            f"{'数字当て' if view.mode == 'number' else '言葉当て'}を選択したよ。\n"
+            f"{'数字当て' if view.mode == 'number' else '言葉当て'}を選択したよ。
+"
             "「正解・賞金を設定」から内容を入力してね。",
             ephemeral=True,
         )
@@ -947,8 +978,10 @@ class GuessSetupView(discord.ui.View):
             await set_guess_channel_locked(self.channel, False)
         except Exception as error:
             await interaction.response.send_message(
-                f"チャンネルを開けなかったよ。\n"
-                f"Botの権限を確認してね。\n`{error}`",
+                f"チャンネルを開けなかったよ。
+"
+                f"Botの権限を確認してね。
+`{error}`",
                 ephemeral=True,
             )
             return
@@ -973,18 +1006,24 @@ class GuessSetupView(discord.ui.View):
 
         await interaction.response.edit_message(
             content=(
-                "✅ **ゲームを開始したよ！**\n"
-                f"回答チャンネル：{self.channel.mention}\n"
-                f"ゲーム：{'数字当て' if self.mode == 'number' else '言葉当て'}\n"
-                f"賞金：**{money(self.reward)}**\n"
+                "✅ **ゲームを開始したよ！**
+"
+                f"回答チャンネル：{self.channel.mention}
+"
+                f"ゲーム：{'数字当て' if self.mode == 'number' else '言葉当て'}
+"
+                f"賞金：**{money(self.reward)}**
+"
                 "回答チャンネルで答えを送信してね。"
             ),
             view=self,
         )
 
         await self.channel.send(
-            f"🎮 **数字・言葉当てゲーム開始！**\n"
-            f"賞金：**{money(self.reward)}**\n"
+            f"🎮 **数字・言葉当てゲーム開始！**
+"
+            f"賞金：**{money(self.reward)}**
+"
             + (
                 f"範囲：**{self.minimum}〜{self.maximum}**"
                 if self.mode == "number"
@@ -1074,21 +1113,30 @@ async def process_guess_message(message):
             traceback.print_exc()
 
         await message.channel.send(
-            f"🎉 **正解！**\n"
-            f"正解者：{message.author.mention}\n"
-            f"賞金：**{money_change(reward)}**\n"
+            f"🎉 **正解！**
+"
+            f"正解者：{message.author.mention}
+"
+            f"賞金：**{money_change(reward)}**
+"
             f"現在の残高：**{money(after)}**"
         )
 
         log_embed = discord.Embed(
             title="🎉 数字・言葉当てゲーム報酬ログ",
             description=(
-                f"正解者：{message.author.mention} (`{message.author.id}`)\n"
-                f"回答チャンネル：{message.channel.mention}\n"
-                f"ゲーム種類：{'数字当て' if game.get('mode') == 'number' else '言葉当て'}\n"
-                f"正解：`{answer}`\n"
-                f"賞金：**{money_change(reward)}**\n"
-                f"変更前：**{money(before)}**\n"
+                f"正解者：{message.author.mention} (`{message.author.id}`)
+"
+                f"回答チャンネル：{message.channel.mention}
+"
+                f"ゲーム種類：{'数字当て' if game.get('mode') == 'number' else '言葉当て'}
+"
+                f"正解：`{answer}`
+"
+                f"賞金：**{money_change(reward)}**
+"
+                f"変更前：**{money(before)}**
+"
                 f"変更後：**{money(after)}**"
             ),
             color=discord.Color.green(),
@@ -1135,8 +1183,10 @@ async def guess_setup_command(interaction: discord.Interaction):
         await set_guess_channel_locked(channel, True)
     except Exception as error:
         await interaction.response.send_message(
-            f"回答チャンネルをロックできなかったよ。\n"
-            f"Botに「チャンネルの管理」権限があるか確認してね。\n`{error}`",
+            f"回答チャンネルをロックできなかったよ。
+"
+            f"Botの権限を確認してね。
+`{error}`",
             ephemeral=True,
         )
         return
@@ -1152,10 +1202,15 @@ async def guess_setup_command(interaction: discord.Interaction):
     view = GuessSetupView(interaction.user.id, channel)
 
     await interaction.response.send_message(
-        f"🎮 **数字・言葉当てゲーム設定**\n"
-        f"回答チャンネル：{channel.mention}\n"
-        "ゲーム種類を選び、「正解・賞金を設定」を押してね。\n"
-        "設定後に「スタート」を押すと回答受付が始まるよ。\n\n"
+        f"🎮 **数字・言葉当てゲーム設定**
+"
+        f"回答チャンネル：{channel.mention}
+"
+        "ゲーム種類を選び、「正解・賞金を設定」を押してね。
+"
+        "設定後に「スタート」を押すと回答受付が始まるよ。
+
+"
         "※設定中は回答チャンネルをロックしているよ。",
         view=view,
         ephemeral=True,
@@ -1200,8 +1255,10 @@ async def guess_stop_command(interaction: discord.Interaction):
             await set_guess_channel_locked(channel, True)
         except Exception as error:
             await interaction.response.send_message(
-                "ゲームは停止したけど、チャンネルをロックできなかったよ。\n"
-                f"Botの権限を確認してね。\n`{error}`",
+                "ゲームは停止したけど、チャンネルをロックできなかったよ。
+"
+                f"Botの権限を確認してね。
+`{error}`",
                 ephemeral=True,
             )
             return
@@ -1284,7 +1341,8 @@ async def daily_command(ctx):
         return
 
     await ctx.reply(
-        f"{streak}日目\n増やした金額：{money_change(reward)}",
+        f"{streak}日目
+増やした金額：{money_change(reward)}",
         mention_author=False,
     )
 
@@ -1292,14 +1350,34 @@ async def daily_command(ctx):
     if channel is not None:
         try:
             await channel.send(
-                f"ログインボーナス\n"
-                f"やった人：{ctx.author.mention}\n"
-                f"増やした金額：{money_change(reward)}\n"
+                f"ログインボーナス
+"
+                f"やった人：{ctx.author.mention}
+"
+                f"増やした金額：{money_change(reward)}
+"
                 f"何日目か：{streak}日目"
             )
         except Exception:
             print("[DAILY LOG SEND ERROR]")
             traceback.print_exc()
+
+# ==================================================
+# .jackpot ジャックポット確認コマンド
+# ==================================================
+
+@bot.command(name="jackpot", aliases=["jp", "ジャックポット"])
+async def jackpot_command(ctx):
+    pool = get_jackpot_pool()
+    embed = discord.Embed(
+        title="🎰 JACKPOT POOL 🎰",
+        description=f"現在のジャックポット積立金:
+**💰 {money(pool)}**
+
+*(スロットを回すたび賭け金の10%が蓄積され、🟥 が揃うと総取りできるよ！)*",
+        color=discord.Color.gold(),
+    )
+    await ctx.reply(embed=embed, mention_author=False)
 
 # ==================================================
 # .color 2択ゲーム
@@ -1331,13 +1409,17 @@ class ColorBetView(discord.ui.View):
             payout = self.bet * 2
             new_balance = current_balance + payout
             profit = self.bet
-            result_text = f"🎉 **当たり！**\n正解：{winning_color}\n配当：{money_change(payout)}"
+            result_text = f"🎉 **当たり！**
+正解：{winning_color}
+配当：{money_change(payout)}"
             color = discord.Color.green()
         else:
             payout = 0
             new_balance = current_balance
             profit = -self.bet
-            result_text = f"💸 **ハズレ！**\n正解：{winning_color}\n損失：{money_change(-self.bet)}"
+            result_text = f"💸 **ハズレ！**
+正解：{winning_color}
+損失：{money_change(-self.bet)}"
             color = discord.Color.red()
 
         set_balance(interaction.user.id, new_balance)
@@ -1355,16 +1437,25 @@ class ColorBetView(discord.ui.View):
         house_text = ""
         if house_result is not None:
             house_text = (
-                f"\n胴元の残高変動：{money_change(house_result['change'])}"
-                f"\n胴元の残高：{money(house_result['after'])}"
+                f"
+胴元の残高変動：{money_change(house_result['change'])}"
+                f"
+胴元の残高：{money(house_result['after'])}"
             )
 
         embed = discord.Embed(
             title="🌝🌚 2択ゲーム",
             description=(
-                f"プレイヤー：{interaction.user.mention}\n"
-                f"選んだ色：{chosen_color}\n\n{result_text}\n\n"
-                f"賭け金：{money(self.bet)}\n収支：{money_change(profit)}\n"
+                f"プレイヤー：{interaction.user.mention}
+"
+                f"選んだ色：{chosen_color}
+
+{result_text}
+
+"
+                f"賭け金：{money(self.bet)}
+収支：{money_change(profit)}
+"
                 f"残高：{money(new_balance)}{house_text}"
             ),
             color=color,
@@ -1390,17 +1481,26 @@ class ColorBetView(discord.ui.View):
 
         if interaction.guild is not None:
             description = (
-                f"ユーザー：{interaction.user.mention} (`{interaction.user.id}`)\n"
-                f"選択：{chosen_color}\n正解：{winning_color}\n"
-                f"結果：{'当たり' if won else 'ハズレ'}\n"
-                f"賭け金：**{money(self.bet)}**\n配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n残高：**{money(new_balance)}**"
+                f"ユーザー：{interaction.user.mention} (`{interaction.user.id}`)
+"
+                f"選択：{chosen_color}
+正解：{winning_color}
+"
+                f"結果：{'当たり' if won else 'ハズレ'}
+"
+                f"賭け金：**{money(self.bet)}**
+配当：**{money(payout)}**
+"
+                f"収支：**{money_change(profit)}**
+残高：**{money(new_balance)}**"
             )
 
             if house_result is not None:
                 description += (
-                    f"\n胴元の変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
+                    f"
+胴元の変動：**{money_change(house_result['change'])}**"
+                    f"
+胴元の残高：**{money(house_result['after'])}**"
                 )
 
             await send_coin_log(
@@ -1435,9 +1535,13 @@ class ColorBetView(discord.ui.View):
         embed = discord.Embed(
             title="🌝🌚 2択ゲーム",
             description=(
-                f"プレイヤー：{self.ctx.author.mention}\n\n"
-                "時間切れ！今回はゲームをキャンセルしたよ。\n"
-                f"賭け金 **{money(self.bet)}** を返したよ。\n"
+                f"プレイヤー：{self.ctx.author.mention}
+
+"
+                "時間切れ！今回はゲームをキャンセルしたよ。
+"
+                f"賭け金 **{money(self.bet)}** を返したよ。
+"
                 f"残高：**{money(refunded_balance)}**"
             ),
             color=discord.Color.gold(),
@@ -1466,9 +1570,12 @@ class ColorBetView(discord.ui.View):
                 discord.Embed(
                     title="🌝🌚 2択ゲーム返金ログ",
                     description=(
-                        f"ユーザー：{self.ctx.author.mention} (`{self.ctx.author.id}`)\n"
-                        "理由：選択時間切れ\n"
-                        f"返金額：**{money(self.bet)}**\n"
+                        f"ユーザー：{self.ctx.author.mention} (`{self.ctx.author.id}`)
+"
+                        "理由：選択時間切れ
+"
+                        f"返金額：**{money(self.bet)}**
+"
                         f"残高：**{money(refunded_balance)}**"
                     ),
                     color=discord.Color.gold(),
@@ -1483,7 +1590,8 @@ async def color_command(ctx, bet_text: str):
 
     bet = resolve_bet(ctx.author.id, bet_text)
     if bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.color 500` / `.color all`", mention_author=False)
+        await ctx.reply("賭け金は数字か `all` で指定してね。
+例：`.color 500` / `.color all`", mention_author=False)
         return
 
     if bet <= 0:
@@ -1499,7 +1607,8 @@ async def color_command(ctx, bet_text: str):
 
     current_balance = get_balance(ctx.author.id)
     if bet > current_balance:
-        await ctx.reply(f"残高が足りないよ！\n残高：{money(current_balance)}", mention_author=False)
+        await ctx.reply(f"残高が足りないよ！
+残高：{money(current_balance)}", mention_author=False)
         return
 
     set_balance(ctx.author.id, current_balance - bet)
@@ -1507,10 +1616,17 @@ async def color_command(ctx, bet_text: str):
     embed = discord.Embed(
         title="🌝🌚 2択ゲーム",
         description=(
-            f"プレイヤー：{ctx.author.mention}\n賭け金：**{money(bet)}**\n\n"
-            "🌝 表か 🌚 裏を選んでね！\n"
-            "当たりなら賭け金込みで2倍が戻るよ。\n"
-            "ハズレなら賭け金を失うよ。\n\n"
+            f"プレイヤー：{ctx.author.mention}
+賭け金：**{money(bet)}**
+
+"
+            "🌝 表か 🌚 裏を選んでね！
+"
+            "当たりなら賭け金込みで2倍が戻るよ。
+"
+            "ハズレなら賭け金を失うよ。
+
+"
             "60秒以内に選んでね。時間切れは返金されるよ。"
         ),
         color=discord.Color.blurple(),
@@ -1632,9 +1748,12 @@ class DiceBetView(discord.ui.View):
             profit = -self.bet
             new_balance = current_balance
             result_text = (
-                "💸 **負け！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
+                "💸 **負け！**
+"
+                f"選んだ色：{DICE_COLORS[chosen_color]['name']}
+"
+                f"一致した数：{count}個
+"
                 f"損失：**{money(self.bet)}**"
             )
             embed_color = discord.Color.red()
@@ -1644,9 +1763,12 @@ class DiceBetView(discord.ui.View):
             profit = payout - self.bet
             new_balance = current_balance + payout
             result_text = (
-                "🎉 **当たり！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
+                "🎉 **当たり！**
+"
+                f"選んだ色：{DICE_COLORS[chosen_color]['name']}
+"
+                f"一致した数：{count}個
+"
                 f"配当：**{money(payout)}**"
             )
             embed_color = discord.Color.green()
@@ -1656,9 +1778,12 @@ class DiceBetView(discord.ui.View):
             profit = payout - self.bet
             new_balance = current_balance + payout
             result_text = (
-                "🎉 **大当たり！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
+                "🎉 **大当たり！**
+"
+                f"選んだ色：{DICE_COLORS[chosen_color]['name']}
+"
+                f"一致した数：{count}個
+"
                 f"配当：**{money(payout)}**"
             )
             embed_color = discord.Color.green()
@@ -1678,18 +1803,28 @@ class DiceBetView(discord.ui.View):
         house_text = ""
         if house_result is not None:
             house_text = (
-                f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                f"\n胴元の残高：**{money(house_result['after'])}**"
+                f"
+胴元の残高変動：**{money_change(house_result['change'])}**"
+                f"
+胴元の残高：**{money(house_result['after'])}**"
             )
 
         embed = discord.Embed(
             title="🎲 4個のサイコロ",
             description=(
-                f"プレイヤー：{self.ctx.author.mention}\n"
-                f"賭け金：**{money(self.bet)}**\n\n"
-                f"{self.format_dice(dice)}\n\n"
-                f"{result_text}\n\n"
-                f"収支：**{money_change(profit)}**\n"
+                f"プレイヤー：{self.ctx.author.mention}
+"
+                f"賭け金：**{money(self.bet)}**
+
+"
+                f"{self.format_dice(dice)}
+
+"
+                f"{result_text}
+
+"
+                f"収支：**{money_change(profit)}**
+"
                 f"残高：**{money(new_balance)}**"
                 f"{house_text}"
             ),
@@ -1718,21 +1853,31 @@ class DiceBetView(discord.ui.View):
 
         if self.guild is not None:
             log_description = (
-                f"ユーザー：{self.ctx.author.mention} (`{self.player_id}`)\n"
-                f"賭け金：**{money(self.bet)}**\n"
-                f"選択色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"出目：{self.format_dice(dice)}\n"
-                f"一致数：{count}個\n"
-                f"再抽選：{'あり' if self.reroll_used else 'なし'}\n"
-                f"配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n"
+                f"ユーザー：{self.ctx.author.mention} (`{self.player_id}`)
+"
+                f"賭け金：**{money(self.bet)}**
+"
+                f"選択色：{DICE_COLORS[chosen_color]['name']}
+"
+                f"出目：{self.format_dice(dice)}
+"
+                f"一致数：{count}個
+"
+                f"再抽選：{'あり' if self.reroll_used else 'なし'}
+"
+                f"配当：**{money(payout)}**
+"
+                f"収支：**{money_change(profit)}**
+"
                 f"残高：**{money(new_balance)}**"
             )
 
             if house_result is not None:
                 log_description += (
-                    f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
+                    f"
+胴元の残高変動：**{money_change(house_result['change'])}**"
+                    f"
+胴元の残高：**{money(house_result['after'])}**"
                 )
 
             await send_coin_log(
@@ -1816,9 +1961,11 @@ async def dice_command(ctx, bet_text: str, color_text: str):
 
     if color_key not in DICE_COLORS:
         await ctx.reply(
-            "色の指定が違うよ！\n"
+            "色の指定が違うよ！
+"
             "`r` 赤 / `b` 青 / `y` 黄色 / "
-            "`o` オレンジ / `g` 緑 / `p` 紫\n"
+            "`o` オレンジ / `g` 緑 / `p` 紫
+"
             "例：`.dice 100 r`",
             mention_author=False,
         )
@@ -1828,7 +1975,8 @@ async def dice_command(ctx, bet_text: str, color_text: str):
 
     if bet is None:
         await ctx.reply(
-            "賭け金は数字か `all` で指定してね。\n"
+            "賭け金は数字か `all` で指定してね。
+"
             "例：`.dice 100 r` / `.dice all b`",
             mention_author=False,
         )
@@ -1855,7 +2003,8 @@ async def dice_command(ctx, bet_text: str, color_text: str):
 
     if bet > current_balance:
         await ctx.reply(
-            f"残高が足りないよ！\n残高：**{money(current_balance)}**",
+            f"残高が足りないよ！
+残高：**{money(current_balance)}**",
             mention_author=False,
         )
         return
@@ -1881,10 +2030,16 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         embed = discord.Embed(
             title="🎲 4個のサイコロ",
             description=(
-                f"プレイヤー：{ctx.author.mention}\n"
-                f"賭け金：**{money(bet)}**\n\n"
-                f"{view.format_dice(dice)}\n\n"
-                f"選んだ色：{DICE_COLORS[color_key]['name']}\n"
+                f"プレイヤー：{ctx.author.mention}
+"
+                f"賭け金：**{money(bet)}**
+
+"
+                f"{view.format_dice(dice)}
+
+"
+                f"選んだ色：{DICE_COLORS[color_key]['name']}
+"
                 f"一致した数：{count}個"
             ),
             color=discord.Color.blurple(),
@@ -1928,20 +2083,31 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         house_text = ""
         if house_result is not None:
             house_text = (
-                f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                f"\n胴元の残高：**{money(house_result['after'])}**"
+                f"
+胴元の残高変動：**{money_change(house_result['change'])}**"
+                f"
+胴元の残高：**{money(house_result['after'])}**"
             )
 
         final_embed = discord.Embed(
             title="🎲 4個のサイコロ",
             description=(
-                f"プレイヤー：{ctx.author.mention}\n"
-                f"賭け金：**{money(bet)}**\n\n"
-                f"{view.format_dice(dice)}\n\n"
-                f"{result_text}\n"
-                f"選んだ色：{DICE_COLORS[color_key]['name']}\n"
-                f"一致した数：{count}個\n"
-                f"収支：**{money_change(profit)}**\n"
+                f"プレイヤー：{ctx.author.mention}
+"
+                f"賭け金：**{money(bet)}**
+
+"
+                f"{view.format_dice(dice)}
+
+"
+                f"{result_text}
+"
+                f"選んだ色：{DICE_COLORS[color_key]['name']}
+"
+                f"一致した数：{count}個
+"
+                f"収支：**{money_change(profit)}**
+"
                 f"残高：**{money(new_balance)}**"
                 f"{house_text}"
             ),
@@ -1970,20 +2136,29 @@ async def dice_command(ctx, bet_text: str, color_text: str):
 
         if ctx.guild is not None:
             log_description = (
-                f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-                f"賭け金：**{money(bet)}**\n"
-                f"選択色：{DICE_COLORS[color_key]['name']}\n"
-                f"出目：{view.format_dice(dice)}\n"
-                f"一致数：{count}個\n"
-                f"配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n"
+                f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)
+"
+                f"賭け金：**{money(bet)}**
+"
+                f"選択色：{DICE_COLORS[color_key]['name']}
+"
+                f"出目：{view.format_dice(dice)}
+"
+                f"一致数：{count}個
+"
+                f"配当：**{money(payout)}**
+"
+                f"収支：**{money_change(profit)}**
+"
                 f"残高：**{money(new_balance)}**"
             )
 
             if house_result is not None:
                 log_description += (
-                    f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
+                    f"
+胴元の残高変動：**{money_change(house_result['change'])}**"
+                    f"
+胴元の残高：**{money(house_result['after'])}**"
                 )
 
             await send_coin_log(
@@ -2003,14 +2178,25 @@ async def dice_command(ctx, bet_text: str, color_text: str):
     embed = discord.Embed(
         title="🎲 4個のサイコロ",
         description=(
-            f"プレイヤー：{ctx.author.mention}\n"
-            f"賭け金：**{money(bet)}**\n\n"
-            f"{view.format_dice(dice)}\n\n"
-            f"最初に選んだ色：{DICE_COLORS[color_key]['name']}\n"
-            f"一致した数：{count}個\n\n"
-            "🔄 **再抽選！**\n"
-            "次に狙う色を選んでね。\n"
-            "追加の賭け金は必要ないよ。\n"
+            f"プレイヤー：{ctx.author.mention}
+"
+            f"賭け金：**{money(bet)}**
+
+"
+            f"{view.format_dice(dice)}
+
+"
+            f"最初に選んだ色：{DICE_COLORS[color_key]['name']}
+"
+            f"一致した数：{count}個
+
+"
+            "🔄 **再抽選！**
+"
+            "次に狙う色を選んでね。
+"
+            "追加の賭け金は必要ないよ。
+"
             "再抽選でも2〜3個なら負けになるよ。"
         ),
         color=discord.Color.gold(),
@@ -2134,7 +2320,8 @@ async def all_cash_command(interaction: discord.Interaction):
         lines.append(f"`{number:>3}.` {member.mention} — **{money(amount)}**")
 
     pages = [
-        "\n".join(lines[index:index + BALANCE_LIST_PER_PAGE])
+        "
+".join(lines[index:index + BALANCE_LIST_PER_PAGE])
         for index in range(0, len(lines), BALANCE_LIST_PER_PAGE)
     ]
 
@@ -2200,12 +2387,17 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
 
     current_balance = get_balance(ctx.author.id)
     if total_bet > current_balance:
-        msg = f"残高が足りないよ！\n必要額（総額）：**{money(total_bet)}**\n残高：**{money(current_balance)}**"
+        msg = f"残高が足りないよ！
+必要額（総額）：**{money(total_bet)}**
+残高：**{money(current_balance)}**"
         if interaction:
             await interaction.response.send_message(msg, ephemeral=True)
         else:
             await ctx.reply(msg, mention_author=False)
         return
+
+    jp_contribution = max(1, int(total_bet * 0.1))
+    add_jackpot_pool(jp_contribution)
 
     positions = [random.randrange(len(LANE_PATTERNS[index])) for index in range(3)]
     slot_positions[str(ctx.author.id)] = positions
@@ -2218,6 +2410,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
 
     winning_symbol = None
     total_payout = 0
+    hit_jackpot = False
 
     for line in paylines:
         if line[0] == line[1] == line[2]:
@@ -2225,6 +2418,14 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             mult = PAYOUTS.get(sym, 0)
             total_payout += base_bet * mult
             winning_symbol = sym
+            if sym == "JP":
+                hit_jackpot = True
+
+    jackpot_won_amount = 0
+    if hit_jackpot:
+        jackpot_won_amount = get_jackpot_pool()
+        total_payout += jackpot_won_amount
+        reset_jackpot_pool(10000)
 
     new_balance = current_balance - total_bet
     if total_payout > 0:
@@ -2275,16 +2476,24 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
 
     # 🛠️ スロット画面のレイアウト（BET/WONは5桁、左下のクレジット行だけ11桁）
     slot_display = (
-        f"{top_bottom_gray}\n"
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}\n"
-        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}\n"
-        f"{top_bottom_gray}\n"
-        f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\n" # ← ここに gray_emoji を追加！
+        f"{top_bottom_gray}
+"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top}  {ctx.author.mention}
+"
+        f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid}  {bet_label_emoji}{b[0]}{b[1]}{b[2]}{b[3]}{b[4]}{gray_emoji}
+"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot}  {won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}
+"
+        f"{top_bottom_gray}
+"
+        f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}
+" # ← ここに gray_emoji を追加！
         f"{top_bottom_gray}"
     )
 
-    if total_payout > 0:
+    if hit_jackpot:
+        color = discord.Color.from_rgb(255, 215, 0)
+    elif total_payout > 0:
         color = discord.Color.green()
     elif profit == 0:
         color = discord.Color.gold()
@@ -2292,6 +2501,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         color = discord.Color.red()
 
     embed = discord.Embed(description=slot_display, color=color)
+    if hit_jackpot:
+        embed.set_author(name="🎉 JACKPOT WINNER!! 🎉", icon_url=ctx.author.display_avatar.url if hasattr(ctx.author, "display_avatar") else None)
+
     view = SlotView(ctx.author.id, base_bet, line_choice)
 
     if interaction:
@@ -2323,16 +2535,32 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     record_slot(log_data)
 
     log_description = (
-        f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-        f"選択ライン：{line_choice} （{active_lines_count}ライン）\n"
-        f"賭け金（総額）：**{money(total_bet)}**\n配当：**{money(total_payout)}**\n"
-        f"収支：**{profit_text}**\n残高：**{money(new_balance)}**\n\n"
-        f"{displayed_grid}"
+        f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)
+"
+        f"選択ライン：{line_choice} （{active_lines_count}ライン）
+"
+        f"賭け金（総額）：**{money(total_bet)}**
+配当：**{money(total_payout)}**
+"
+        f"収支：**{profit_text}**
+残高：**{money(new_balance)}**
+"
     )
+
+    if hit_jackpot:
+        log_description += f"
+🏆 **ジャックポット獲得！賞金: {money(jackpot_won_amount)}**
+"
+
+    log_description += f"
+{displayed_grid}"
 
     if house_result is not None:
         log_description += (
-            f"\n\n胴元の残高変動：**{money_change(house_result['change'])}**\n"
+            f"
+
+胴元の残高変動：**{money_change(house_result['change'])}**
+"
             f"胴元の残高：**{house_result['after']}**"
         )
 
@@ -2353,7 +2581,8 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     base_bet = resolve_bet(ctx.author.id, bet_text)
     if base_bet is None:
-        await ctx.reply("賭け金は数字か `all` で指定してね。\n例：`.slot 3 3`", mention_author=False)
+        await ctx.reply("賭け金は数字か `all` で指定してね。
+例：`.slot 3 3`", mention_author=False)
         return
 
     try:
@@ -2361,7 +2590,8 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
         if line_choice not in (1, 2, 3):
             raise ValueError
     except ValueError:
-        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。\n例：`.slot 3 3`", mention_author=False)
+        await ctx.reply("ライン数は `1`（真ん中）、`2`（上下中）、`3`（上下中＋斜め）のいずれかで指定してね。
+例：`.slot 3 3`", mention_author=False)
         return
 
     await execute_slot(ctx, base_bet, line_choice)
@@ -2396,8 +2626,12 @@ async def payment_command(ctx, member: discord.Member, amount: int):
     embed = discord.Embed(
         title="💸 Payment",
         description=(
-            f"対象：{member.mention}\n変更額：**{money_change(amount)}**\n"
-            f"変更前：**{money(before)}**\n変更後：**{money(after)}**\n"
+            f"対象：{member.mention}
+変更額：**{money_change(amount)}**
+"
+            f"変更前：**{money(before)}**
+変更後：**{money(after)}**
+"
             f"実行者：{ctx.author.mention}"
         ),
         color=discord.Color.blurple(),
@@ -2422,10 +2656,14 @@ async def payment_command(ctx, member: discord.Member, amount: int):
         discord.Embed(
             title="💸 Paymentログ",
             description=(
-                f"対象：{member.mention} (`{member.id}`)\n"
-                f"実行者：{ctx.author.mention} (`{ctx.author.id}`)\n"
-                f"変更額：**{money_change(amount)}**\n"
-                f"変更前：**{money(before)}**\n変更後：**{money(after)}**"
+                f"対象：{member.mention} (`{member.id}`)
+"
+                f"実行者：{ctx.author.mention} (`{ctx.author.id}`)
+"
+                f"変更額：**{money_change(amount)}**
+"
+                f"変更前：**{money(before)}**
+変更後：**{money(after)}**"
             ),
             color=discord.Color.blurple(),
         ),
@@ -2440,22 +2678,41 @@ async def help_command(ctx):
     embed = discord.Embed(
         title="📖 コマンド一覧",
         description=(
-            "**一般コマンド**\n"
-            "`.slot 賭け金` — スロットを回す\n"
-            "`.slot all` — 所持金を全額賭ける\n"
-            "`.color 賭け金` — 🌝🌚の2択ゲーム\n"
-            "`.color all` — 所持金を全額賭ける\n"
-            "`.cash` — 自分の残高を見る\n"
-            "`.cash @ユーザー` — 指定ユーザーの残高を見る\n"
-            "`.mdaily` — ログインボーナス\n"
-            "`/settinginfo` — 現在の設定\n"
-            "`/guess setup` — 数字・言葉当てゲームの設定（管理者）\n"
-            "`/guess stop` — ゲーム停止（管理者）\n\n"
-            "**オーナー本人専用**\n"
-            "`.Payment @ユーザー 金額` — 残高を増減\n"
-            "`/all_cash` — 全メンバーの残高一覧\n"
-            "`/setting` — Botの設定パネル\n"
-            "`/log panel` — 固定ログ送信先の確認\n"
+            "**一般コマンド**
+"
+            "`.slot 賭け金` — スロットを回す
+"
+            "`.slot all` — 所持金を全額賭ける
+"
+            "`.jackpot` — ジャックポットの蓄積額を確認する
+"
+            "`.color 賭け金` — 🌝🌚の2択ゲーム
+"
+            "`.color all` — 所持金を全額賭ける
+"
+            "`.cash` — 自分の残高を見る
+"
+            "`.cash @ユーザー` — 指定ユーザーの残高を見る
+"
+            "`.mdaily` — ログインボーナス
+"
+            "`/settinginfo` — 現在の設定
+"
+            "`/guess setup` — 数字・言葉当てゲームの設定（管理者）
+"
+            "`/guess stop` — ゲーム停止（管理者）
+
+"
+            "**オーナー本人専用**
+"
+            "`.Payment @ユーザー 金額` — 残高を増減
+"
+            "`/all_cash` — 全メンバーの残高一覧
+"
+            "`/setting` — Botの設定パネル
+"
+            "`/log panel` — 固定ログ送信先の確認
+"
             "`/coinrecovery` — ログから残高を復旧"
         ),
         color=discord.Color.blurple(),
@@ -2496,7 +2753,8 @@ class LogChannelSelect(discord.ui.ChannelSelect):
             return
 
         await interaction.response.send_message(
-            "ログ送信先は固定されているよ。\n"
+            "ログ送信先は固定されているよ。
+"
             f"スロットログ・Paymentログ・ログインボーナス共通：<#{LOG_CHANNEL_ID}>",
             ephemeral=True,
         )
@@ -2527,8 +2785,12 @@ async def log_panel(interaction: discord.Interaction):
         title="📝 固定ログ送信先",
         description=(
             "スロットログ・Paymentログ・ログインボーナスは、"
-            "次のチャンネルに送信されるよ。\n\n"
-            f"<#{LOG_CHANNEL_ID}>\n\nチャンネルID：`{LOG_CHANNEL_ID}`"
+            "次のチャンネルに送信されるよ。
+
+"
+            f"<#{LOG_CHANNEL_ID}>
+
+チャンネルID：`{LOG_CHANNEL_ID}`"
         ),
         color=discord.Color.blurple(),
     )
@@ -2563,22 +2825,44 @@ async def slot_help_command(ctx):
     embed = discord.Embed(
         title="🎰 スロットの遊び方・ルール",
         description=(
-            "選んだライン数に応じて、当たり判定のラインと総賭け金が変わるよ！\n\n"
-            "**【コマンドの使い方】**\n"
-            "`.slot 賭け金 ライン数`\n"
-            "例：`.slot 100 2` （1ラインあたり100コインで、2を指定）\n\n"
-            "**【選べるライン数】**\n"
-            "* **`1`（1ライン）**: 真ん中の横1列（総賭け金 = 1倍）\n"
-            "* **`2`（3ライン）**: 上・中・下の横3列（総賭け金 = 3倍）\n"
-            "* **`3`（5ライン）**: 上・中・下 ＋ 斜め2本（総賭け金 = 5倍）\n\n"
-            "**【配当倍率】**\n"
-            "* 🍒 ＝ **2倍**\n"
-            "* 🍋 ＝ **3倍**\n"
-            "* 🔔 ＝ **5倍**\n"
-            "* 💣 ＝ **20倍**\n"
-            "* ⭐ ＝ **10倍**\n"
-            "* 7️⃣ ＝ **50倍**\n\n"
-            f"※1ラインあたりの最低賭け金：**{money(minimum)}**\n"
+            "選んだライン数に応じて、当たり判定のラインと総賭け金が変わるよ！
+
+"
+            "**【コマンドの使い方】**
+"
+            "`.slot 賭け金 ライン数`
+"
+            "例：`.slot 100 2` （1ラインあたり100コインで、2を指定）
+
+"
+            "**【選べるライン数】**
+"
+            "* **`1`（1ライン）**: 真ん中の横1列（総賭け金 = 1倍）
+"
+            "* **`2`（3ライン）**: 上・中・下の横3列（総賭け金 = 3倍）
+"
+            "* **`3`（5ライン）**: 上・中・下 ＋ 斜め2本（総賭け金 = 5倍）
+
+"
+            "**【配当倍率】**
+"
+            "* 🍒 ＝ **2倍**
+"
+            "* 🍋 ＝ **3倍**
+"
+            "* 🔔 ＝ **5倍**
+"
+            "* 💣 ＝ **20倍**
+"
+            "* ⭐ ＝ **10倍**
+"
+            "* 7️⃣ ＝ **50倍**
+"
+            "* 🟥 ＝ **100倍 ＋ ジャックポット全額**
+
+"
+            f"※1ラインあたりの最低賭け金：**{money(minimum)}**
+"
             "※所持金を全額賭けたいときは、数字の代わりに `all` が使えるよ！"
         ),
         color=discord.Color.gold(),
@@ -2642,7 +2926,7 @@ class WeightsSettingModal(discord.ui.Modal):
 
         self.weights_input = discord.ui.TextInput(
             label="絵柄ごとの比率",
-            placeholder="🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20",
+            placeholder="🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20,💣=20,JP=5",
             default=current_value,
             required=True,
             max_length=200,
@@ -2680,8 +2964,10 @@ class WeightsSettingModal(discord.ui.Modal):
 
         except ValueError:
             await interaction.response.send_message(
-                "入力形式が正しくないよ。\n"
-                "例：`🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20`\n"
+                "入力形式が正しくないよ。
+"
+                "例：`🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20,💣=20,JP=5`
+"
                 "各数値は0〜1000で、合計を1以上にしてね。",
                 ephemeral=True,
             )
@@ -2713,13 +2999,13 @@ class EmojiModeSelect(discord.ui.Select):
             options=[
                 discord.SelectOption(
                     label="通常の絵文字",
-                    description="🍒 🍋 ⭐ 🔔 7️⃣ を使用する",
+                    description="🍒 🍋 ⭐ 🔔 7️⃣ 💣 を使用する",
                     value="unicode",
                     emoji="🍒",
                 ),
                 discord.SelectOption(
                     label="サーバーのカスタム絵文字",
-                    description="emoji_12〜emoji_16 を使用する",
+                    description="emoji_12〜emoji_16, emoji_19 を使用する",
                     value="custom",
                     emoji="⭐",
                 ),
@@ -2743,9 +3029,13 @@ class EmojiModeSelect(discord.ui.Select):
             _, missing = get_custom_emoji_status(interaction.guild)
             if missing:
                 await interaction.response.send_message(
-                    "カスタム絵文字モードに変更したよ。\n\n"
-                    "見つからない絵文字は通常の絵文字で表示するよ。\n"
-                    + "\n".join(missing),
+                    "カスタム絵文字モードに変更したよ。
+
+"
+                    "見つからない絵文字は通常の絵文字で表示するよ。
+"
+                    + "
+".join(missing),
                     ephemeral=True,
                 )
             else:
@@ -2806,9 +3096,15 @@ class SettingActionSelect(discord.ui.Select):
                 embed=discord.Embed(
                     title="出目の絵文字タイプ",
                     description=(
-                        "スロット盤面に表示する絵文字を選択してね。\n\n"
-                        "**通常の絵文字**\n🍒 🍋 ⭐ 🔔 7️⃣\n\n"
-                        "**サーバーのカスタム絵文字**\nemoji_12〜emoji_16"
+                        "スロット盤面に表示する絵文字を選択してね。
+
+"
+                        "**通常の絵文字**
+🍒 🍋 ⭐ 🔔 7️⃣ 💣
+
+"
+                        "**サーバーのカスタム絵文字**
+emoji_12〜emoji_16, emoji_19"
                     ),
                     color=discord.Color.blurple(),
                 ),
@@ -2817,7 +3113,8 @@ class SettingActionSelect(discord.ui.Select):
             )
         elif selected == "log_channel":
             await interaction.response.send_message(
-                f"ログ送信先は固定されているよ。\n<#{LOG_CHANNEL_ID}>",
+                f"ログ送信先は固定されているよ。
+<#{LOG_CHANNEL_ID}>",
                 ephemeral=True,
             )
         elif selected == "permissions":
@@ -2905,7 +3202,8 @@ class MaintenanceSettingView(discord.ui.View):
         save_server_settings(interaction.guild.id)
 
         await interaction.response.send_message(
-            "メンテナンスモードを **ON** にしたよ。\n一般メンバーはスロットを使えなくなるよ。",
+            "メンテナンスモードを **ON** にしたよ。
+一般メンバーはスロットを使えなくなるよ。",
             ephemeral=True,
         )
 
@@ -3174,13 +3472,22 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
     if not latest_balances:
         message = (
-            "復旧に使える残高ログが見つからなかったよ。\n\n"
-            f"JSONログ件数：{json_log_count}\nDiscordログ件数：{discord_log_count}\n\n"
+            "復旧に使える残高ログが見つからなかったよ。
+
+"
+            f"JSONログ件数：{json_log_count}
+Discordログ件数：{discord_log_count}
+
+"
             "固定ログチャンネルにスロットログやPaymentログが残っているか確認してね。"
         )
 
         if errors:
-            message += "\n\n確認事項：\n" + "\n".join(errors)
+            message += "
+
+確認事項：
+" + "
+".join(errors)
 
         await interaction.followup.send(message, ephemeral=True)
         return
@@ -3193,16 +3500,21 @@ async def coinrecovery_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="残高復旧完了",
         description=(
-            f"復旧対象：**{len(latest_balances)}人**\n"
-            f"JSONログ：**{json_log_count}件**\n"
-            f"Discordログ：**{discord_log_count}件**\n\n"
+            f"復旧対象：**{len(latest_balances)}人**
+"
+            f"JSONログ：**{json_log_count}件**
+"
+            f"Discordログ：**{discord_log_count}件**
+
+"
             "確認できたログのうち、最も新しい残高を保存したよ。"
         ),
         color=discord.Color.green(),
     )
 
     if errors:
-        embed.add_field(name="確認事項", value="\n".join(errors)[:1000], inline=False)
+        embed.add_field(name="確認事項", value="
+".join(errors)[:1000], inline=False)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 

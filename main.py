@@ -3505,6 +3505,7 @@ def calculate_hand(hand):
         aces -= 1
     return score
 
+
 class BlackjackView(discord.ui.View):
     def __init__(self, ctx, deck, player_hand, dealer_hand):
         super().__init__(timeout=60)
@@ -3540,17 +3541,11 @@ class BlackjackView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
             embed, files = self.create_embed_and_files(game_over=True, result="バースト！あなたの負けです… 😭")
-            try:
-                await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
-            except Exception:
-                await interaction.edit_original_response(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
             self.stop()
         else:
             embed, files = self.create_embed_and_files(game_over=False)
-            try:
-                await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
-            except Exception:
-                await interaction.edit_original_response(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
 
     @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
     async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3576,10 +3571,7 @@ class BlackjackView(discord.ui.View):
             child.disabled = True
 
         embed, files = self.create_embed_and_files(game_over=True, result=result)
-        try:
-            await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
-        except Exception:
-            await interaction.edit_original_response(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, attachments=files, view=self)
         self.stop()
 
     def create_embed_and_files(self, game_over=False, result=""):
@@ -3614,6 +3606,7 @@ class BlackjackView(discord.ui.View):
             embed.add_field(name="**【試合結果】**", value=result, inline=False)
         
         return embed, files
+
 
 @bot.command(name="bj")
 async def blackjack(ctx):

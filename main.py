@@ -2056,167 +2056,6 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         latest_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, latest_balance + bet)
         raise
-# ==========================================
-# 1. 画像ファイル名変換関数
-# ==========================================
-def get_card_image_path(suit, value):
-    """
-    スートと値から、対応するIMGファイル名のパスを返す関数
-    suit: 'spade', 'club', 'diamond', 'heart', 'joker', 'back'
-    value: 1〜13 (または 'A', 'J', 'Q', 'K' などの文字)
-    """
-    if suit == 'back':
-        return "cards/IMG_0678.png"
-    if suit == 'joker':
-        return "cards/IMG_0677.png"
-        
-    # 各スートの開始番号
-    suit_offsets = {
-        'spade': 625,    # 0625 〜 0637 (13枚)
-        'club': 638,     # 0638 〜 0650 (13枚)
-        'diamond': 651,  # 0651 〜 0663 (13枚)
-        'heart': 664     # 0664 〜 0676 (13枚)
-    }
-    
-    if suit in suit_offsets:
-        base = suit_offsets[suit]
-        
-        if isinstance(value, str):
-            val_map = {'A': 1, 'J': 11, 'Q': 12, 'K': 13}
-            val = val_map.get(value.upper(), int(value))
-        else:
-            val = int(value)
-            
-        file_num = base + (val - 1)
-        return f"cards/IMG_{file_num:04d}.png"
-        
-    return "cards/IMG_0678.png"
-
-
-# ==========================================
-# 2. カードのスコア計算用関数
-# ==========================================
-def calculate_hand(hand):
-    score = 0
-    aces = 0
-    for card in hand:
-        val = card['val']
-        if val in ['J', 'Q', 'K']:
-            score += 10
-        elif val == 'A':
-            aces += 1
-            score += 11
-        else:
-            score += int(val)
-            
-    while score > 21 and aces > 0:
-        score -= 10
-        aces -= 1
-    return score
-
-
-# ==========================================
-# 3. ボタンを使ったブラックジャックのゲームクラス
-# ==========================================
-class BlackjackView(discord.ui.View):
-    def __init__(self, ctx, deck, player_hand, dealer_hand):
-        super().__init__(timeout=60)
-        self.ctx = ctx
-        self.deck = deck
-        self.player_hand = player_hand
-        self.dealer_hand = dealer_hand
-        self.message = None
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user == self.ctx.author:
-            return True
-        await interaction.response.send_message("他の人のゲームには干渉できません！", ephemeral=True)
-        return False
-
-    @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
-    async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.player_hand.append(self.deck.pop())
-        p_score = calculate_hand(self.player_hand)
-
-        if p_score > 21:
-            for child in self.children:
-                child.disabled = True
-            embed, file = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-            self.stop()
-        else:
-            embed, file = self.create_embed(game_over=False)
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-    @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
-    async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
-        while calculate_hand(self.dealer_hand) < 17:
-            self.dealer_hand.append(self.deck.pop())
-
-        p_score = calculate_hand(self.player_hand)
-        d_score = calculate_hand(self.dealer_hand)
-
-        if d_score > 21:
-            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
-        elif p_score > d_score:
-            result = "あなたの勝ちです！ 🏆"
-        elif p_score < d_score:
-            result = "あなたの負けです… 😢"
-        else:
-            result = "引き分け (Push) です！ 🤝"
-
-        for child in self.children:
-            child.disabled = True
-
-        embed, file = self.create_embed(game_over=True, result=result)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-        self.stop()
-
-    def create_embed(self, game_over=False, result=""):
-        embed = discord.Embed(title="🃏 ブラックジャック", color=discord.Color.gold())
-        
-        p_score = calculate_hand(self.player_hand)
-        if game_over:
-            d_score = calculate_hand(self.dealer_hand)
-            dealer_text = f"手札（合計: {d_score}）"
-            # ゲーム終了時はディーラーの1枚目のカード画像を表示
-            img_path = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
-        else:
-            dealer_text = "手札（1枚目は隠されています）"
-            # ゲーム中は裏面の画像を表示
-            img_path = get_card_image_path('back', 0)
-
-        file = discord.File(img_path, filename="card.png")
-        embed.set_image(url="attachment://card.png")
-
-        embed.add_field(name=f"プレイヤーのターン (合計: {p_score})", value=", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand]), inline=False)
-        embed.add_field(name=f"ディーラーの{dealer_text}", value=", ".join([f"{c['suit']}の{c['val']}" if (game_over or i==0) else "裏面" for i, c in enumerate(self.dealer_hand)]), inline=False)
-
-        if game_over:
-            embed.add_field(name="【試合結果】", value=result, inline=False)
-            
-        return embed, file
-
-
-# ==========================================
-# 4. Discordコマンド定義 (.bj)
-# ==========================================
-@commands.command(name="bj")
-async def blackjack(ctx):
-    suits = ['spade', 'club', 'diamond', 'heart']
-    values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-    
-    deck = [{'suit': s, 'val': v} for s in suits for v in values]
-    random.shuffle(deck)
-
-    player_hand = [deck.pop(), deck.pop()]
-    dealer_hand = [deck.pop(), deck.pop()]
-
-    view = BlackjackView(ctx, deck, player_hand, dealer_hand)
-    embed, file = view.create_embed(game_over=False)
-    
-    view.message = await ctx.send(embed=embed, file=file, view=view)
-
 
 # ==================================================
 # .cash 残高確認
@@ -3561,6 +3400,167 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
+# ==========================================
+# 1. 画像ファイル名変換関数
+# ==========================================
+def get_card_image_path(suit, value):
+    """
+    スートと値から、対応するIMGファイル名のパスを返す関数
+    suit: 'spade', 'club', 'diamond', 'heart', 'joker', 'back'
+    value: 1〜13 (または 'A', 'J', 'Q', 'K' などの文字)
+    """
+    if suit == 'back':
+        return "cards/IMG_0678.png"
+    if suit == 'joker':
+        return "cards/IMG_0677.png"
+        
+    # 各スートの開始番号
+    suit_offsets = {
+        'spade': 625,    # 0625 〜 0637 (13枚)
+        'club': 638,     # 0638 〜 0650 (13枚)
+        'diamond': 651,  # 0651 〜 0663 (13枚)
+        'heart': 664     # 0664 〜 0676 (13枚)
+    }
+    
+    if suit in suit_offsets:
+        base = suit_offsets[suit]
+        
+        if isinstance(value, str):
+            val_map = {'A': 1, 'J': 11, 'Q': 12, 'K': 13}
+            val = val_map.get(value.upper(), int(value))
+        else:
+            val = int(value)
+            
+        file_num = base + (val - 1)
+        return f"cards/IMG_{file_num:04d}.png"
+        
+    return "cards/IMG_0678.png"
+
+
+# ==========================================
+# 2. カードのスコア計算用関数
+# ==========================================
+def calculate_hand(hand):
+    score = 0
+    aces = 0
+    for card in hand:
+        val = card['val']
+        if val in ['J', 'Q', 'K']:
+            score += 10
+        elif val == 'A':
+            aces += 1
+            score += 11
+        else:
+            score += int(val)
+            
+    while score > 21 and aces > 0:
+        score -= 10
+        aces -= 1
+    return score
+
+
+# ==========================================
+# 3. ボタンを使ったブラックジャックのゲームクラス
+# ==========================================
+class BlackjackView(discord.ui.View):
+    def __init__(self, ctx, deck, player_hand, dealer_hand):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.deck = deck
+        self.player_hand = player_hand
+        self.dealer_hand = dealer_hand
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user == self.ctx.author:
+            return True
+        await interaction.response.send_message("他の人のゲームには干渉できません！", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
+    async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.player_hand.append(self.deck.pop())
+        p_score = calculate_hand(self.player_hand)
+
+        if p_score > 21:
+            for child in self.children:
+                child.disabled = True
+            embed, file = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+            self.stop()
+        else:
+            embed, file = self.create_embed(game_over=False)
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
+    async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
+        while calculate_hand(self.dealer_hand) < 17:
+            self.dealer_hand.append(self.deck.pop())
+
+        p_score = calculate_hand(self.player_hand)
+        d_score = calculate_hand(self.dealer_hand)
+
+        if d_score > 21:
+            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+        elif p_score > d_score:
+            result = "あなたの勝ちです！ 🏆"
+        elif p_score < d_score:
+            result = "あなたの負けです… 😢"
+        else:
+            result = "引き分け (Push) です！ 🤝"
+
+        for child in self.children:
+            child.disabled = True
+
+        embed, file = self.create_embed(game_over=True, result=result)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+        self.stop()
+
+    def create_embed(self, game_over=False, result=""):
+        embed = discord.Embed(title="🃏 ブラックジャック", color=discord.Color.gold())
+        
+        p_score = calculate_hand(self.player_hand)
+        if game_over:
+            d_score = calculate_hand(self.dealer_hand)
+            dealer_text = f"手札（合計: {d_score}）"
+            # ゲーム終了時はディーラーの1枚目のカード画像を表示
+            img_path = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+        else:
+            dealer_text = "手札（1枚目は隠されています）"
+            # ゲーム中は裏面の画像を表示
+            img_path = get_card_image_path('back', 0)
+
+        file = discord.File(img_path, filename="card.png")
+        embed.set_image(url="attachment://card.png")
+
+        embed.add_field(name=f"プレイヤーのターン (合計: {p_score})", value=", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand]), inline=False)
+        embed.add_field(name=f"ディーラーの{dealer_text}", value=", ".join([f"{c['suit']}の{c['val']}" if (game_over or i==0) else "裏面" for i, c in enumerate(self.dealer_hand)]), inline=False)
+
+        if game_over:
+            embed.add_field(name="【試合結果】", value=result, inline=False)
+            
+        return embed, file
+
+
+# ==========================================
+# 4. Discordコマンド定義 (.bj)
+# ==========================================
+@commands.command(name="bj")
+async def blackjack(ctx):
+    suits = ['spade', 'club', 'diamond', 'heart']
+    values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+    
+    deck = [{'suit': s, 'val': v} for s in suits for v in values]
+    random.shuffle(deck)
+
+    player_hand = [deck.pop(), deck.pop()]
+    dealer_hand = [deck.pop(), deck.pop()]
+
+    view = BlackjackView(ctx, deck, player_hand, dealer_hand)
+    embed, file = view.create_embed(game_over=False)
+    
+    view.message = await ctx.send(embed=embed, file=file, view=view)
+    
 # ==================================================
 # 起動
 # ==================================================

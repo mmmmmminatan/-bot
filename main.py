@@ -2056,6 +2056,61 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         latest_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, latest_balance + bet)
         raise
+# ==================================================
+# .bj ブラックジャック（手札表示テスト）
+# ==================================================
+
+CARD_DIR = "cards"  # カード画像を保存しているフォルダ名
+
+def get_card_filename(suit, value):
+    return f"{suit}_{value}.png"
+
+@bot.command(name="bj")
+async def blackjack(ctx):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    suits = ["spade", "club", "diamond", "heart"]
+    values = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+    
+    # テスト用の仮カード選出（※後ほど本格的なゲームループに置き換えます）
+    dealer_card1 = (random.choice(suits), random.choice(values))
+    player_card1 = (random.choice(suits), random.choice(values))
+    
+    d_path = os.path.join(CARD_DIR, get_card_filename(*dealer_card1))
+    p_path = os.path.join(CARD_DIR, get_card_filename(*player_card1))
+    
+    files = []
+    
+    # 1. ディーラーエリア（見出し付き）
+    dealer_embed = discord.Embed(
+        title="━━━━ 🤵 ディーラーの手札 ━━━━",
+        color=discord.Color.red()
+    )
+    dealer_embed.add_field(name="【公開カード】", value=f"{dealer_card1[0].capitalize()} の {dealer_card1[1]}", inline=False)
+    
+    if os.path.exists(d_path):
+        files.append(discord.File(d_path, filename="dealer_card.png"))
+        dealer_embed.set_image(url="attachment://dealer_card.png")
+
+    # 2. プレイヤーエリア（見出し付き）
+    player_embed = discord.Embed(
+        title="━━━━ 👤 あなたの手札 ━━━━",
+        color=discord.Color.green()
+    )
+    player_embed.add_field(name="【現在の合計】", value="合計: 10", inline=False)
+    
+    if os.path.exists(p_path):
+        files.append(discord.File(p_path, filename="player_card.png"))
+        player_embed.set_image(url="attachment://player_card.png")
+
+    await ctx.reply(
+        content="## 🃏 BLACKJACK GAME",
+        embeds=[dealer_embed, player_embed],
+        files=files,
+        mention_author=False
+    )
 
 # ==================================================
 # .cash 残高確認

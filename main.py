@@ -2402,64 +2402,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         discord.Embed(title="🎰 スロットログ", description=log_description, color=color),
     )
 
-# ----------------------------------------------------
-# 1. 既存のコマンド（スロットなど）がここにある
-# ----------------------------------------------------
-@bot.command(name="slot")
-async def slot(ctx):
-    # スロットの処理...
-    pass
-
-# ----------------------------------------------------
-# 2. 【今回追加するブラックジャックのコードはここ！】
-# ----------------------------------------------------
-import os
-import random
-
-CARD_DIR = "cards"  # ← 画像を保存しているフォルダ名（ご自身の環境に合わせて変更してください）
-
-def get_card_filename(suit, value):
-    return f"{suit}_{value}.png"
-
-@bot.command(name="bj")
-async def blackjack(ctx):
-    suits = ["spade", "club", "diamond", "heart"]
-    values = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
-    
-    dealer_card1 = (random.choice(suits), random.choice(values))
-    player_card1 = (random.choice(suits), random.choice(values))
-    
-    d_path = os.path.join(CARD_DIR, get_card_filename(*dealer_card1))
-    p_path = os.path.join(CARD_DIR, get_card_filename(*player_card1))
-    
-    files = []
-    
-    dealer_embed = discord.Embed(
-        title="━━━━ 🤵 ディーラーの手札 ━━━━",
-        color=discord.Color.red()
-    )
-    dealer_embed.add_field(name="【公開カード】", value=f"{dealer_card1[0].capitalize()} の {dealer_card1[1]}", inline=False)
-    
-    if os.path.exists(d_path):
-        files.append(discord.File(d_path, filename="dealer_card.png"))
-        dealer_embed.set_image(url="attachment://dealer_card.png")
-
-    player_embed = discord.Embed(
-        title="━━━━ 👤 あなたの手札 ━━━━",
-        color=discord.Color.green()
-    )
-    player_embed.add_field(name="【現在の合計】", value="合計: 10", inline=False)
-    
-    if os.path.exists(p_path):
-        files.append(discord.File(p_path, filename="player_card.png"))
-        player_embed.set_image(url="attachment://player_card.png")
-
-    await ctx.reply(
-        content="## 🃏 BLACKJACK GAME",
-        embeds=[dealer_embed, player_embed],
-        files=files,
-        mention_author=False
-    )
 
 # ==================================================
 # 3. .slot コマンド本体

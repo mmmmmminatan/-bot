@@ -138,7 +138,6 @@ async def decide_cash(interaction: discord.Interaction, target: discord.User, am
     embed.set_footer(text=f"実行者: {interaction.user.display_name}")
 
     await interaction.response.send_message(embed=embed)
-
 # ==================================================
 # 金額表示
 # ==================================================

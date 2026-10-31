@@ -3523,6 +3523,8 @@ class BlackjackView(discord.ui.View):
 
     @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()  # 3秒制限によるタイムアウトを防ぐ
+        
         self.player_hand.append(self.deck.pop())
         p_score = calculate_hand(self.player_hand)
 
@@ -3530,14 +3532,16 @@ class BlackjackView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
             embed, files = self.create_embed_and_files(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.response.edit_message(embed=embed, files=files, view=self)
+            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
             self.stop()
         else:
             embed, files = self.create_embed_and_files(game_over=False)
-            await interaction.response.edit_message(embed=embed, files=files, view=self)
+            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
 
     @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
     async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()  # 3秒制限によるタイムアウトを防ぐ
+        
         while calculate_hand(self.dealer_hand) < 17:
             self.dealer_hand.append(self.deck.pop())
 
@@ -3557,7 +3561,7 @@ class BlackjackView(discord.ui.View):
             child.disabled = True
 
         embed, files = self.create_embed_and_files(game_over=True, result=result)
-        await interaction.response.edit_message(embed=embed, files=files, view=self)
+        await interaction.edit_original_response(embed=embed, attachments=files, view=self)
         self.stop()
 
     def create_embed_and_files(self, game_over=False, result=""):

@@ -3402,8 +3402,10 @@ def run_web():
 
 
 # ==========================================
-# 🃏 ブラックジャック関連機能（文字埋め込み ＋ 通常画像添付版）
+# 🃏 ブラックジャック関連機能（画像合成・文字埋め込み版）
 # ==========================================
+
+from PIL import Image
 
 def get_card_image_path(suit, value):
     if suit == 'back':
@@ -3430,6 +3432,30 @@ def get_card_image_path(suit, value):
         return f"cards/IMG_{file_num:04d}.png"
         
     return "cards/IMG_0678.png"
+
+
+def merge_card_images(image_path1, image_path2, output_path="cards/dealer_merged.png"):
+    try:
+        img1 = Image.open(image_path1)
+        img2 = Image.open(image_path2)
+        
+        h = max(img1.height, img2.height)
+        if img1.height != h:
+            img1 = img1.resize((int(img1.width * h / img1.height), h))
+        if img2.height != h:
+            img2 = img2.resize((int(img2.width * h / img2.height), h))
+            
+        total_width = img1.width + img2.width
+        merged_img = Image.new('RGBA', (total_width, h))
+        
+        merged_img.paste(img1, (0, 0))
+        merged_img.paste(img2, (img1.width, 0))
+        
+        merged_img.save(output_path)
+        return output_path
+    except Exception as e:
+        print(f"[IMAGE MERGE ERROR] {e}")
+        return image_path1
 
 
 def calculate_hand(hand):
@@ -3510,38 +3536,43 @@ class BlackjackView(discord.ui.View):
         
         p_score = calculate_hand(self.player_hand)
         
-        # ディーラー側の表示内容と画像パス
+        # ディーラー側の画像（2枚を1枚に合成）
         if game_over:
             d_score = calculate_hand(self.dealer_hand)
             dealer_text = f"手札（合計: {d_score}）"
             d_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.dealer_hand])
-            d_files = [
-                discord.File(get_card_image_path(c['suit'], c['val']), filename=f"dealer_{i+1}.png")
-                for i, c in enumerate(self.dealer_hand)
-            ]
+            
+            path1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+            path2 = get_card_image_path(self.dealer_hand[1]['suit'], self.dealer_hand[1]['val'])
+            merged_path = merge_card_images(path1, path2, "cards/dealer_merged.png")
+            
+            d_files = [discord.File(merged_path, filename="dealer.png")]
+            embed.set_image(url="attachment://dealer.png")
         else:
             dealer_text = "手札（2枚目は裏面）"
             d_cards_str = f"{self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}, 裏面"
-            d_files = [
-                discord.File(get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val']), filename="dealer_1.png"),
-                discord.File(get_card_image_path('back', 0), filename="dealer_2.png")
-            ]
+            
+            path1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+            path2 = get_card_image_path('back', 0)
+            merged_path = merge_card_images(path1, path2, "cards/dealer_merged.png")
+            
+            d_files = [discord.File(merged_path, filename="dealer.png")]
+            embed.set_image(url="attachment://dealer.png")
 
-        # プレイヤー側の表示内容と画像パス
+        # プレイヤー側の表示内容と画像パス（従来通り）
         p_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand])
         p_files = [
             discord.File(get_card_image_path(c['suit'], c['val']), filename=f"player_{i+1}.png")
             for i, c in enumerate(self.player_hand)
         ]
 
-        # 埋め込みにテキスト情報を追加
         embed.add_field(name=f"ディーラーの{dealer_text}", value=d_cards_str, inline=False)
         embed.add_field(name=f"プレイヤーの手札 (合計: {p_score})", value=p_cards_str, inline=False)
 
         if game_over:
             embed.add_field(name="【試合結果】", value=result, inline=False)
 
-        # すべてのカード画像を添付ファイルとしてまとめる
+        # 合成したディーラー画像 ＋ プレイヤーのカードたちを結合して送信
         files = d_files + p_files
         
         return embed, files

@@ -110,6 +110,35 @@ def number_emoji(value):
         NUMBER_EMOJIS[int(char)] if char.isdigit() else char
         for char in str(value)
     )
+# ==========================================
+# 金額設定・管理用コマンド
+# ==========================================
+@tree.command(name="decidecash", description="指定したユーザーの残高を設定します")
+@app_commands.describe(
+    target="残高を設定する対象のユーザーを選択",
+    amount="設定したい残高の金額"
+)
+@app_commands.default_permissions(administrator=True)
+async def decide_cash(interaction: discord.Interaction, target: discord.User, amount: int):
+    if amount < 0:
+        await interaction.response.send_message("残高にマイナスの値は設定できません。", ephemeral=True)
+        return
+
+    balances = load_balances()
+    user_id = str(target.id)
+    
+    balances[user_id] = amount
+    save_balances(balances)
+
+    embed = discord.Embed(
+        title="💰 残高設定完了",
+        description=f"{target.mention} さんの残高を **{amount:,}** に変更しました。",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"実行者: {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
+
 # ==================================================
 # 金額表示
 # ==================================================

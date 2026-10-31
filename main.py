@@ -2056,61 +2056,169 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         latest_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, latest_balance + bet)
         raise
-# ==================================================
-# .bj ブラックジャック（手札表示テスト）
-# ==================================================
+# ==========================================
+# 1. 画像ファイル名変換関数
+# ==========================================
+def get_card_image_path(suit, value):
+    """
+    スートと値から、対応するIMGファイル名のパスを返す関数
+    suit: 'spade', 'club', 'diamond', 'heart', 'joker', 'back'
+    value: 1〜13 (または 'A', 'J', 'Q', 'K' などの文字)
+    """
+    if suit == 'back':
+        return "cards/IMG_0678.png"
+    if suit == 'joker':
+        return "cards/IMG_0677.png"
+        
+    # 各スートの開始番号
+    suit_offsets = {
+        'spade': 625,    # 0625 〜 0637 (13枚)
+        'club': 638,     # 0638 〜 0650 (13枚)
+        'diamond': 651,  # 0651 〜 0663 (13枚)
+        'heart': 664     # 0664 〜 0676 (13枚)
+    }
+    
+    if suit in suit_offsets:
+        base = suit_offsets[suit]
+        
+        # 'A' などを数値に変換する処理
+        if isinstance(value, str):
+            val_map = {'A': 1, 'J': 11, 'Q': 12, 'K': 13}
+            val = val_map.get(value.upper(), int(value))
+        else:
+            val = int(value)
+            
+        file_num = base + (val - 1)
+        return f"cards/IMG_{file_num:04d}.png"
+        
+    return "cards/IMG_0678.png"
 
-CARD_DIR = "cards"  # カード画像を保存しているフォルダ名
 
-def get_card_filename(suit, value):
-    return f"{suit}_{value}.png"
+# ==========================================
+# 2. カードのスコア計算用関数
+# ==========================================
+def calculate_hand(hand):
+    score = 0
+    aces = 0
+    for card in hand:
+        val = card['val']
+        if val in ['J', 'Q', 'K']:
+            score += 10
+        elif val == 'A':
+            aces += 1
+            score += 11
+        else:
+            score += int(val)
+            
+    # エースの調整（21を超えていたら1として扱う）
+    while score > 21 and aces > 0:
+        score -= 10
+        aces -= 1
+    return score
 
-@bot.command(name="bj")
+
+# ==========================================
+# 3. ボタンを使ったブラックジャックのゲームクラス
+# ==========================================
+class BlackjackView(discord.ui.View):
+    def __init__(self, ctx, deck, player_hand, dealer_hand):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.deck = deck
+        self.player_hand = player_hand
+        self.dealer_hand = dealer_hand
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # コマンドを実行した本人だけがボタンを押せるようにする
+        if interaction.user == self.ctx.author:
+            return True
+        await interaction.response.send_message("他の人のゲームには干渉できません！", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
+    async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # プレイヤーがカードを1枚引く
+        self.player_hand.append(self.deck.pop())
+        p_score = calculate_hand(self.player_hand)
+
+        if p_score > 21:
+            # バースト（負け）
+            for child in self.children:
+                child.disabled = True
+            embed = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
+            await interaction.response.edit_message(embed=embed, view=self)
+            self.stop()
+        else:
+            embed = self.create_embed(game_over=False)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
+    async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # ディーラーのターン：スコアが17以上になるまで引き続ける
+        while calculate_hand(self.dealer_hand) < 17:
+            self.dealer_hand.append(self.deck.pop())
+
+        p_score = calculate_hand(self.player_hand)
+        d_score = calculate_hand(self.dealer_hand)
+
+        # 勝敗判定
+        if d_score > 21:
+            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+        elif p_score > d_score:
+            result = "あなたの勝ちです！ 🏆"
+        elif p_score < d_score:
+            result = "あなたの負けです… 😢"
+        else:
+            result = "引き分け (Push) です！ 🤝"
+
+        for child in self.children:
+            child.disabled = True
+
+        embed = self.create_embed(game_over=True, result=result)
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    def create_embed(self, game_over=False, result=""):
+        embed = discord.Embed(title="🃏 ブラックジャック", color=discord.Color.gold())
+        
+        p_score = calculate_hand(self.player_hand)
+        if game_over:
+            d_score = calculate_hand(self.dealer_hand)
+            dealer_text = f"手札（合計: {d_score}）"
+        else:
+            dealer_text = "手札（1枚目は隠されています）"
+
+        embed.add_field(name=f"プレイヤーのターン (合計: {p_score})", value=", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand]), inline=False)
+        embed.add_field(name=f"ディーラーの{dealer_text}", value=", ".join([f"{c['suit']}の{c['val']}" if (game_over or i==0) else "裏面" for i, c in enumerate(self.dealer_hand)]), inline=False)
+
+        if game_over:
+            embed.add_field(name="【試合結果】", value=result, inline=False)
+            
+        return embed
+
+
+# ==========================================
+# 4. Discordコマンド定義 (.bj)
+# ==========================================
+@commands.command(name="bj")
 async def blackjack(ctx):
-    if ctx.guild is None:
-        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
-        return
+    suits = ['spade', 'club', 'diamond', 'heart']
+    values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+    
+    # デッキ（山札）の作成
+    deck = [{'suit': s, 'val': v} for s in suits for v in values]
+    random.shuffle(deck)
 
-    suits = ["spade", "club", "diamond", "heart"]
-    values = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
-    
-    # テスト用の仮カード選出（※後ほど本格的なゲームループに置き換えます）
-    dealer_card1 = (random.choice(suits), random.choice(values))
-    player_card1 = (random.choice(suits), random.choice(values))
-    
-    d_path = os.path.join(CARD_DIR, get_card_filename(*dealer_card1))
-    p_path = os.path.join(CARD_DIR, get_card_filename(*player_card1))
-    
-    files = []
-    
-    # 1. ディーラーエリア（見出し付き）
-    dealer_embed = discord.Embed(
-        title="━━━━ 🤵 ディーラーの手札 ━━━━",
-        color=discord.Color.red()
-    )
-    dealer_embed.add_field(name="【公開カード】", value=f"{dealer_card1[0].capitalize()} の {dealer_card1[1]}", inline=False)
-    
-    if os.path.exists(d_path):
-        files.append(discord.File(d_path, filename="dealer_card.png"))
-        dealer_embed.set_image(url="attachment://dealer_card.png")
+    # 配布
+    player_hand = [deck.pop(), deck.pop()]
+    dealer_hand = [deck.pop(), deck.pop()]
 
-    # 2. プレイヤーエリア（見出し付き）
-    player_embed = discord.Embed(
-        title="━━━━ 👤 あなたの手札 ━━━━",
-        color=discord.Color.green()
-    )
-    player_embed.add_field(name="【現在の合計】", value="合計: 10", inline=False)
+    view = BlackjackView(ctx, deck, player_hand, dealer_hand)
+    embed = view.create_embed(game_over=False)
     
-    if os.path.exists(p_path):
-        files.append(discord.File(p_path, filename="player_card.png"))
-        player_embed.set_image(url="attachment://player_card.png")
-
-    await ctx.reply(
-        content="## 🃏 BLACKJACK GAME",
-        embeds=[dealer_embed, player_embed],
-        files=files,
-        mention_author=False
-    )
+    view.message = await ctx.send(embed=embed, view=view)
+    
 
 # ==================================================
 # .cash 残高確認

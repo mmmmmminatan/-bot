@@ -2081,7 +2081,6 @@ def get_card_image_path(suit, value):
     if suit in suit_offsets:
         base = suit_offsets[suit]
         
-        # 'A' などを数値に変換する処理
         if isinstance(value, str):
             val_map = {'A': 1, 'J': 11, 'Q': 12, 'K': 13}
             val = val_map.get(value.upper(), int(value))
@@ -2110,7 +2109,6 @@ def calculate_hand(hand):
         else:
             score += int(val)
             
-    # エースの調整（21を超えていたら1として扱う）
     while score > 21 and aces > 0:
         score -= 10
         aces -= 1
@@ -2130,7 +2128,6 @@ class BlackjackView(discord.ui.View):
         self.message = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # コマンドを実行した本人だけがボタンを押せるようにする
         if interaction.user == self.ctx.author:
             return True
         await interaction.response.send_message("他の人のゲームには干渉できません！", ephemeral=True)
@@ -2138,31 +2135,27 @@ class BlackjackView(discord.ui.View):
 
     @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # プレイヤーがカードを1枚引く
         self.player_hand.append(self.deck.pop())
         p_score = calculate_hand(self.player_hand)
 
         if p_score > 21:
-            # バースト（負け）
             for child in self.children:
                 child.disabled = True
-            embed = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.response.edit_message(embed=embed, view=self)
+            embed, file = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
             self.stop()
         else:
-            embed = self.create_embed(game_over=False)
-            await interaction.response.edit_message(embed=embed, view=self)
+            embed, file = self.create_embed(game_over=False)
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
     @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
     async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ディーラーのターン：スコアが17以上になるまで引き続ける
         while calculate_hand(self.dealer_hand) < 17:
             self.dealer_hand.append(self.deck.pop())
 
         p_score = calculate_hand(self.player_hand)
         d_score = calculate_hand(self.dealer_hand)
 
-        # 勝敗判定
         if d_score > 21:
             result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
         elif p_score > d_score:
@@ -2175,8 +2168,8 @@ class BlackjackView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
-        embed = self.create_embed(game_over=True, result=result)
-        await interaction.response.edit_message(embed=embed, view=self)
+        embed, file = self.create_embed(game_over=True, result=result)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         self.stop()
 
     def create_embed(self, game_over=False, result=""):
@@ -2186,8 +2179,15 @@ class BlackjackView(discord.ui.View):
         if game_over:
             d_score = calculate_hand(self.dealer_hand)
             dealer_text = f"手札（合計: {d_score}）"
+            # ゲーム終了時はディーラーの1枚目のカード画像を表示
+            img_path = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
         else:
             dealer_text = "手札（1枚目は隠されています）"
+            # ゲーム中は裏面の画像を表示
+            img_path = get_card_image_path('back', 0)
+
+        file = discord.File(img_path, filename="card.png")
+        embed.set_image(url="attachment://card.png")
 
         embed.add_field(name=f"プレイヤーのターン (合計: {p_score})", value=", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand]), inline=False)
         embed.add_field(name=f"ディーラーの{dealer_text}", value=", ".join([f"{c['suit']}の{c['val']}" if (game_over or i==0) else "裏面" for i, c in enumerate(self.dealer_hand)]), inline=False)
@@ -2195,7 +2195,7 @@ class BlackjackView(discord.ui.View):
         if game_over:
             embed.add_field(name="【試合結果】", value=result, inline=False)
             
-        return embed
+        return embed, file
 
 
 # ==========================================
@@ -2206,19 +2206,17 @@ async def blackjack(ctx):
     suits = ['spade', 'club', 'diamond', 'heart']
     values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
     
-    # デッキ（山札）の作成
     deck = [{'suit': s, 'val': v} for s in suits for v in values]
     random.shuffle(deck)
 
-    # 配布
     player_hand = [deck.pop(), deck.pop()]
     dealer_hand = [deck.pop(), deck.pop()]
 
     view = BlackjackView(ctx, deck, player_hand, dealer_hand)
-    embed = view.create_embed(game_over=False)
+    embed, file = view.create_embed(game_over=False)
     
-    view.message = await ctx.send(embed=embed, view=view)
-    
+    view.message = await ctx.send(embed=embed, file=file, view=view)
+
 
 # ==================================================
 # .cash 残高確認

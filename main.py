@@ -2400,6 +2400,78 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
     await execute_slot(ctx, base_bet, line_choice)
 
+# ==================================================
+# /decidecash 指定したユーザーの残高を設定
+# ==================================================
+
+@bot.tree.command(
+    name="decidecash",
+    description="指定したユーザーの残高を設定する（管理者専用）",
+)
+@app_commands.describe(
+    target="残高を設定する対象のユーザー",
+    amount="設定する金額",
+)
+@app_commands.default_permissions(administrator=True)
+async def decidecash_command(interaction: discord.Interaction, target: discord.User, amount: int):
+    if interaction.guild is None:
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+        return
+
+    if target.bot:
+        await interaction.response.send_message("Botの残高は設定できないよ。", ephemeral=True)
+        return
+
+    if amount < 0:
+        await interaction.response.send_message("残高にマイナスの値は設定できないよ。", ephemeral=True)
+        return
+
+    before = get_balance(target.id)
+    set_balance(target.id, amount)
+
+    embed = discord.Embed(
+        title="💰 残高設定",
+        description=(
+            f"対象：{target.mention}\n"
+            f"設定金額：**{money(amount)}**\n"
+            f"変更前：**{money(before)}**\n"
+            f"実行者：{interaction.user.mention}"
+        ),
+        color=discord.Color.gold(),
+    )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # 履歴用データに記録
+    record_coin({
+        "type": "decidecash",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": interaction.guild.id,
+        "user_id": target.id,
+        "username": str(target),
+        "actor_id": interaction.user.id,
+        "actor_name": str(interaction.user),
+        "amount": amount,
+        "before": before,
+        "after": amount,
+    })
+
+    # 固定ログチャンネルへ通知
+    await send_coin_log(
+        interaction.guild,
+        discord.Embed(
+            title="💰 Decidecashログ",
+            description=(
+                f"対象：{target.mention} (`{target.id}`)\n"
+                f"実行者：{interaction.user.mention} (`{interaction.user.id}`)\n"
+                f"設定金額：**{money(amount)}**\n"
+                f"変更前：**{money(before)}**\n"
+                f"変更後：**{money(amount)}**"
+            ),
+            color=discord.Color.gold(),
+        ),
+    )
+
 
 # ==================================================
 # /payment 残高の増減（スラッシュコマンド版）

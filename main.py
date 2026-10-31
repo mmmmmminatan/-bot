@@ -3402,7 +3402,7 @@ def run_web():
 
 
 # ==========================================
-# 🃏 ブラックジャック関連機能（画像合成・文字埋め込み版）
+# 🃏 ブラックジャック関連機能（上下合体・1枚画像完結版）
 # ==========================================
 
 from PIL import Image
@@ -3434,28 +3434,57 @@ def get_card_image_path(suit, value):
     return "cards/IMG_0678.png"
 
 
-def merge_card_images(image_path1, image_path2, output_path="cards/dealer_merged.png"):
+def merge_horizontal(image_paths):
     try:
-        img1 = Image.open(image_path1)
-        img2 = Image.open(image_path2)
+        images = [Image.open(p) for p in image_paths]
+        if not images:
+            return None
         
-        h = max(img1.height, img2.height)
-        if img1.height != h:
-            img1 = img1.resize((int(img1.width * h / img1.height), h))
-        if img2.height != h:
-            img2 = img2.resize((int(img2.width * h / img2.height), h))
+        h = max(img.height for img in images)
+        resized_images = []
+        for img in images:
+            if img.height != h:
+                img = img.resize((int(img.width * h / img.height), h))
+            resized_images.append(img)
             
-        total_width = img1.width + img2.width
+        total_width = sum(img.width for img in resized_images)
         merged_img = Image.new('RGBA', (total_width, h))
         
-        merged_img.paste(img1, (0, 0))
-        merged_img.paste(img2, (img1.width, 0))
+        x_offset = 0
+        for img in resized_images:
+            merged_img.paste(img, (x_offset, 0))
+            x_offset += img.width
+            
+        return merged_img
+    except Exception as e:
+        print(f"[HORIZONTAL MERGE ERROR] {e}")
+        return None
+
+
+def create_bj_table_image(dealer_paths, player_paths, output_path="cards/bj_table.png"):
+    try:
+        img_dealer = merge_horizontal(dealer_paths)
+        img_player = merge_horizontal(player_paths)
         
-        merged_img.save(output_path)
+        if not img_dealer or not img_player:
+            return dealer_paths[0] if dealer_paths else None
+            
+        max_width = max(img_dealer.width, img_player.width)
+        total_height = img_dealer.height + img_player.height
+        
+        table_img = Image.new('RGBA', (max_width, total_height), (0, 0, 0, 0))
+        
+        d_x = (max_width - img_dealer.width) // 2
+        table_img.paste(img_dealer, (d_x, 0))
+        
+        p_x = (max_width - img_player.width) // 2
+        table_img.paste(img_player, (p_x, img_dealer.height))
+        
+        table_img.save(output_path)
         return output_path
     except Exception as e:
-        print(f"[IMAGE MERGE ERROR] {e}")
-        return image_path1
+        print(f"[TABLE MERGE ERROR] {e}")
+        return dealer_paths[0]
 
 
 def calculate_hand(hand):
@@ -3536,44 +3565,31 @@ class BlackjackView(discord.ui.View):
         
         p_score = calculate_hand(self.player_hand)
         
-        # ディーラー側の画像（2枚を1枚に合成）
         if game_over:
             d_score = calculate_hand(self.dealer_hand)
             dealer_text = f"手札（合計: {d_score}）"
-            d_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.dealer_hand])
-            
-            path1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
-            path2 = get_card_image_path(self.dealer_hand[1]['suit'], self.dealer_hand[1]['val'])
-            merged_path = merge_card_images(path1, path2, "cards/dealer_merged.png")
-            
-            d_files = [discord.File(merged_path, filename="dealer.png")]
-            embed.set_image(url="attachment://dealer.png")
+            dealer_paths = [get_card_image_path(c['suit'], c['val']) for c in self.dealer_hand]
         else:
             dealer_text = "手札（2枚目は裏面）"
-            d_cards_str = f"{self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}, 裏面"
-            
             path1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
             path2 = get_card_image_path('back', 0)
-            merged_path = merge_card_images(path1, path2, "cards/dealer_merged.png")
-            
-            d_files = [discord.File(merged_path, filename="dealer.png")]
-            embed.set_image(url="attachment://dealer.png")
+            dealer_paths = [path1, path2]
 
-        # プレイヤー側の表示内容と画像パス（従来通り）
+        player_paths = [get_card_image_path(c['suit'], c['val']) for c in self.player_hand]
+
+        table_image_path = create_bj_table_image(dealer_paths, player_paths, "cards/bj_table.png")
+        files = [discord.File(table_image_path, filename="table.png")]
+        
+        embed.set_image(url="attachment://table.png")
+
+        d_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.dealer_hand]) if game_over else f"{self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}, 裏面"
         p_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand])
-        p_files = [
-            discord.File(get_card_image_path(c['suit'], c['val']), filename=f"player_{i+1}.png")
-            for i, c in enumerate(self.player_hand)
-        ]
 
         embed.add_field(name=f"ディーラーの{dealer_text}", value=d_cards_str, inline=False)
         embed.add_field(name=f"プレイヤーの手札 (合計: {p_score})", value=p_cards_str, inline=False)
 
         if game_over:
             embed.add_field(name="【試合結果】", value=result, inline=False)
-
-        # 合成したディーラー画像 ＋ プレイヤーのカードたちを結合して送信
-        files = d_files + p_files
         
         return embed, files
 

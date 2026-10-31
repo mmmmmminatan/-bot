@@ -3505,7 +3505,6 @@ def calculate_hand(hand):
         aces -= 1
     return score
 
-
 class BlackjackView(discord.ui.View):
     def __init__(self, ctx, deck, player_hand, dealer_hand):
         super().__init__(timeout=60)
@@ -3515,6 +3514,14 @@ class BlackjackView(discord.ui.View):
         self.dealer_hand = dealer_hand
         self.message = None
 
+    def check_deck(self):
+        # 山札が残り少なくなったら新しく作り直す
+        if len(self.deck) < 10:
+            suits = ['spade', 'club', 'diamond', 'heart']
+            values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+            self.deck = [{'suit': s, 'val': v} for s in suits for v in values]
+            random.shuffle(self.deck)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user == self.ctx.author:
             return True
@@ -3523,8 +3530,9 @@ class BlackjackView(discord.ui.View):
 
     @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()  # 3秒制限によるタイムアウトを防ぐ
+        await interaction.response.defer()
         
+        self.check_deck()
         self.player_hand.append(self.deck.pop())
         p_score = calculate_hand(self.player_hand)
 
@@ -3532,17 +3540,24 @@ class BlackjackView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
             embed, files = self.create_embed_and_files(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
+            try:
+                await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
+            except Exception:
+                await interaction.edit_original_response(embed=embed, view=self)
             self.stop()
         else:
             embed, files = self.create_embed_and_files(game_over=False)
-            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
+            try:
+                await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
+            except Exception:
+                await interaction.edit_original_response(embed=embed, view=self)
 
     @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
     async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()  # 3秒制限によるタイムアウトを防ぐ
+        await interaction.response.defer()
         
         while calculate_hand(self.dealer_hand) < 17:
+            self.check_deck()
             self.dealer_hand.append(self.deck.pop())
 
         p_score = calculate_hand(self.player_hand)
@@ -3561,7 +3576,10 @@ class BlackjackView(discord.ui.View):
             child.disabled = True
 
         embed, files = self.create_embed_and_files(game_over=True, result=result)
-        await interaction.edit_original_response(embed=embed, attachments=files, view=self)
+        try:
+            await interaction.edit_original_response(embed=embed, attachments=[discord.File(files[0].fp, filename="table.png")], view=self)
+        except Exception:
+            await interaction.edit_original_response(embed=embed, view=self)
         self.stop()
 
     def create_embed_and_files(self, game_over=False, result=""):
@@ -3589,14 +3607,13 @@ class BlackjackView(discord.ui.View):
         d_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.dealer_hand]) if game_over else f"{self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}, 裏面"
         p_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand])
 
-        embed.add_field(name=f"ディーラーの{dealer_text}", value=d_cards_str, inline=False)
-        embed.add_field(name=f"プレイヤーの手札 (合計: {p_score})", value=p_cards_str, inline=False)
+        embed.add_field(name=f"**ディーラーの{dealer_text}**", value=d_cards_str, inline=False)
+        embed.add_field(name=f"**プレイヤーの手札 (合計: {p_score})**", value=p_cards_str, inline=False)
 
         if game_over:
-            embed.add_field(name="【試合結果】", value=result, inline=False)
+            embed.add_field(name="**【試合結果】**", value=result, inline=False)
         
         return embed, files
-
 
 @bot.command(name="bj")
 async def blackjack(ctx):

@@ -262,7 +262,7 @@ def check_jackpot(bet_amount):
     elif 100 <= bet_amount <= 499:
         chance = 500
     elif bet_amount >= 500:
-        chance = 250  # 500以上ならいくらであっても 1/250
+        chance = 1  # 500以上ならいくらであっても 1/250
     else:
         chance = None
 

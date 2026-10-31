@@ -3614,12 +3614,12 @@ class BlackjackView(discord.ui.View):
         if p_score > 21:
             for child in self.children:
                 child.disabled = True
-            embed, file = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+            embed, files = self.create_embed(game_over=True, result="バースト！あなたの負けです… 😭")
+            await interaction.response.edit_message(embed=embed, attachments=files, view=self)
             self.stop()
         else:
-            embed, file = self.create_embed(game_over=False)
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+            embed, files = self.create_embed(game_over=False)
+            await interaction.response.edit_message(embed=embed, attachments=files, view=self)
 
     @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
     async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3641,32 +3641,57 @@ class BlackjackView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
-        embed, file = self.create_embed(game_over=True, result=result)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+        embed, files = self.create_embed(game_over=True, result=result)
+        await interaction.response.edit_message(embed=embed, attachments=files, view=self)
         self.stop()
 
     def create_embed(self, game_over=False, result=""):
         embed = discord.Embed(title="🃏 ブラックジャック", color=discord.Color.gold())
         
         p_score = calculate_hand(self.player_hand)
+        
+        # プレイヤーの1枚目と2枚目の画像パスを取得
+        p_img1 = get_card_image_path(self.player_hand[0]['suit'], self.player_hand[0]['val'])
+        p_img2 = get_card_image_path(self.player_hand[1]['suit'], self.player_hand[1]['val'])
+        
+        # ディーラーの表示設定
         if game_over:
             d_score = calculate_hand(self.dealer_hand)
             dealer_text = f"手札（合計: {d_score}）"
-            img_path = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+            d_img1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+            d_img2 = get_card_image_path(self.dealer_hand[1]['suit'], self.dealer_hand[1]['val'])
         else:
-            dealer_text = "手札（1枚目は隠されています）"
-            img_path = get_card_image_path('back', 0)
+            dealer_text = "手札（2枚目は裏面）"
+            d_img1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
+            # ゲーム中は2枚目を裏面にする
+            d_img2 = get_card_image_path('back', 0)
 
-        file = discord.File(img_path, filename="card.png")
-        embed.set_image(url="attachment://card.png")
+        # Discordに添付するファイル群を作成
+        files = [
+            discord.File(d_img1, filename="dealer_1.png"),
+            discord.File(d_img2, filename="dealer_2.png"),
+            discord.File(p_img1, filename="player_1.png"),
+            discord.File(p_img2, filename="player_2.png"),
+        ]
 
-        embed.add_field(name=f"プレイヤーのターン (合計: {p_score})", value=", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand]), inline=False)
-        embed.add_field(name=f"ディーラーの{dealer_text}", value=", ".join([f"{c['suit']}の{c['val']}" if (game_over or i==0) else "裏面" for i, c in enumerate(self.dealer_hand)]), inline=False)
+        # 埋め込みにそれぞれの画像を設定（サムネイルやメイン画像として配置）
+        embed.add_field(
+            name=f"ディーラーの{dealer_text}",
+            value=f"1枚目: {self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}",
+            inline=False
+        )
+        embed.set_image(url="attachment://dealer_1.png") # まずはディーラーの1枚目などをメインに
+
+        embed.add_field(
+            name=f"プレイヤーの手札 (合計: {p_score})",
+            value=f"{self.player_hand[0]['suit']}の{self.player_hand[0]['val']} , {self.player_hand[1]['suit']}の{self.player_hand[1]['val']}",
+            inline=False
+        )
 
         if game_over:
             embed.add_field(name="【試合結果】", value=result, inline=False)
             
-        return embed, file
+        return embed, files
 
 
 @bot.command(name="bj")
@@ -3681,9 +3706,9 @@ async def blackjack(ctx):
     dealer_hand = [deck.pop(), deck.pop()]
 
     view = BlackjackView(ctx, deck, player_hand, dealer_hand)
-    embed, file = view.create_embed(game_over=False)
+    embed, files = view.create_embed(game_over=False)
     
-    view.message = await ctx.send(embed=embed, file=file, view=view)
+    view.message = await ctx.send(embed=embed, files=files, view=view)
 
     
 # ==================================================

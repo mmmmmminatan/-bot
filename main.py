@@ -2270,10 +2270,15 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     jp_nums = [number_emoji(ch) for ch in jp_pool_str]
     jp_display_parts = "<:emoji_20:1565598463154982972>" + "".join(jp_nums)
 
-    # 3桁制限とゼロ埋め
-    bet_money_str = f"{total_bet:03d}"[-3:]
-    won_money_str = f"{total_payout:05d}"
-    bal_money_str = str(new_balance)[-11:]
+    # 桁数が大きくなっても小さくなってもエラーにならないように安全に処理
+    bet_money_str = str(total_bet)[-3:].zfill(3)
+    won_money_str = str(max(0, total_payout))[-5:].zfill(5)
+    
+    bal_str = str(abs(int(new_balance)))
+    if len(bal_str) > 11:
+        bal_money_str = bal_str[-11:]
+    else:
+        bal_money_str = bal_str.zfill(11)
 
     b = [number_emoji(ch) for ch in bet_money_str]
     w = [number_emoji(ch) for ch in won_money_str]

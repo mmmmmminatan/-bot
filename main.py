@@ -261,17 +261,16 @@ def check_jackpot(bet_amount):
         chance = 2500
     elif 100 <= bet_amount <= 499:
         chance = 500
-    elif 500 <= bet_amount <= 999:
-        chance = 100
-    elif 1000 <= bet_amount <= 3000:
-        chance = 30
+    elif bet_amount >= 500:
+        chance = 250  # 500以上ならいくらであっても 1/250
     else:
-        chance = 1 if bet_amount >= 10000 else None
+        chance = None
 
     if chance is None:
         return False
 
     return random.randint(1, chance) == 1
+
 
 # ==================================================
 # 権限チェック

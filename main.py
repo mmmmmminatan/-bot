@@ -251,6 +251,27 @@ def resolve_bet(user_id, bet_text):
         return None
 
 # ==================================================
+# ★ ここにジャックポット判定用の関数を置く
+# ==================================================
+
+def check_jackpot(bet_amount):
+    if 1 <= bet_amount <= 9:
+        chance = 10000
+    elif 10 <= bet_amount <= 99:
+        chance = 2500
+    elif 100 <= bet_amount <= 499:
+        chance = 500
+    elif 500 <= bet_amount <= 999:
+        chance = 250
+    else:
+        chance = 250 if bet_amount >= 1000 else None
+
+    if chance is None:
+        return False
+
+    return random.randint(1, chance) == 1
+
+# ==================================================
 # 権限チェック
 # ==================================================
 

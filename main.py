@@ -3403,7 +3403,7 @@ def run_web():
 
 
 # ==========================================
-# 🃏 ブラックジャック関連機能（配当対応完全版）
+# ブラックジャック関連機能（ダブルダウン対応完全版）
 # ==========================================
 
 from PIL import Image
@@ -3419,7 +3419,6 @@ import discord
 
 BJ_TIMEOUT = 300
 
-# 同時に複数ゲームを開始させない
 active_blackjack_users = set()
 
 
@@ -3508,9 +3507,7 @@ def merge_horizontal(image_paths):
         for img in images:
 
             if img.height != h:
-
                 new_width = int(img.width * h / img.height)
-
                 img = img.resize((new_width, h))
 
             resized_images.append(img)
@@ -3540,7 +3537,6 @@ def merge_horizontal(image_paths):
     except Exception as e:
 
         print(f"[BJ HORIZONTAL ERROR] {e}")
-
         return None
 
 
@@ -3602,7 +3598,6 @@ def create_bj_table_image(
     except Exception as e:
 
         print(f"[BJ TABLE ERROR] {e}")
-
         return None
 
 
@@ -3630,7 +3625,6 @@ def calculate_hand(hand):
             score += int(val)
 
     while score > 21 and aces > 0:
-
         score -= 10
         aces -= 1
 
@@ -3681,10 +3675,13 @@ class BlackjackView(discord.ui.View):
         self.player_hand = player_hand
         self.dealer_hand = dealer_hand
 
+        # 元の賭け金
+        self.original_bet = bet
+
+        # 現在の合計賭け金
         self.bet = bet
 
         self.message = None
-
         self.lock = asyncio.Lock()
 
         self.game_over = False
@@ -3692,7 +3689,12 @@ class BlackjackView(discord.ui.View):
 
         self.user_id = ctx.author.id
 
-        # ゲームごとに画像ファイルを分ける
+        # ダブルダウン使用済みか
+        self.doubled_down = False
+
+        # 最初の2枚の状態でのみ使用可能
+        self.can_double_down = True
+
         self.image_path = f"cards/bj_table_{id(self)}.png"
 
     # --------------------------------------
@@ -3704,11 +3706,9 @@ class BlackjackView(discord.ui.View):
         if self.settled:
             return 0, 0
 
-        self.settled = True
-
         if outcome == "bj":
 
-            # BJ：2.5倍返却
+            # ブラックジャック：2.5倍返却
             returned = self.bet * 5 // 2
 
         elif outcome == "win":
@@ -3718,7 +3718,7 @@ class BlackjackView(discord.ui.View):
 
         elif outcome == "push":
 
-            # 引き分け：賭け金返却
+            # 引き分け：全額返却
             returned = self.bet
 
         else:
@@ -3726,10 +3726,9 @@ class BlackjackView(discord.ui.View):
             # 敗北：返却なし
             returned = 0
 
-        # 純利益
         profit = returned - self.bet
 
-        # 既存の残高システムに接続
+        # 残高更新
         current_balance = get_balance(self.user_id)
 
         set_balance(
@@ -3737,7 +3736,9 @@ class BlackjackView(discord.ui.View):
             current_balance + returned
         )
 
-        # 同時ゲーム防止解除
+        # 残高更新成功後に決済済みにする
+        self.settled = True
+
         active_blackjack_users.discard(self.user_id)
 
         return profit, returned
@@ -3748,12 +3749,17 @@ class BlackjackView(discord.ui.View):
 
     def finish_game(self, result, outcome):
 
+        if self.game_over:
+            return
+
+        profit, returned = self.settle_game(outcome)
+
         self.game_over = True
+
+        self.can_double_down = False
 
         for child in self.children:
             child.disabled = True
-
-        profit, returned = self.settle_game(outcome)
 
         if outcome in ["win", "bj"]:
             color = discord.Color.green()
@@ -3771,13 +3777,12 @@ class BlackjackView(discord.ui.View):
         self.final_color = color
 
     # --------------------------------------
-    # 山札補充
+    # 山札確認
     # --------------------------------------
 
     def check_deck(self):
 
         if not self.deck:
-
             raise RuntimeError("山札がなくなりました。")
 
     # --------------------------------------
@@ -3795,6 +3800,61 @@ class BlackjackView(discord.ui.View):
         )
 
         return False
+
+    # --------------------------------------
+    # ディーラーの勝負処理
+    # --------------------------------------
+
+    def resolve_dealer(self):
+
+        while calculate_hand(self.dealer_hand) < 17:
+
+            self.check_deck()
+
+            self.dealer_hand.append(
+                self.deck.pop()
+            )
+
+        p_score = calculate_hand(self.player_hand)
+        d_score = calculate_hand(self.dealer_hand)
+
+        if d_score > 21:
+
+            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+            outcome = "win"
+
+        elif p_score > d_score:
+
+            result = "あなたの勝ちです！ 🏆"
+            outcome = "win"
+
+        elif p_score < d_score:
+
+            result = "あなたの負けです… 😢"
+            outcome = "lose"
+
+        else:
+
+            result = "引き分け (Push) です！ 🤝"
+            outcome = "push"
+
+        self.finish_game(result, outcome)
+
+    # --------------------------------------
+    # 操作エラー表示
+    # --------------------------------------
+
+    async def send_error(self, interaction, message):
+
+        try:
+
+            await interaction.followup.send(
+                message,
+                ephemeral=True
+            )
+
+        except discord.HTTPException:
+            pass
 
     # --------------------------------------
     # タイムアウト
@@ -3832,9 +3892,9 @@ class BlackjackView(discord.ui.View):
 
             self.stop()
 
-    # --------------------------------------
+    # ======================================
     # ヒット
-    # --------------------------------------
+    # ======================================
 
     @discord.ui.button(
         label="ヒット (Hit)",
@@ -3846,29 +3906,23 @@ class BlackjackView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        if self.lock.locked():
-
-            await interaction.response.send_message(
-                "現在処理中です！",
-                ephemeral=True
-            )
-
-            return
+        await interaction.response.defer()
 
         async with self.lock:
 
             if self.game_over:
 
-                await interaction.response.send_message(
-                    "このゲームは終了しています。",
-                    ephemeral=True
+                await self.send_error(
+                    interaction,
+                    "このゲームは終了しています。"
                 )
-
                 return
 
-            await interaction.response.defer()
-
             try:
+
+                # ヒットしたらダブルダウン不可
+                self.can_double_down = False
+                self.double_down.disabled = True
 
                 self.check_deck()
 
@@ -3904,16 +3958,14 @@ class BlackjackView(discord.ui.View):
 
                 print(f"[BJ HIT ERROR] {e}")
 
-                if not interaction.response.is_done():
+                await self.send_error(
+                    interaction,
+                    "処理中にエラーが発生しました。"
+                )
 
-                    await interaction.response.send_message(
-                        "処理中にエラーが発生しました。",
-                        ephemeral=True
-                    )
-
-    # --------------------------------------
+    # ======================================
     # スタンド
-    # --------------------------------------
+    # ======================================
 
     @discord.ui.button(
         label="スタンド (Stand)",
@@ -3925,75 +3977,25 @@ class BlackjackView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        if self.lock.locked():
-
-            await interaction.response.send_message(
-                "現在処理中です！",
-                ephemeral=True
-            )
-
-            return
+        await interaction.response.defer()
 
         async with self.lock:
 
             if self.game_over:
 
-                await interaction.response.send_message(
-                    "このゲームは終了しています。",
-                    ephemeral=True
+                await self.send_error(
+                    interaction,
+                    "このゲームは終了しています。"
                 )
-
                 return
-
-            await interaction.response.defer()
 
             try:
 
-                # ディーラーは17以上になるまで引く
-                while calculate_hand(self.dealer_hand) < 17:
+                # スタンドしたらダブルダウン不可
+                self.can_double_down = False
+                self.double_down.disabled = True
 
-                    self.check_deck()
-
-                    self.dealer_hand.append(
-                        self.deck.pop()
-                    )
-
-                p_score = calculate_hand(
-                    self.player_hand
-                )
-
-                d_score = calculate_hand(
-                    self.dealer_hand
-                )
-
-                # ----------------------------------
-                # 勝敗判定
-                # ----------------------------------
-
-                if d_score > 21:
-
-                    result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
-                    outcome = "win"
-
-                elif p_score > d_score:
-
-                    result = "あなたの勝ちです！ 🏆"
-                    outcome = "win"
-
-                elif p_score < d_score:
-
-                    result = "あなたの負けです… 😢"
-                    outcome = "lose"
-
-                else:
-
-                    result = "引き分け (Push) です！ 🤝"
-                    outcome = "push"
-
-                self.finish_game(
-                    result,
-                    outcome
-                )
+                self.resolve_dealer()
 
                 embed, files = self.create_embed_and_files(
                     game_over=True
@@ -4011,21 +4013,147 @@ class BlackjackView(discord.ui.View):
 
                 print(f"[BJ STAND ERROR] {e}")
 
-                if not interaction.response.is_done():
+                await self.send_error(
+                    interaction,
+                    "処理中にエラーが発生しました。"
+                )
 
-                    await interaction.response.send_message(
-                        "処理中にエラーが発生しました。",
-                        ephemeral=True
+    # ======================================
+    # ダブルダウン
+    # ======================================
+
+    @discord.ui.button(
+        label="ダブルダウン (×2)",
+        style=discord.ButtonStyle.red
+    )
+    async def double_down(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.defer()
+
+        async with self.lock:
+
+            if self.game_over:
+
+                await self.send_error(
+                    interaction,
+                    "このゲームは終了しています。"
+                )
+                return
+
+            # 使用済みなら拒否
+            if self.doubled_down or not self.can_double_down:
+
+                button.disabled = True
+
+                await self.send_error(
+                    interaction,
+                    "ダブルダウンは使用できません。"
+                )
+                return
+
+            try:
+
+                # 追加で必要な金額
+                additional_bet = self.original_bet
+
+                current_balance = get_balance(self.user_id)
+
+                # 残高確認
+                if current_balance < additional_bet:
+
+                    await self.send_error(
+                        interaction,
+                        f"残高不足です！\n"
+                        f"追加で必要な金額：{bj_money(additional_bet)}\n"
+                        f"現在の残高：{bj_money(current_balance)}"
+                    )
+                    return
+
+                # ==================================
+                # 二重使用防止
+                # ==================================
+
+                self.doubled_down = True
+                self.can_double_down = False
+
+                # 即座にボタン無効化
+                button.disabled = True
+
+                # ヒット・スタンドも無効化
+                self.hit.disabled = True
+                self.stand.disabled = True
+
+                # ==================================
+                # 追加賭け金徴収
+                # ==================================
+
+                set_balance(
+                    self.user_id,
+                    current_balance - additional_bet
+                )
+
+                # 合計賭け金を2倍にする
+                self.bet += additional_bet
+
+                # ==================================
+                # カードを1枚だけ引く
+                # ==================================
+
+                self.check_deck()
+
+                self.player_hand.append(
+                    self.deck.pop()
+                )
+
+                p_score = calculate_hand(
+                    self.player_hand
+                )
+
+                # ==================================
+                # 自動勝負
+                # ==================================
+
+                if p_score > 21:
+
+                    self.finish_game(
+                        "ダブルダウン後にバースト！あなたの負けです… 😭",
+                        "lose"
                     )
 
-    # --------------------------------------
-    # Embed・画像作成
-    # --------------------------------------
+                else:
 
-    def create_embed_and_files(
-        self,
-        game_over=False
-    ):
+                    self.resolve_dealer()
+
+                embed, files = self.create_embed_and_files(
+                    game_over=True
+                )
+
+                await interaction.edit_original_response(
+                    embed=embed,
+                    attachments=files,
+                    view=self
+                )
+
+                self.stop()
+
+            except Exception as e:
+
+                print(f"[BJ DOUBLE DOWN ERROR] {e}")
+
+                await self.send_error(
+                    interaction,
+                    "ダブルダウンの処理中にエラーが発生しました。"
+                )
+
+    # ======================================
+    # Embed・画像作成
+    # ======================================
+
+    def create_embed_and_files(self, game_over=False):
 
         color = (
             self.final_color
@@ -4038,13 +4166,8 @@ class BlackjackView(discord.ui.View):
             color=color
         )
 
-        p_score = calculate_hand(
-            self.player_hand
-        )
-
-        d_score = calculate_hand(
-            self.dealer_hand
-        )
+        p_score = calculate_hand(self.player_hand)
+        d_score = calculate_hand(self.dealer_hand)
 
         # ----------------------------------
         # ディーラーのカード
@@ -4106,7 +4229,7 @@ class BlackjackView(discord.ui.View):
         )
 
         # ----------------------------------
-        # 画像合体
+        # 画像作成
         # ----------------------------------
 
         table_image_path = create_bj_table_image(
@@ -4151,26 +4274,30 @@ class BlackjackView(discord.ui.View):
         # ----------------------------------
 
         embed.add_field(
-            name="💰 賭け金",
+            name="💰 合計賭け金",
             value=bj_money(self.bet),
             inline=True
         )
 
-        if game_over:
+        if self.doubled_down:
 
-            # ----------------------------------
-            # 試合結果
-            # ----------------------------------
+            embed.add_field(
+                name="追加賭け金",
+                value=bj_money(self.original_bet),
+                inline=True
+            )
+
+        # ----------------------------------
+        # 終了後
+        # ----------------------------------
+
+        if game_over:
 
             embed.add_field(
                 name="【試合結果】",
                 value=self.final_result,
                 inline=False
             )
-
-            # ----------------------------------
-            # 利益・返却額
-            # ----------------------------------
 
             embed.add_field(
                 name="📊 今回の利益",
@@ -4192,7 +4319,11 @@ class BlackjackView(discord.ui.View):
 
             embed.add_field(
                 name="🎮 操作",
-                value="ヒットまたはスタンドを選択してください。",
+                value=(
+                    "ヒット：カードを引く\n"
+                    "スタンド：現在の手札で勝負\n"
+                    "ダブルダウン：賭け金を2倍にして1枚だけ引く"
+                ),
                 inline=False
             )
 
@@ -4214,18 +4345,12 @@ async def blackjack(ctx, bet: int = None):
 
     if bet is None:
 
-        await ctx.send(
-            "使い方：`.bj 1000`"
-        )
-
+        await ctx.send("使い方：`.bj 1000`")
         return
 
     if bet <= 0:
 
-        await ctx.send(
-            "賭け金は1以上にしてください。"
-        )
-
+        await ctx.send("賭け金は1以上にしてください。")
         return
 
     # --------------------------------------
@@ -4237,7 +4362,6 @@ async def blackjack(ctx, bet: int = None):
         await ctx.send(
             "既にブラックジャックをプレイ中です！"
         )
-
         return
 
     # --------------------------------------
@@ -4253,11 +4377,10 @@ async def blackjack(ctx, bet: int = None):
             f"必要額：{bj_money(bet)}\n"
             f"現在の残高：{bj_money(balance)}"
         )
-
         return
 
     # --------------------------------------
-    # 賭け金徴収
+    # ゲーム開始
     # --------------------------------------
 
     active_blackjack_users.add(user_id)
@@ -4378,7 +4501,7 @@ async def blackjack(ctx, bet: int = None):
 
         print(f"[BJ START ERROR] {e}")
 
-        # 開始時にエラーが発生した場合は返金
+        # 開始失敗時の返金
         if 'view' not in locals() or not view.settled:
 
             try:

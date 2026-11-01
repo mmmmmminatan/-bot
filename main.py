@@ -2729,62 +2729,131 @@ async def slot_help_command(ctx):
     await ctx.reply(embed=embed, mention_author=False)
 
 # ==================================================
-# /setting モーダル
+# 定数・初期設定
+# ==================================================
+SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣", "💣", "JP"]
+LOG_CHANNEL_ID = 123456789012345678  # ご自身のログチャンネルIDに変更してください
+PREFIX_SETTING = "[RESTORE_SETTING]"
+
+# サーバー設定のデフォルト構造
+DEFAULT_SERVER_SETTINGS = {
+    "bet_limits": {
+        "slot": {"min": 1, "max": "inf"},
+        "blackjack": {"min": 100, "max": 50000},
+        "color": {"min": 50, "max": "inf"}
+    },
+    "slot_detail": {
+        "weights": {"🍒": 20, "🍋": 20, "⭐": 20, "🔔": 20, "7️⃣": 20, "💣": 20, "JP": 5},
+        "red_jp_start": 50000,
+        "payouts": {"🍒": 2, "🍋": 5, "⭐": 10, "🔔": 20, "7️⃣": 50, "💣": 100, "JP": 500}
+    },
+    "maintenance": False
+}
+
+# ヘルパー関数群（既存環境に合わせてご調整ください）
+def get_weights_text(weights):
+    if isinstance(weights, dict):
+        return ", ".join(f"{k}={v}" for k, v in weights.items())
+    return str(weights)
+
+# 設定変更時に保存し、復元用ログチャンネルにJSONを送信する共通関数
+async def save_and_log_settings(interaction: discord.Interaction, success_msg: str):
+    if interaction.guild is None:
+        return
+    guild_id = interaction.guild.id
+    save_server_settings(guild_id)
+    settings = get_server_settings(guild_id)
+
+    log_channel = interaction.client.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        try:
+            log_text = f"{PREFIX_SETTING} GuildID:{guild_id} " + json.dumps(settings, default=str)
+            await log_channel.send(log_text)
+        except Exception as e:
+            print(f"[SETTING LOG ERROR] {e}")
+
+    await interaction.response.send_message(success_msg, ephemeral=True)
+
+
+# ==================================================
+# 1. 賭け金設定用 モーダル (最低・最高 / inf対応)
 # ==================================================
 
-class BetSettingModal(discord.ui.Modal):
-    def __init__(self, setting_type="min_bet"):
-        self.setting_type = setting_type
-        super().__init__(title="最低賭け金の設定")
+class BetLimitModal(discord.ui.Modal):
+    def __init__(self, game_key: str, game_display_name: str, current_limits: dict):
+        super().__init__(title=f"{game_display_name}の賭け金設定")
+        self.game_key = game_key
 
-        self.amount_input = discord.ui.TextInput(
-            label="最低賭け金",
-            placeholder="例：100",
-            default="1",
+        curr_min = current_limits.get("min", 1)
+        curr_max = current_limits.get("max", "inf")
+
+        self.min_input = discord.ui.TextInput(
+            label="最低賭け金 (0以上の整数)",
+            placeholder="例: 1",
+            default=str(curr_min),
             required=True,
-            min_length=1,
             max_length=15,
         )
-        self.add_item(self.amount_input)
+        self.max_input = discord.ui.TextInput(
+            label="最高賭け金 (制限なしは inf)",
+            placeholder="例: 10000 または inf",
+            default=str(curr_max),
+            required=True,
+            max_length=15,
+        )
+        self.add_item(self.min_input)
+        self.add_item(self.max_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         try:
-            amount = int(str(self.amount_input.value).strip())
-        except ValueError:
-            await interaction.response.send_message("整数で入力してね。", ephemeral=True)
-            return
+            min_val = int(self.min_input.value.strip())
+            if min_val < 0:
+                raise ValueError("最低賭け金は0以上にしてね。")
 
-        if amount < 1:
-            await interaction.response.send_message("最低賭け金は1以上にしてね。", ephemeral=True)
+            max_str = self.max_input.value.strip().lower()
+            if max_str in ["inf", "無限", "制限なし"]:
+                max_val = "inf"
+            else:
+                max_val = int(max_str)
+                if max_val < min_val:
+                    await interaction.response.send_message("最高賭け金は最低賭け金以上に設定してね。", ephemeral=True)
+                    return
+        except ValueError as e:
+            err_msg = str(e) if str(e) else "整数または `inf`（制限なし）を正しく入力してね。"
+            await interaction.response.send_message(err_msg, ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
-        settings["min_bet"] = amount
-        save_server_settings(interaction.guild.id)
+        if "bet_limits" not in settings:
+            settings["bet_limits"] = {}
+        
+        settings["bet_limits"][self.game_key] = {"min": min_val, "max": max_val}
 
-        await interaction.response.send_message(
-            f"最低賭け金を **{money(amount)}** に設定したよ。",
-            ephemeral=True,
+        max_display = "制限なし (inf)" if max_val == "inf" else f"${max_val:,}"
+        await save_and_log_settings(
+            interaction,
+            f"✅ **{game_display_name}** の賭け金を更新したよ。\n最低: `${min_val:,}` / 最高: `{max_display}`"
         )
 
+
+# ==================================================
+# 2. スロット詳細設定用 モーダル群
+# ==================================================
+
+# ① 出目出現確率
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
         super().__init__(title="スロット確率の設定")
-
-        current_value = ",".join(
-            f"{symbol}={current_weights.get(symbol, 0)}"
-            for symbol in SYMBOLS
-        )
+        current_value = ",".join(f"{s}={current_weights.get(s, 0)}" for s in SYMBOLS)
 
         self.weights_input = discord.ui.TextInput(
-            label="絵柄ごとの比率",
+            label="絵柄ごとの比率 (0で1回も出ない)",
             placeholder="🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20,💣=20,JP=5",
             default=current_value,
             required=True,
@@ -2796,132 +2865,218 @@ class WeightsSettingModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         raw = str(self.weights_input.value).strip()
         parsed = {}
-
         try:
             for part in raw.split(","):
                 if "=" not in part:
                     raise ValueError
-
                 symbol, value = part.split("=", 1)
                 symbol = symbol.strip()
                 value = int(value.strip())
-
                 if symbol not in SYMBOLS or value < 0 or value > 1000:
                     raise ValueError
-
                 parsed[symbol] = value
 
-            if any(symbol not in parsed for symbol in SYMBOLS) or sum(parsed.values()) <= 0:
+            if any(s not in parsed for s in SYMBOLS) or sum(parsed.values()) <= 0:
                 raise ValueError
-
         except ValueError:
             await interaction.response.send_message(
-                "入力形式が正しくないよ。\n"
-                "例：`🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20,💣=20,JP=5`\n"
-                "各数値は0〜1000で、合計を1以上にしてね。",
+                "入力形式が正しくないよ。\n例：`🍒=20,🍋=20,⭐=20,🔔=20,7️⃣=20,💣=20,JP=5`\n各数値は0〜1000にしてね。",
                 ephemeral=True,
             )
             return
 
         settings = get_server_settings(interaction.guild.id)
-        settings["weights"] = parsed
-        save_server_settings(interaction.guild.id)
+        if "slot_detail" not in settings:
+            settings["slot_detail"] = {}
+        settings["slot_detail"]["weights"] = parsed
 
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="🎰 出現比率を更新したよ",
-                description=get_weights_text(parsed),
-                color=discord.Color.green(),
-            ),
-            ephemeral=True,
+        await save_and_log_settings(
+            interaction,
+            f"🎰 出現比率を更新したよ\n{get_weights_text(parsed)}"
         )
 
+
+# ② RED JP ジャックポット開始額
+class RedJpModal(discord.ui.Modal):
+    def __init__(self, current_jp):
+        super().__init__(title="RED JP ジャックポット開始額")
+        self.jp_input = discord.ui.TextInput(
+            label="RED JP の開始額",
+            default=str(current_jp),
+            required=True,
+            max_length=15,
+        )
+        self.add_item(self.jp_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        try:
+            val = int(self.jp_input.value.strip())
+            if val < 0:
+                raise ValueError()
+        except ValueError:
+            await interaction.response.send_message("0以上の整数を入力してね。", ephemeral=True)
+            return
+
+        settings = get_server_settings(interaction.guild.id)
+        if "slot_detail" not in settings:
+            settings["slot_detail"] = {}
+        settings["slot_detail"]["red_jp_start"] = val
+
+        await save_and_log_settings(interaction, f"💰 RED JP の開始額を `${val:,}` に設定したよ。")
+
+
+# ③ ペイアウト倍率
+class SlotPayoutsModal(discord.ui.Modal):
+    def __init__(self, current_payouts):
+        super().__init__(title="スロット ペイアウト倍率設定")
+        current_value = ",".join(f"{s}={current_payouts.get(s, 1)}" for s in SYMBOLS)
+
+        self.payouts_input = discord.ui.TextInput(
+            label="揃ったときの賭け金倍率",
+            placeholder="🍒=2,🍋=5,⭐=10,🔔=20,7️⃣=50,💣=100,JP=500",
+            default=current_value,
+            required=True,
+            max_length=200,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.payouts_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        raw = str(self.payouts_input.value).strip()
+        parsed = {}
+        try:
+            for part in raw.split(","):
+                if "=" not in part:
+                    raise ValueError
+                symbol, value = part.split("=", 1)
+                symbol = symbol.strip()
+                value = float(value.strip())
+                if symbol not in SYMBOLS or value < 0:
+                    raise ValueError
+                parsed[symbol] = value
+
+            if any(s not in parsed for s in SYMBOLS):
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message(
+                "入力形式が正しくないよ。\n例：`🍒=2,🍋=5,⭐=10,🔔=20,7️⃣=50,💣=100,JP=500`",
+                ephemeral=True,
+            )
+            return
+
+        settings = get_server_settings(interaction.guild.id)
+        if "slot_detail" not in settings:
+            settings["slot_detail"] = {}
+        settings["slot_detail"]["payouts"] = parsed
+
+        text = ", ".join(f"{k}={v}" for k, v in parsed.items())
+        await save_and_log_settings(interaction, f"🎰 ペイアウト倍率を更新したよ\n{text}")
+
+
 # ==================================================
-# 出目の絵文字タイプ設定
+# 3. 階層メニューのビュー＆セレクト
 # ==================================================
 
-class EmojiModeSelect(discord.ui.Select):
+# A. ゲーム選択セレクトメニュー（「賭け金」押下後）
+class GameSelect(discord.ui.Select):
     def __init__(self):
         super().__init__(
-            placeholder="表示する絵文字タイプを選択",
+            placeholder="賭け金を設定するゲームを選択",
             min_values=1,
             max_values=1,
             options=[
-                discord.SelectOption(
-                    label="通常の絵文字",
-                    description="🍒 🍋 ⭐ 🔔 7️⃣ 💣 を使用する",
-                    value="unicode",
-                    emoji="🍒",
-                ),
-                discord.SelectOption(
-                    label="サーバーのカスタム絵文字",
-                    description="emoji_12〜emoji_16, emoji_19 を使用する",
-                    value="custom",
-                    emoji="⭐",
-                ),
+                discord.SelectOption(label="スロット", description="スロットの最低・最高賭け金", value="slot", emoji="🎰"),
+                discord.SelectOption(label="ブラックジャック", description="ブラックジャックの最低・最高賭け金", value="blackjack", emoji="🃏"),
+                discord.SelectOption(label="カラー", description="カラーの最低・最高賭け金", value="color", emoji="🎨"),
             ],
         )
 
     async def callback(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
-        selected_mode = self.values[0]
+        game_key = self.values[0]
+        game_names = {"slot": "スロット", "blackjack": "ブラックジャック", "color": "カラー"}
+        
         settings = get_server_settings(interaction.guild.id)
-        settings["emoji_mode"] = selected_mode
-        save_server_settings(interaction.guild.id)
+        bet_limits = settings.get("bet_limits", DEFAULT_SERVER_SETTINGS["bet_limits"])
+        current_limits = bet_limits.get(game_key, {"min": 1, "max": "inf"})
 
-        if selected_mode == "custom":
-            _, missing = get_custom_emoji_status(interaction.guild)
-            if missing:
-                await interaction.response.send_message(
-                    "カスタム絵文字モードに変更したよ。\n\n"
-                    "見つからない絵文字は通常の絵文字で表示するよ。\n"
-                    + "\n".join(missing),
-                    ephemeral=True,
-                )
-            else:
-                await interaction.response.send_message(
-                    "出目の表示を **サーバーのカスタム絵文字** に変更したよ。",
-                    ephemeral=True,
-                )
-        else:
-            await interaction.response.send_message(
-                "出目の表示を **通常の絵文字** に変更したよ。",
-                ephemeral=True,
-            )
+        await interaction.response.send_modal(BetLimitModal(game_key, game_names[game_key], current_limits))
 
-class EmojiModeSettingView(discord.ui.View):
+class GameSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
-        self.add_item(EmojiModeSelect())
+        self.add_item(GameSelect())
 
-# ==================================================
-# /setting 選択メニュー
-# ==================================================
 
+# B. スロット詳細設定セレクトメニュー（「スロット」押下後）
+class SlotSubSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="スロットの変更項目を選択",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(label="出目出現確率", description="7個の出目の出現確率（割合）", value="weights", emoji="📊"),
+                discord.SelectOption(label="ジャックポット開始額", description="RED JP の開始額を選択", value="red_jp", emoji="💰"),
+                discord.SelectOption(label="ペイアウト", description="7個の出目が揃ったときの倍率", value="payouts", emoji="🎰"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        selected = self.values[0]
+        settings = get_server_settings(interaction.guild.id)
+        slot_detail = settings.get("slot_detail", DEFAULT_SERVER_SETTINGS["slot_detail"])
+
+        if selected == "weights":
+            await interaction.response.send_modal(WeightsSettingModal(slot_detail.get("weights", {})))
+        elif selected == "red_jp":
+            await interaction.response.send_modal(RedJpModal(slot_detail.get("red_jp_start", 50000)))
+        elif selected == "payouts":
+            await interaction.response.send_modal(SlotPayoutsModal(slot_detail.get("payouts", {})))
+
+class SlotSubView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(SlotSubSelect())
+
+
+# C. メイン設定セレクトメニュー（3項目に絞り込み）
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="最低賭け金", description="最低賭け金を変更", value="min_bet", emoji="🪙"),
-            discord.SelectOption(label="絵柄・出現確率", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
-            discord.SelectOption(label="出目の絵文字タイプ", description="絵文字の種類を切り替え", value="emoji_mode", emoji="🎨"),
-            discord.SelectOption(label="ログ送信先", description="固定ログ送信先を確認", value="log_channel", emoji="📝"),
-            discord.SelectOption(label="コマンド使用権限", description="スロットの利用権限を変更", value="permissions", emoji="🔐"),
+            discord.SelectOption(label="賭け金", description="各ゲームの最低・最高賭け金を設定", value="bet_limits", emoji="💰"),
+            discord.SelectOption(label="スロット", description="確率・JP開始額・ペイアウトの詳細設定", value="slot_config", emoji="🎰"),
             discord.SelectOption(label="メンテナンスモード", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
         ]
-
         super().__init__(
             placeholder="変更する設定を選んでね",
             min_values=1,
@@ -2932,102 +3087,27 @@ class SettingActionSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         selected = self.values[0]
-        settings = get_server_settings(interaction.guild.id)
 
-        if selected == "min_bet":
-            await interaction.response.send_modal(BetSettingModal("min_bet"))
-        elif selected == "weights":
-            await interaction.response.send_modal(WeightsSettingModal(settings["weights"]))
-        elif selected == "emoji_mode":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="出目の絵文字タイプ",
-                    description=(
-                        "スロット盤面に表示する絵文字を選択してね。\n\n"
-                        "**通常の絵文字**\n🍒 🍋 ⭐ 🔔 7️⃣ 💣\n\n"
-                        "**サーバーのカスタム絵文字**\nemoji_12〜emoji_16, emoji_19"
-                    ),
-                    color=discord.Color.blurple(),
-                ),
-                view=EmojiModeSettingView(),
-                ephemeral=True,
-            )
-        elif selected == "log_channel":
-            await interaction.response.send_message(
-                f"ログ送信先は固定されているよ。\n<#{LOG_CHANNEL_ID}>",
-                ephemeral=True,
-            )
-        elif selected == "permissions":
-            await interaction.response.send_message(
-                "スロットを利用できるメンバーを選択してね。",
-                view=PermissionSettingView(),
-                ephemeral=True,
-            )
+        if selected == "bet_limits":
+            await interaction.response.send_message("どのゲームの賭け金を変更する？", view=GameSelectView(), ephemeral=True)
+        elif selected == "slot_config":
+            await interaction.response.send_message("スロットのどの項目を変更する？", view=SlotSubView(), ephemeral=True)
         elif selected == "maintenance":
-            await interaction.response.send_message(
-                "メンテナンスモードを切り替えるよ。",
-                view=MaintenanceSettingView(),
-                ephemeral=True,
-            )
+            await interaction.response.send_message("メンテナンスモードを切り替えるよ。", view=MaintenanceSettingView(), ephemeral=True)
 
 class SettingPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
 
-# ==================================================
-# スロット使用権限の設定
-# ==================================================
-
-class PermissionSelect(discord.ui.Select):
-    def __init__(self):
-        super().__init__(
-            placeholder="利用できるメンバーを選択",
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(label="全メンバー", description="全員が使える", value="everyone", emoji="👥"),
-                discord.SelectOption(label="ownerロール以上", description="ownerロールまたは管理者", value="owner", emoji="👑"),
-                discord.SelectOption(label="管理者のみ", description="サーバー管理者のみ", value="admin", emoji="🔐"),
-            ],
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not await require_owner(interaction):
-            return
-
-        if interaction.guild is None:
-            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
-            return
-
-        settings = get_server_settings(interaction.guild.id)
-        settings["slot_permission"] = self.values[0]
-        save_server_settings(interaction.guild.id)
-
-        labels = {
-            "everyone": "全メンバー",
-            "owner": "ownerロール以上",
-            "admin": "管理者のみ",
-        }
-
-        await interaction.response.send_message(
-            f"スロット使用権限を **{labels[self.values[0]]}** に変更したよ。",
-            ephemeral=True,
-        )
-
-class PermissionSettingView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-        self.add_item(PermissionSelect())
 
 # ==================================================
-# メンテナンスモード
+# 4. メンテナンスモード (そのまま維持)
 # ==================================================
 
 class MaintenanceSettingView(discord.ui.View):
@@ -3038,114 +3118,69 @@ class MaintenanceSettingView(discord.ui.View):
     async def enable_maintenance(self, interaction, button):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
         settings["maintenance"] = True
-        save_server_settings(interaction.guild.id)
-
-        await interaction.response.send_message(
-            "メンテナンスモードを **ON** にしたよ。\n一般メンバーはスロットを使えなくなるよ。",
-            ephemeral=True,
+        
+        await save_and_log_settings(
+            interaction,
+            "メンテナンスモードを **ON** にしたよ。\n一般メンバーはスロットを使えなくなるよ。"
         )
 
     @discord.ui.button(label="メンテナンス終了", style=discord.ButtonStyle.success, emoji="🟢")
     async def disable_maintenance(self, interaction, button):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
         settings = get_server_settings(interaction.guild.id)
         settings["maintenance"] = False
-        save_server_settings(interaction.guild.id)
+        
+        await save_and_log_settings(interaction, "メンテナンスモードを **OFF** にしたよ。")
 
-        await interaction.response.send_message(
-            "メンテナンスモードを **OFF** にしたよ。",
-            ephemeral=True,
-        )
 
-async def recover_coins_for_guild(guild):
-    guild_id = guild.id
-    latest_balances = {}
-    combined_logs = []
-
-    for item in slot_logs + coin_logs:
-        try:
-            if int(item.get("guild_id", 0)) == guild_id:
-                combined_logs.append(item)
-        except (TypeError, ValueError, AttributeError):
-            continue
-
-    channel = await get_log_channel(guild)
-    if channel is not None:
-        try:
-            async for message in channel.history(limit=None, oldest_first=True):
-                for embed in message.embeds:
-                    title = embed.title or ""
-                    description = embed.description or ""
-
-                    if "スロットログ" in title:
-                        user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
-                        balance_match = re.search(
-                            r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
-                    elif "Paymentログ" in title:
-                        user_match = re.search(r"対象：.*?`(\d+)`", description)
-                        balance_match = re.search(
-                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
-                    elif "胴元残高ログ" in title:
-                        user_match = re.search(r"オーナーID：`(\d+)`", description)
-                        balance_match = re.search(
-                            r"変更後：\*\*([+-]?\$?[\d,]+)\*\*",
-                            description,
-                        )
-                    else:
-                        continue
-
-                    if user_match and balance_match:
-                        combined_logs.append({
-                            "timestamp": message.created_at.timestamp(),
-                            "user_id": user_match.group(1),
-                            "balance": parse_money_text(balance_match.group(1)),
-                        })
-        except discord.Forbidden:
-            print("[COIN RECOVERY] ログ閲覧権限がありません")
-            return "権限エラー"
-        except discord.HTTPException:
-            traceback.print_exc()
-            return "Discord取得エラー"
-
-    combined_logs.sort(
-        key=lambda item: float(item.get("timestamp", 0))
-    )
-
-    for item in combined_logs:
-        try:
-            user_id = str(int(item["user_id"]))
-            amount = int(item.get("balance", item.get("after")))
-            latest_balances[user_id] = amount
-        except (KeyError, TypeError, ValueError):
-            continue
-
-    if not latest_balances:
-        return "復旧ログなし"
-
-    balances.update(latest_balances)
-    save_json(BALANCES_FILE, balances)
-
-    return f"{len(latest_balances)}人の残高を復旧"
-    
 # ==================================================
-# /setting
+# 5. 再起動時の設定復元関数
+# ==================================================
+
+async def restore_settings_from_logs(bot):
+    """起動時にログチャンネルを遡って設定を自動復元する"""
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel is None:
+        print("[SETTING RESTORE] ログチャンネルが見つかりませんでした。")
+        return
+
+    try:
+        async for message in channel.history(limit=100):
+            if message.author == bot.user and PREFIX_SETTING in message.content:
+                parts = message.content.split(PREFIX_SETTING, 1)
+                if len(parts) > 1:
+                    content = parts[1].strip()
+                    json_str_match = re.search(r"\{.*\}", content)
+                    if json_str_match:
+                        try:
+                            loaded_data = json.loads(json_str_match.group(0))
+                            guild_id_match = re.search(r"GuildID:(\d+)", content)
+                            if guild_id_match:
+                                g_id = int(guild_id_match.group(1))
+                                target_settings = get_server_settings(g_id)
+                                target_settings.update(loaded_data)
+                                save_server_settings(g_id)
+                                print(f"[SETTING RESTORE] サーバー ID: {g_id} の設定をログから復元しました！")
+                                break
+                        except json.JSONDecodeError:
+                            continue
+    except Exception as e:
+        print(f"[SETTING RESTORE ERROR] {e}")
+
+
+# ==================================================
+# /setting コマンド本体
 # ==================================================
 
 @bot.tree.command(name="setting", description="Botの設定パネルを開く（オーナー本人専用）")
@@ -3160,11 +3195,12 @@ async def setting_command(interaction: discord.Interaction):
     settings = get_server_settings(interaction.guild.id)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    permission_labels = {
-        "everyone": "全メンバー",
-        "owner": "ownerロール以上",
-        "admin": "管理者のみ",
-    }
+    bet_limits = settings.get("bet_limits", DEFAULT_SERVER_SETTINGS["bet_limits"])
+    slot_detail = settings.get("slot_detail", DEFAULT_SERVER_SETTINGS["slot_detail"])
+
+    slot_limits_text = f"最小: ${bet_limits['slot']['min']:,} / 最高: {'制限なし' if bet_limits['slot']['max']=='inf' else f\"${bet_limits['slot']['max']:,}\"}"
+    bj_limits_text = f"最小: ${bet_limits['blackjack']['min']:,} / 最高: {'制限なし' if bet_limits['blackjack']['max']=='inf' else f\"${bet_limits['blackjack']['max']:,}\"}"
+    color_limits_text = f"最小: ${bet_limits['color']['min']:,} / 最高: {'制限なし' if bet_limits['color']['max']=='inf' else f\"${bet_limits['color']['max']:,}\"}"
 
     embed = discord.Embed(
         title="Bot設定パネル",
@@ -3172,20 +3208,17 @@ async def setting_command(interaction: discord.Interaction):
         color=discord.Color.blurple(),
     )
 
-    embed.add_field(name="最低賭け金", value=money(int(settings["min_bet"])), inline=True)
+    embed.add_field(name="🎰 スロット賭け金", value=slot_limits_text, inline=False)
+    embed.add_field(name="🃏 ブラックジャック賭け金", value=bj_limits_text, inline=False)
+    embed.add_field(name="🎨 カラー賭け金", value=color_limits_text, inline=False)
+    embed.add_field(name="📊 スロット確率", value=get_weights_text(slot_detail.get("weights", {})), inline=False)
+    embed.add_field(name="💰 RED JP開始額", value=f"${slot_detail.get('red_jp_start', 50000):,}", inline=True)
+    embed.add_field(name="🛠️ メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
     embed.add_field(
-        name="スロット使用権限",
-        value=permission_labels.get(settings.get("slot_permission", "everyone"), "全メンバー"),
-        inline=True,
-    )
-    embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
-    embed.add_field(
-        name="ログ送信先（固定）",
+        name="📝 ログ送信先（固定）",
         value=log_channel.mention if log_channel else f"チャンネルID: {LOG_CHANNEL_ID}",
         inline=True,
     )
-    embed.add_field(name="出目の絵文字タイプ", value=get_display_mode_name(settings), inline=True)
-    embed.add_field(name="絵柄・出現比率", value=get_weights_text(settings["weights"]), inline=False)
 
     await interaction.response.send_message(embed=embed, view=SettingPanelView(), ephemeral=True)
 

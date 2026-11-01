@@ -3163,9 +3163,9 @@ async def setting_command(interaction: discord.Interaction):
     color_min = bet_limits.get('color', {}).get('min', 50)
     color_max = bet_limits.get('color', {}).get('max', 'inf')
 
-    slot_limits_text = f"最小: ${slot_min:,} / 最高: {'制限なし' if slot_max=='inf' else f\"${slot_max:,}\"}"
-    bj_limits_text = f"最小: ${bj_min:,} / 最高: {'制限なし' if bj_max=='inf' else f\"${bj_max:,}\"}"
-    color_limits_text = f"最小: ${color_min:,} / 最高: {'制限なし' if color_max=='inf' else f\"${color_max:,}\"}"
+    slot_limits_text = f"最小: ${slot_min:,} / 最高: {'制限なし' if slot_max=='inf' else f'${slot_max:,}'}"
+    bj_limits_text = f"最小: ${bj_min:,} / 最高: {'制限なし' if bj_max=='inf' else f'${bj_max:,}'}"
+    color_limits_text = f"最小: ${color_min:,} / 最高: {'制限なし' if color_max=='inf' else f'${color_max:,}'}"
 
     embed = discord.Embed(
         title="Bot設定パネル",

@@ -2739,20 +2739,31 @@ async def slot_help_command(ctx):
 # /setting モーダル
 # ==================================================
 
-class BetSettingModal(discord.ui.Modal):
-    def __init__(self, setting_type="min_bet"):
-        self.setting_type = setting_type
-        super().__init__(title="最低賭け金の設定")
+class GameBetSettingModal(discord.ui.Modal):
+    def __init__(self, game_key, game_name):
+        self.game_key = game_key
+        self.game_name = game_name
+        super().__init__(title=f"{game_name}の賭け金設定")
 
-        self.amount_input = discord.ui.TextInput(
-            label="最低賭け金",
-            placeholder="例：100",
-            default="1",
+        self.min_bet_input = discord.ui.TextInput(
+            label="最低賭け金（0以上の整数）",
+            placeholder="例：0",
+            default="0",
             required=True,
             min_length=1,
             max_length=15,
         )
-        self.add_item(self.amount_input)
+        self.max_bet_input = discord.ui.TextInput(
+            label="最高賭け金（整数 または inf で無制限）",
+            placeholder="例：10000 または inf",
+            default="inf",
+            required=True,
+            min_length=1,
+            max_length=15,
+        )
+
+        self.add_item(self.min_bet_input)
+        self.add_item(self.max_bet_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
@@ -2762,24 +2773,80 @@ class BetSettingModal(discord.ui.Modal):
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
+        # 最低賭け金の検証
         try:
-            amount = int(str(self.amount_input.value).strip())
+            min_val = int(str(self.min_bet_input.value).strip())
+            if min_val < 0:
+                raise ValueError
         except ValueError:
-            await interaction.response.send_message("整数で入力してね。", ephemeral=True)
+            await interaction.response.send_message("最低賭け金は0以上の整数で入力してね。", ephemeral=True)
             return
 
-        if amount < 1:
-            await interaction.response.send_message("最低賭け金は1以上にしてね。", ephemeral=True)
-            return
+        # 最高賭け金の検証
+        max_raw = str(self.max_bet_input.value).strip().lower()
+        if max_raw in ("inf", "infinity", "無制限"):
+            max_val = "inf"
+        else:
+            try:
+                max_val = int(max_raw)
+                if max_val < min_val:
+                    await interaction.response.send_message("最高賭け金は最低賭け金以上の数値にしてね。", ephemeral=True)
+                    return
+            except ValueError:
+                await interaction.response.send_message("最高賭け金は整数、または無制限にする場合は `inf` と入力してね。", ephemeral=True)
+                return
 
         settings = get_server_settings(interaction.guild.id)
-        settings["min_bet"] = amount
+        if "bet_limits" not in settings or not isinstance(settings["bet_limits"], dict):
+            settings["bet_limits"] = {}
+
+        settings["bet_limits"][self.game_key] = {
+            "min": min_val,
+            "max": max_val
+        }
+        # 互換性維持用（スロットの min_bet）
+        if self.game_key == "slot":
+            settings["min_bet"] = min_val
+
         save_server_settings(interaction.guild.id)
 
+        max_text = "無制限 (inf)" if max_val == "inf" else money(max_val)
         await interaction.response.send_message(
-            f"最低賭け金を **{money(amount)}** に設定したよ。",
+            f"**{self.game_name}** の賭け金設定を変更したよ！\n"
+            f"最低賭け金：**{money(min_val)}**\n"
+            f"最高賭け金：**{max_text}**",
             ephemeral=True,
         )
+
+
+class GameSelectForBetView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.select(
+        placeholder="対象のゲームを選択してね",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(label="スロット", value="slot", emoji="🎰"),
+            discord.SelectOption(label="カラー", value="color", emoji="🌝"),
+            discord.SelectOption(label="ブラックジャック", value="bj", emoji="🃏"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if not await require_owner(interaction):
+            return
+
+        game_map = {
+            "slot": "スロット",
+            "color": "カラー",
+            "bj": "ブラックジャック",
+        }
+        chosen_key = select.values[0]
+        chosen_name = game_map[chosen_key]
+
+        await interaction.response.send_modal(GameBetSettingModal(chosen_key, chosen_name))
+
 
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
@@ -2857,7 +2924,7 @@ class WeightsSettingModal(discord.ui.Modal):
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="賭け金", description="最低賭け金を変更", value="min_bet", emoji="🪙"),
+            discord.SelectOption(label="賭け金", description="ゲームごとの最低・最高賭け金を変更", value="min_bet", emoji="🪙"),
             discord.SelectOption(label="スロット", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
             discord.SelectOption(label="メンテナンス", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
         ]
@@ -2881,7 +2948,11 @@ class SettingActionSelect(discord.ui.Select):
         settings = get_server_settings(interaction.guild.id)
 
         if selected == "min_bet":
-            await interaction.response.send_modal(BetSettingModal("min_bet"))
+            await interaction.response.send_message(
+                "賭け金を変更したいゲームを選んでね。",
+                view=GameSelectForBetView(),
+                ephemeral=True,
+            )
         elif selected == "weights":
             await interaction.response.send_modal(WeightsSettingModal(settings["weights"]))
         elif selected == "maintenance":
@@ -3013,7 +3084,7 @@ async def recover_coins_for_guild(guild):
     save_json(BALANCES_FILE, balances)
 
     return f"{len(latest_balances)}人の残高を復旧"
-    
+
 # ==================================================
 # /setting
 # ==================================================
@@ -3028,6 +3099,14 @@ async def setting_command(interaction: discord.Interaction):
         return
 
     settings = get_server_settings(interaction.guild.id)
+    bet_limits = settings.get("bet_limits", {})
+
+    def format_limit(game_key):
+        limits = bet_limits.get(game_key, {})
+        min_v = limits.get("min", 0)
+        max_v = limits.get("max", "inf")
+        max_str = "無制限" if max_v == "inf" else money(max_v)
+        return f"最低: {money(min_v)} / 最高: {max_str}"
 
     embed = discord.Embed(
         title="Bot設定パネル",
@@ -3035,7 +3114,9 @@ async def setting_command(interaction: discord.Interaction):
         color=discord.Color.blurple(),
     )
 
-    embed.add_field(name="最低賭け金", value=money(int(settings["min_bet"])), inline=True)
+    embed.add_field(name="🎰 スロット賭け金", value=format_limit("slot"), inline=True)
+    embed.add_field(name="🌝 カラー賭け金", value=format_limit("color"), inline=True)
+    embed.add_field(name="🃏 BJ賭け金", value=format_limit("bj"), inline=True)
     embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
     embed.add_field(name="絵柄・出現比率", value=get_weights_text(settings["weights"]), inline=False)
 

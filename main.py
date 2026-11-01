@@ -2735,27 +2735,6 @@ SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣", "💣", "JP"]
 LOG_CHANNEL_ID = 123456789012345678  # ご自身のログチャンネルIDに変更してください
 PREFIX_SETTING = "[RESTORE_SETTING]"
 
-# サーバー設定のデフォルト構造
-DEFAULT_SERVER_SETTINGS = {
-    "bet_limits": {
-        "slot": {"min": 1, "max": "inf"},
-        "blackjack": {"min": 100, "max": 50000},
-        "color": {"min": 50, "max": "inf"}
-    },
-    "slot_detail": {
-        "weights": {"🍒": 20, "🍋": 20, "⭐": 20, "🔔": 20, "7️⃣": 20, "💣": 20, "JP": 5},
-        "red_jp_start": 50000,
-        "payouts": {"🍒": 2, "🍋": 5, "⭐": 10, "🔔": 20, "7️⃣": 50, "💣": 100, "JP": 500}
-    },
-    "maintenance": False
-}
-
-# ヘルパー関数群（既存環境に合わせてご調整ください）
-def get_weights_text(weights):
-    if isinstance(weights, dict):
-        return ", ".join(f"{k}={v}" for k, v in weights.items())
-    return str(weights)
-
 # 設定変更時に保存し、復元用ログチャンネルにJSONを送信する共通関数
 async def save_and_log_settings(interaction: discord.Interaction, success_msg: str):
     if interaction.guild is None:

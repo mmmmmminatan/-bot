@@ -4935,6 +4935,67 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
                 color=color,
             ),
         )
+from PIL import Image, ImageDraw
+import os
+
+# 賭け先の座標マップのサンプル（※実際のルーレット盤の画像サイズに合わせて調整します）
+ROULETTE_COORDINATES = {
+    "red": (300, 400),
+    "black": (400, 400),
+    "even": (200, 400),
+    "odd": (500, 400),
+    # 数字 0〜36 などの座標もここに辞書で追加できます
+}
+
+def generate_roulette_table(user_bets):
+    """
+    user_bets: ユーザーの賭け情報 {"red": 300, "17": 100} など
+    """
+    # 1. ベースとなるルーレットボード画像を読み込む
+    board_path = "cards/IMG_0715.jpeg"
+    if not os.path.exists(board_path):
+        return None
+    
+    base_image = Image.open(board_path).convert("RGBA")
+    
+    # 2. チップ画像（IMG_0730.jpeg）を読み込んで丸型に加工する
+    chip_path = "cards/IMG_0730.jpeg"
+    if not os.path.exists(chip_path):
+        return None
+        
+    chip_img = Image.open(chip_path).convert("RGBA")
+    
+    # チップのサイズを調整（例: 直径 45ピクセル）
+    chip_size = 45
+    chip_img = chip_img.resize((chip_size, chip_size), Image.Resampling.LANCZOS)
+    
+    # 四角い白背景を消すため、円形のマスク（切り抜き型）を作成
+    mask = Image.new("L", (chip_size, chip_size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, chip_size, chip_size), fill=255)
+    
+    # マスクを使ってチップを綺麗な丸型にする
+    rounded_chip = Image.new("RGBA", (chip_size, chip_size))
+    rounded_chip.paste(chip_img, (0, 0), mask=mask)
+    
+    # 3. ユーザーのベット位置にチップを貼り付ける
+    for target, amount in user_bets.items():
+        target_key = str(target).lower()
+        if target_key in ROULETTE_COORDINATES:
+            x, y = ROULETTE_COORDINATES[target_key]
+            # チップの中心が指定座標にくるように配置
+            paste_x = x - chip_size // 2
+            paste_y = y - chip_size // 2
+            
+            # タワー風に少しずらして重ねたい場合はここでループを回すことも可能
+            base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)
+            
+    # 4. 生成した画像を保存
+    output_path = "cards/current_roulette_board.png"
+    os.makedirs("cards", exist_ok=True)
+    base_image.save(output_path)
+    
+    return output_path
 
     
 # ==================================================

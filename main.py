@@ -687,6 +687,10 @@ def record_coin(data):
         del coin_logs[:-MAX_LOGS]
 
     save_json(COIN_LOGS_FILE, coin_logs)
+    
+async def recover_coins_for_guild(guild):
+    # 起動時のコイン自動復旧の安全なプレースホルダー関数
+    return "スキップしました"
 
 # ==================================================
 # 胴元システム

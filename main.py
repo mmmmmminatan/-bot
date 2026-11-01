@@ -81,12 +81,26 @@ DEFAULT_WEIGHTS = {
 }
 
 
+DEFAULT_BET_LIMITS = {
+    "slot": {"min": 1, "max": "inf"},
+    "blackjack": {"min": 100, "max": 50000},
+    "color": {"min": 50, "max": "inf"},
+}
+
+DEFAULT_SLOT_DETAIL = {
+    "weights": DEFAULT_WEIGHTS.copy(),
+    "red_jp_start": 50000,
+    "payouts": PAYOUTS.copy(),
+}
+
 DEFAULT_SERVER_SETTINGS = {
     "min_bet": 1,
     "weights": DEFAULT_WEIGHTS.copy(),
     "slot_permission": "everyone",
     "maintenance": False,
     "emoji_mode": "custom",
+    "bet_limits": DEFAULT_BET_LIMITS.copy(),
+    "slot_detail": DEFAULT_SLOT_DETAIL.copy(),
 }
 # ==================================================
 # 数字カスタム絵文字（0〜9）
@@ -2727,31 +2741,6 @@ async def slot_help_command(ctx):
         color=discord.Color.gold(),
     )
     await ctx.reply(embed=embed, mention_author=False)
-
-# ==================================================
-# 定数・初期設定
-# ==================================================
-SYMBOLS = ["🍒", "🍋", "⭐", "🔔", "7️⃣", "💣", "JP"]
-LOG_CHANNEL_ID = 123456789012345678  # ご自身のログチャンネルIDに変更してください
-PREFIX_SETTING = "[RESTORE_SETTING]"
-
-# 設定変更時に保存し、復元用ログチャンネルにJSONを送信する共通関数
-async def save_and_log_settings(interaction: discord.Interaction, success_msg: str):
-    if interaction.guild is None:
-        return
-    guild_id = interaction.guild.id
-    save_server_settings(guild_id)
-    settings = get_server_settings(guild_id)
-
-    log_channel = interaction.client.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        try:
-            log_text = f"{PREFIX_SETTING} GuildID:{guild_id} " + json.dumps(settings, default=str)
-            await log_channel.send(log_text)
-        except Exception as e:
-            print(f"[SETTING LOG ERROR] {e}")
-
-    await interaction.response.send_message(success_msg, ephemeral=True)
 
 
 # ==================================================

@@ -2825,7 +2825,6 @@ class GameBetSettingModal(discord.ui.Modal):
             ephemeral=True,
         )
 
-
 class GameSelectForBetView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
@@ -2838,6 +2837,7 @@ class GameSelectForBetView(discord.ui.View):
             discord.SelectOption(label="スロット", value="slot", emoji="🎰"),
             discord.SelectOption(label="カラー", value="color", emoji="🌝"),
             discord.SelectOption(label="ブラックジャック", value="bj", emoji="🃏"),
+            discord.SelectOption(label="ルーレット", value="roulette", emoji="🎡"),  # 👈 追加
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -2848,12 +2848,12 @@ class GameSelectForBetView(discord.ui.View):
             "slot": "スロット",
             "color": "カラー",
             "bj": "ブラックジャック",
+            "roulette": "ルーレット",  # 👈 追加
         }
         chosen_key = select.values[0]
         chosen_name = game_map[chosen_key]
 
         await interaction.response.send_modal(GameBetSettingModal(chosen_key, chosen_name))
-
 
 # --- 出目排出確率設定 ---
 class WeightsSettingModal(discord.ui.Modal):

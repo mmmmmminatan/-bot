@@ -4755,6 +4755,186 @@ async def blackjack(ctx, bet: int = None):
         await ctx.send(
             "ブラックジャックの開始に失敗しました。"
         )
+        
+# ==================================================
+# .roulette / .r ルーレットゲーム
+# ==================================================
+
+# 0は緑、その他は赤と黒
+ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
+
+@bot.command(name="roulette", aliases=["r", "ルーレット"])
+async def roulette_command(ctx, bet_text: str = None, target: str = None):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    if bet_text is None or target is None:
+        await ctx.reply(
+            "【ルーレットの使い方】\n"
+            "`.r <賭け金> <賭ける対象>`\n\n"
+            "**賭け方の種類:**\n"
+            "・数字（0〜36）: 例 `.r 100 7` （配当 36倍）\n"
+            "・色（red / black / 赤 / 黒）: 例 `.r 100 red` （配当 2倍）\n"
+            "・奇数/偶数（odd / even / 奇数 / 偶数）: 例 `.r 100 even` （配当 2倍）",
+            mention_author=False,
+        )
+        return
+
+    # 賭け金の解析
+    bet = resolve_bet(ctx.author.id, bet_text)
+    if bet is None or bet <= 0:
+        await ctx.reply("賭け金は正の数字か `all` で指定してね。", mention_author=False)
+        return
+
+    # 賭け金制限のチェック
+    settings = get_server_settings(ctx.guild.id)
+    bet_limits = settings.get("bet_limits", {})
+    roulette_limit = bet_limits.get("roulette", {"min": 0, "max": "inf"})
+    
+    min_bet = roulette_limit.get("min", 0)
+    max_bet = roulette_limit.get("max", "inf")
+
+    if bet < min_bet:
+        await ctx.reply(f"ルーレットの最低賭け金は **{money(min_bet)}** だよ。", mention_author=False)
+        return
+
+    if max_bet != "inf" and bet > max_bet:
+        max_str = money(max_bet)
+        await ctx.reply(f"ルーレットの最高賭け金は **{max_str}** までだよ。", mention_author=False)
+        return
+
+    # 所持金チェック
+    current_balance = get_balance(ctx.author.id)
+    if bet > current_balance:
+        await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
+        return
+
+    # 賭け対象の判定
+    target_clean = target.strip().lower()
+    bet_type = None
+    bet_value = None
+
+    if target_clean.isdigit():
+        num = int(target_clean)
+        if 0 <= num <= 36:
+            bet_type = "number"
+            bet_value = num
+    elif target_clean in ["red", "赤"]:
+        bet_type = "color"
+        bet_value = "red"
+    elif target_clean in ["black", "黒"]:
+        bet_type = "color"
+        bet_value = "black"
+    elif target_clean in ["odd", "奇数"]:
+        bet_type = "even_odd"
+        bet_value = "odd"
+    elif target_clean in ["even", "偶数"]:
+        bet_type = "even_odd"
+        bet_value = "even"
+
+    if bet_type is None:
+        await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even）", mention_author=False)
+        return
+
+    # 賭け金を一時徴収
+    set_balance(ctx.author.id, current_balance - bet)
+
+    # 抽選 (0〜36)
+    landed_number = random.randint(0, 36)
+    if landed_number == 0:
+        landed_color = "green"
+        color_emoji = "🟢"
+    elif landed_number in ROULETTE_RED:
+        landed_color = "red"
+        color_emoji = "🔴"
+    else:
+        landed_color = "black"
+        color_emoji = "⚫"
+
+    # 勝敗判定
+    won = False
+    multiplier = 0
+
+    if bet_type == "number" and bet_value == landed_number:
+        won = True
+        multiplier = 36
+    elif bet_type == "color" and bet_value == landed_color:
+        won = True
+        multiplier = 2
+    elif bet_type == "even_odd" and landed_number != 0:
+        if bet_value == "odd" and landed_number % 2 != 0:
+            won = True
+            multiplier = 2
+        elif bet_value == "even" and landed_number % 2 == 0:
+            won = True
+            multiplier = 2
+
+    # 配当処理
+    payout = bet * multiplier if won else 0
+    profit = payout - bet
+    new_balance = (current_balance - bet) + payout
+    set_balance(ctx.author.id, new_balance)
+
+    # 胴元システムへの反映
+    house_result = transfer_to_house(
+        player_id=ctx.author.id,
+        profit=profit,
+        guild_id=ctx.guild.id,
+        game="roulette",
+    )
+
+    # Embed生成
+    color = discord.Color.green() if won else discord.Color.red()
+    result_text = f"🎉 **当たり！ 配当: {money(payout)}**" if won else "💸 **ハズレ…**"
+
+    embed = discord.Embed(
+        title="🎰 ルーレット結果",
+        description=(
+            f"プレイヤー：{ctx.author.mention}\n"
+            f"賭けた内容：`{target}` ({money(bet)})\n\n"
+            f"🎯 出目：**{color_emoji} {landed_number}**\n\n"
+            f"{result_text}\n"
+            f"収支：**{money_change(profit)}**\n"
+            f"残高：**{money(new_balance)}**"
+        ),
+        color=color,
+    )
+
+    await ctx.reply(embed=embed, mention_author=False)
+
+    # ログ処理
+    record_coin({
+        "type": "roulette",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": ctx.guild.id,
+        "user_id": ctx.author.id,
+        "username": str(ctx.author),
+        "bet": bet,
+        "target": target,
+        "landed": f"{color_emoji}{landed_number}",
+        "won": won,
+        "payout": payout,
+        "profit": profit,
+        "balance": new_balance,
+    })
+
+    if ctx.guild is not None:
+        await send_coin_log(
+            ctx.guild,
+            discord.Embed(
+                title="🎰 ルーレットログ",
+                description=(
+                    f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                    f"賭け金：**{money(bet)}** | 賭け先：`{target}`\n"
+                    f"結果：{color_emoji} **{landed_number}** ({'当たり' if won else 'ハズレ'})\n"
+                    f"配当：**{money(payout)}** | 収支：**{money_change(profit)}**\n"
+                    f"残高：**{money(new_balance)}**"
+                ),
+                color=color,
+            ),
+        )
 
     
 # ==================================================

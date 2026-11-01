@@ -1256,7 +1256,7 @@ bot.tree.add_command(guess_group)
 # .daily ログインボーナス
 # ==================================================
 
-@bot.command(name="mdaily")
+@bot.command(name="daily")
 async def daily_command(ctx):
     if ctx.author.bot:
         return
@@ -1323,12 +1323,19 @@ async def daily_command(ctx):
     channel = await get_log_channel(ctx.guild)
     if channel is not None:
         try:
-            await channel.send(
-                f"ログインボーナス\n"
-                f"やった人：{ctx.author.mention}\n"
-                f"増やした金額：{money_change(reward)}\n"
-                f"何日目か：{streak}日目"
+            # 埋め込み（Embed）を作成
+            embed = discord.Embed(
+                title="🎁 ログインボーナスログ",
+                description=(
+                    f"やった人：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                    f"増やした金額：**{money_change(reward)}**\n"
+                    f"何日目か：**{streak}日目**\n"
+                    f"現在の残高：**{money(new_balance)}**"
+                ),
+                color=discord.Color.green(),
             )
+            # embed引数で送信
+            await channel.send(embed=embed)
         except Exception:
             print("[DAILY LOG SEND ERROR]")
             traceback.print_exc()

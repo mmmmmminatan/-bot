@@ -689,31 +689,44 @@ def record_coin(data):
     save_json(COIN_LOGS_FILE, coin_logs)
     
 async def recover_coins_for_guild(guild):
-    # 起動時のコイン自動復旧処理
+    # JSONとDiscordチャンネルのログを「両方」拾って最新の残高を復元する処理
     guild_id = guild.id
     latest_balances = {}
     combined_logs = []
     
-    # 1. JSONログの集約
+    # 1. JSONログ（slot_logs と coin_logs）を両方とも集約する
     for item in slot_logs:
         try:
             if int(item.get("guild_id", 0)) == guild_id:
-                combined_logs.append(item)
+                combined_logs.append({
+                    "timestamp": float(item.get("timestamp", 0)),
+                    "user_id": str(item.get("user_id")),
+                    "balance": item.get("balance"),
+                    "source": "json_slot"
+                })
         except (TypeError, ValueError, AttributeError):
             continue
 
     for item in coin_logs:
         try:
             if int(item.get("guild_id", 0)) == guild_id:
-                combined_logs.append(item)
+                # ログの種類によって残高データのキーが異なる場合を考慮
+                bal = item.get("balance", item.get("after"))
+                if bal is not None:
+                    combined_logs.append({
+                        "timestamp": float(item.get("timestamp", 0)),
+                        "user_id": str(item.get("user_id")),
+                        "balance": bal,
+                        "source": "json_coin"
+                    })
         except (TypeError, ValueError, AttributeError):
             continue
 
-    # 2. Discordの固定ログチャンネルから履歴を取得
+    # 2. Discordの固定ログチャンネルから履歴をすべて取得して追加する
     channel = await get_log_channel(guild)
     if channel is not None:
         try:
-            async for message in channel.history(limit=1000, oldest_first=True):
+            async for message in channel.history(limit=None, oldest_first=True):
                 for embed in message.embeds:
                     title = embed.title or ""
                     description = embed.description or ""
@@ -727,44 +740,42 @@ async def recover_coins_for_guild(guild):
                             bal = parse_money_text(balance_match.group(1))
                             combined_logs.append({
                                 "timestamp": message.created_at.timestamp(),
-                                "user_id": u_id,
+                                "user_id": str(u_id),
                                 "balance": bal,
+                                "source": "discord"
                             })
                         except Exception:
                             continue
         except Exception as e:
-            print(f"[COIN RECOVERY] ログ取得エラー ({guild.name}): {e}")
+            print(f"[COIN RECOVERY] Discordログ取得エラー ({guild.name}): {e}")
 
-    # 3. タイムスタンプ順にソートして最新の残高を反映
-    combined_logs.sort(key=lambda item: float(item.get("timestamp", 0)))
+    if not combined_logs:
+        return "復旧対象のログ（JSON・Discord）が見つかりませんでした"
 
+    # 3. すべてのログをタイムスタンプ順（古い順）に綺麗にソートする
+    combined_logs.sort(key=lambda item: item.get("timestamp", 0))
+
+    # 4. 古い順に適用していき、最終的に一番新しい残高の状態を確定させる
     for item in combined_logs:
         user_id = item.get("user_id")
-        if user_id is None:
-            continue
-        try:
-            user_id = str(int(user_id))
-        except (TypeError, ValueError):
-            continue
-
-        balance_value = item.get("balance", item.get("after"))
-        if balance_value is None:
-            continue
-
-        try:
-            latest_balances[user_id] = int(balance_value)
-        except (TypeError, ValueError):
-            continue
+        balance_value = item.get("balance")
+        
+        if user_id and balance_value is not None:
+            try:
+                user_id_str = str(int(user_id))
+                latest_balances[user_id_str] = int(balance_value)
+            except (TypeError, ValueError):
+                continue
 
     if not latest_balances:
-        return "復旧対象のログなし"
+        return "有効な残高データが抽出できませんでした"
 
+    # 5. データベース（balances.json）に反映して保存
     for user_id, amount in latest_balances.items():
         balances[user_id] = amount
 
     save_json(BALANCES_FILE, balances)
-    return f"成功 ({len(latest_balances)}人分を復旧)"
-    
+    return f"成功 (JSONとDiscordログから {len(latest_balances)}人分のデータを統合・復旧)"
 
 # ==================================================
 # 胴元システム

@@ -2851,82 +2851,15 @@ class WeightsSettingModal(discord.ui.Modal):
         )
 
 # ==================================================
-# 出目の絵文字タイプ設定
-# ==================================================
-
-class EmojiModeSelect(discord.ui.Select):
-    def __init__(self):
-        super().__init__(
-            placeholder="表示する絵文字タイプを選択",
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(
-                    label="通常の絵文字",
-                    description="🍒 🍋 ⭐ 🔔 7️⃣ 💣 を使用する",
-                    value="unicode",
-                    emoji="🍒",
-                ),
-                discord.SelectOption(
-                    label="サーバーのカスタム絵文字",
-                    description="emoji_12〜emoji_16, emoji_19 を使用する",
-                    value="custom",
-                    emoji="⭐",
-                ),
-            ],
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not await require_owner(interaction):
-            return
-
-        if interaction.guild is None:
-            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
-            return
-
-        selected_mode = self.values[0]
-        settings = get_server_settings(interaction.guild.id)
-        settings["emoji_mode"] = selected_mode
-        save_server_settings(interaction.guild.id)
-
-        if selected_mode == "custom":
-            _, missing = get_custom_emoji_status(interaction.guild)
-            if missing:
-                await interaction.response.send_message(
-                    "カスタム絵文字モードに変更したよ。\n\n"
-                    "見つからない絵文字は通常の絵文字で表示するよ。\n"
-                    + "\n".join(missing),
-                    ephemeral=True,
-                )
-            else:
-                await interaction.response.send_message(
-                    "出目の表示を **サーバーのカスタム絵文字** に変更したよ。",
-                    ephemeral=True,
-                )
-        else:
-            await interaction.response.send_message(
-                "出目の表示を **通常の絵文字** に変更したよ。",
-                ephemeral=True,
-            )
-
-class EmojiModeSettingView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-        self.add_item(EmojiModeSelect())
-
-# ==================================================
 # /setting 選択メニュー
 # ==================================================
 
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="最低賭け金", description="最低賭け金を変更", value="min_bet", emoji="🪙"),
-            discord.SelectOption(label="絵柄・出現確率", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
-            discord.SelectOption(label="出目の絵文字タイプ", description="絵文字の種類を切り替え", value="emoji_mode", emoji="🎨"),
-            discord.SelectOption(label="ログ送信先", description="固定ログ送信先を確認", value="log_channel", emoji="📝"),
-            discord.SelectOption(label="コマンド使用権限", description="スロットの利用権限を変更", value="permissions", emoji="🔐"),
-            discord.SelectOption(label="メンテナンスモード", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
+            discord.SelectOption(label="賭け金", description="最低賭け金を変更", value="min_bet", emoji="🪙"),
+            discord.SelectOption(label="スロット", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
+            discord.SelectOption(label="メンテナンス", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
         ]
 
         super().__init__(
@@ -2951,31 +2884,6 @@ class SettingActionSelect(discord.ui.Select):
             await interaction.response.send_modal(BetSettingModal("min_bet"))
         elif selected == "weights":
             await interaction.response.send_modal(WeightsSettingModal(settings["weights"]))
-        elif selected == "emoji_mode":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="出目の絵文字タイプ",
-                    description=(
-                        "スロット盤面に表示する絵文字を選択してね。\n\n"
-                        "**通常の絵文字**\n🍒 🍋 ⭐ 🔔 7️⃣ 💣\n\n"
-                        "**サーバーのカスタム絵文字**\nemoji_12〜emoji_16, emoji_19"
-                    ),
-                    color=discord.Color.blurple(),
-                ),
-                view=EmojiModeSettingView(),
-                ephemeral=True,
-            )
-        elif selected == "log_channel":
-            await interaction.response.send_message(
-                f"ログ送信先は固定されているよ。\n<#{LOG_CHANNEL_ID}>",
-                ephemeral=True,
-            )
-        elif selected == "permissions":
-            await interaction.response.send_message(
-                "スロットを利用できるメンバーを選択してね。",
-                view=PermissionSettingView(),
-                ephemeral=True,
-            )
         elif selected == "maintenance":
             await interaction.response.send_message(
                 "メンテナンスモードを切り替えるよ。",
@@ -2987,51 +2895,6 @@ class SettingPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
-
-# ==================================================
-# スロット使用権限の設定
-# ==================================================
-
-class PermissionSelect(discord.ui.Select):
-    def __init__(self):
-        super().__init__(
-            placeholder="利用できるメンバーを選択",
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(label="全メンバー", description="全員が使える", value="everyone", emoji="👥"),
-                discord.SelectOption(label="ownerロール以上", description="ownerロールまたは管理者", value="owner", emoji="👑"),
-                discord.SelectOption(label="管理者のみ", description="サーバー管理者のみ", value="admin", emoji="🔐"),
-            ],
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not await require_owner(interaction):
-            return
-
-        if interaction.guild is None:
-            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
-            return
-
-        settings = get_server_settings(interaction.guild.id)
-        settings["slot_permission"] = self.values[0]
-        save_server_settings(interaction.guild.id)
-
-        labels = {
-            "everyone": "全メンバー",
-            "owner": "ownerロール以上",
-            "admin": "管理者のみ",
-        }
-
-        await interaction.response.send_message(
-            f"スロット使用権限を **{labels[self.values[0]]}** に変更したよ。",
-            ephemeral=True,
-        )
-
-class PermissionSettingView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-        self.add_item(PermissionSelect())
 
 # ==================================================
 # メンテナンスモード
@@ -3165,13 +3028,6 @@ async def setting_command(interaction: discord.Interaction):
         return
 
     settings = get_server_settings(interaction.guild.id)
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-
-    permission_labels = {
-        "everyone": "全メンバー",
-        "owner": "ownerロール以上",
-        "admin": "管理者のみ",
-    }
 
     embed = discord.Embed(
         title="Bot設定パネル",
@@ -3180,21 +3036,11 @@ async def setting_command(interaction: discord.Interaction):
     )
 
     embed.add_field(name="最低賭け金", value=money(int(settings["min_bet"])), inline=True)
-    embed.add_field(
-        name="スロット使用権限",
-        value=permission_labels.get(settings.get("slot_permission", "everyone"), "全メンバー"),
-        inline=True,
-    )
     embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
-    embed.add_field(
-        name="ログ送信先（固定）",
-        value=log_channel.mention if log_channel else f"チャンネルID: {LOG_CHANNEL_ID}",
-        inline=True,
-    )
-    embed.add_field(name="出目の絵文字タイプ", value=get_display_mode_name(settings), inline=True)
     embed.add_field(name="絵柄・出現比率", value=get_weights_text(settings["weights"]), inline=False)
 
     await interaction.response.send_message(embed=embed, view=SettingPanelView(), ephemeral=True)
+
 
 # ==================================================
 # /coinrecovery

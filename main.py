@@ -3401,9 +3401,8 @@ def run_web():
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
-
 # ==========================================
-# ブラックジャック関連機能（ダブルダウン対応完全版）
+# ブラックジャック関連機能（ダブルダウン・終了ログ対応完全版）
 # ==========================================
 
 from PIL import Image
@@ -3412,7 +3411,6 @@ import random
 import asyncio
 import discord
 
-
 # ==========================================
 # 設定
 # ==========================================
@@ -3420,7 +3418,6 @@ import discord
 BJ_TIMEOUT = 300
 
 active_blackjack_users = set()
-
 
 # ==========================================
 # 金額表示
@@ -3695,6 +3692,9 @@ class BlackjackView(discord.ui.View):
         # 最初の2枚の状態でのみ使用可能
         self.can_double_down = True
 
+        # ログ二重送信防止
+        self.log_sent = False
+
         self.image_path = f"cards/bj_table_{id(self)}.png"
 
     # --------------------------------------
@@ -3775,6 +3775,88 @@ class BlackjackView(discord.ui.View):
 
         self.final_result = result
         self.final_color = color
+
+    # --------------------------------------
+    # 終了ログ送信
+    # --------------------------------------
+
+    async def send_bj_log(self):
+
+        # 未決済・送信済みなら何もしない
+        if self.log_sent or not self.settled:
+            return
+
+        self.log_sent = True
+
+        try:
+
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+
+            if channel is None:
+                channel = await bot.fetch_channel(LOG_CHANNEL_ID)
+
+            # プレイヤーの手札
+            player_cards = ", ".join(
+                f"{card['suit']}の{card['val']}"
+                for card in self.player_hand
+            )
+
+            # ディーラーの手札
+            dealer_cards = ", ".join(
+                f"{card['suit']}の{card['val']}"
+                for card in self.dealer_hand
+            )
+
+            hand_text = (
+                f"**プレイヤー：** {player_cards} "
+                f"({calculate_hand(self.player_hand)})\n"
+                f"**ディーラー：** {dealer_cards} "
+                f"({calculate_hand(self.dealer_hand)})"
+            )
+
+            # 決済後の残高
+            balance = get_balance(self.user_id)
+
+            embed = discord.Embed(
+                title="🃏 ブラックジャック終了ログ",
+                color=self.final_color
+            )
+
+            embed.add_field(
+                name="ログ名",
+                value=self.ctx.author.display_name,
+                inline=False
+            )
+
+            embed.add_field(
+                name="手札",
+                value=hand_text,
+                inline=False
+            )
+
+            embed.add_field(
+                name="利益",
+                value=bj_money_change(self.final_profit),
+                inline=True
+            )
+
+            embed.add_field(
+                name="返却",
+                value=bj_money(self.final_returned),
+                inline=True
+            )
+
+            embed.add_field(
+                name="残高",
+                value=bj_money(balance),
+                inline=True
+            )
+
+            await channel.send(embed=embed)
+
+        except Exception as e:
+
+            print(f"[BJ LOG ERROR] {e}")
 
     # --------------------------------------
     # 山札確認
@@ -3872,6 +3954,9 @@ class BlackjackView(discord.ui.View):
                 "lose"
             )
 
+            # 終了ログ
+            await self.send_bj_log()
+
             embed, files = self.create_embed_and_files(
                 game_over=True
             )
@@ -3941,6 +4026,10 @@ class BlackjackView(discord.ui.View):
                         "lose"
                     )
 
+                # ゲーム終了時だけログ送信
+                if self.game_over:
+                    await self.send_bj_log()
+
                 embed, files = self.create_embed_and_files(
                     game_over=self.game_over
                 )
@@ -3996,6 +4085,9 @@ class BlackjackView(discord.ui.View):
                 self.double_down.disabled = True
 
                 self.resolve_dealer()
+
+                # 終了ログ
+                await self.send_bj_log()
 
                 embed, files = self.create_embed_and_files(
                     game_over=True
@@ -4127,6 +4219,9 @@ class BlackjackView(discord.ui.View):
                 else:
 
                     self.resolve_dealer()
+
+                # 終了ログ
+                await self.send_bj_log()
 
                 embed, files = self.create_embed_and_files(
                     game_over=True
@@ -4494,7 +4589,9 @@ async def blackjack(ctx, bet: int = None):
                 view=view
             )
 
+        # 初期ブラックジャックなどで即終了した場合
         if view.game_over:
+            await view.send_bj_log()
             view.stop()
 
     except Exception as e:

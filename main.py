@@ -2745,9 +2745,10 @@ async def slot_help_command(ctx):
     await ctx.reply(embed=embed, mention_author=False)
 
 # ==================================================
-# /setting モーダル
+# /setting モーダル・サブメニュー（スロット詳細設定対応版）
 # ==================================================
 
+# --- 賭け金設定 ---
 class GameBetSettingModal(discord.ui.Modal):
     def __init__(self, game_key, game_name):
         self.game_key = game_key
@@ -2782,7 +2783,6 @@ class GameBetSettingModal(discord.ui.Modal):
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
 
-        # 最低賭け金の検証
         try:
             min_val = int(str(self.min_bet_input.value).strip())
             if min_val < 0:
@@ -2791,7 +2791,6 @@ class GameBetSettingModal(discord.ui.Modal):
             await interaction.response.send_message("最低賭け金は0以上の整数で入力してね。", ephemeral=True)
             return
 
-        # 最高賭け金の検証
         max_raw = str(self.max_bet_input.value).strip().lower()
         if max_raw in ("inf", "infinity", "無制限"):
             max_val = "inf"
@@ -2813,7 +2812,6 @@ class GameBetSettingModal(discord.ui.Modal):
             "min": min_val,
             "max": max_val
         }
-        # 互換性維持用（スロットの min_bet）
         if self.game_key == "slot":
             settings["min_bet"] = min_val
 
@@ -2857,9 +2855,10 @@ class GameSelectForBetView(discord.ui.View):
         await interaction.response.send_modal(GameBetSettingModal(chosen_key, chosen_name))
 
 
+# --- 出目排出確率設定 ---
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
-        super().__init__(title="スロット確率の設定")
+        super().__init__(title="出目排出確率の設定")
 
         current_value = ",".join(
             f"{symbol}={current_weights.get(symbol, 0)}"
@@ -2926,15 +2925,193 @@ class WeightsSettingModal(discord.ui.Modal):
             ephemeral=True,
         )
 
+
+# --- ペイアウト倍率設定 ---
+class PayoutsSettingModal(discord.ui.Modal):
+    def __init__(self, current_payouts):
+        super().__init__(title="ペイアウト倍率の設定")
+
+        current_value = ",".join(
+            f"{symbol}={current_payouts.get(symbol, PAYOUTS.get(symbol, 0))}"
+            for symbol in SYMBOLS
+        )
+
+        self.payouts_input = discord.ui.TextInput(
+            label="各絵柄が揃った時の配当倍率",
+            placeholder="🍒=5,🍋=8,🔔=10,⭐=25,7️⃣=45,💣=35,JP=75",
+            default=current_value,
+            required=True,
+            max_length=200,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.payouts_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        raw = str(self.payouts_input.value).strip()
+        parsed = {}
+
+        try:
+            for part in raw.split(","):
+                if "=" not in part:
+                    raise ValueError
+
+                symbol, value = part.split("=", 1)
+                symbol = symbol.strip()
+                value = int(value.strip())
+
+                if symbol not in SYMBOLS or value < 0:
+                    raise ValueError
+
+                parsed[symbol] = value
+
+            if any(symbol not in parsed for symbol in SYMBOLS):
+                raise ValueError
+
+        except ValueError:
+            await interaction.response.send_message(
+                "入力形式が正しくないよ。\n"
+                "例：`🍒=5,🍋=8,🔔=10,⭐=25,7️⃣=45,💣=35,JP=75`\n"
+                "各倍率は0以上の整数で入力してね。",
+                ephemeral=True,
+            )
+            return
+
+        settings = get_server_settings(interaction.guild.id)
+        settings["payouts"] = parsed
+        save_server_settings(interaction.guild.id)
+
+        # グローバル変数 PAYOUTS も更新（サーバー個別に反映）
+        PAYOUTS.update(parsed)
+
+        payout_text = "\n".join(f"{s}：{v}倍" for s, v in parsed.items())
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="💰 ペイアウト倍率を更新したよ",
+                description=payout_text,
+                color=discord.Color.green(),
+            ),
+            ephemeral=True,
+        )
+
+
+# --- JP初期値設定（カラーJP拡張対応） ---
+class JPInitialSettingModal(discord.ui.Modal):
+    def __init__(self, jp_key="red", jp_name="RED JP"):
+        self.jp_key = jp_key
+        self.jp_name = jp_name
+        super().__init__(title=f"{jp_name} 初期値の設定")
+
+        self.initial_input = discord.ui.TextInput(
+            label=f"{jp_name} の初期積立金額",
+            placeholder="例：10000",
+            default="10000",
+            required=True,
+            min_length=1,
+            max_length=15,
+        )
+        self.add_item(self.initial_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+
+        try:
+            val = int(str(self.initial_input.value).strip())
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("金額は0以上の整数で入力してね。", ephemeral=True)
+            return
+
+        # JPデータの更新
+        jackpot_data[f"initial_{self.jp_key}"] = val
+        save_json(JACKPOT_FILE, jackpot_data)
+
+        await interaction.response.send_message(
+            f"**{self.jp_name}** の初期金額を **{money(val)}** に設定したよ！\n"
+            f"※次回JPリセット（当選時）からこの初期値が適用されます。",
+            ephemeral=True,
+        )
+
+
+class JPColorSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.select(
+        placeholder="設定したいJPを選択してね",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(label="RED JP", value="red", description="RED JPの初期金額を設定", emoji="🔴"),
+            # 将来追加する場合の例:
+            # discord.SelectOption(label="BLUE JP", value="blue", description="BLUE JPの初期金額を設定", emoji="🔵"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if not await require_owner(interaction):
+            return
+
+        jp_map = {
+            "red": "RED JP",
+            # "blue": "BLUE JP",
+        }
+        chosen_key = select.values[0]
+        chosen_name = jp_map[chosen_key]
+
+        await interaction.response.send_modal(JPInitialSettingModal(chosen_key, chosen_name))
+
+
+# --- スロットサブメニュー選択View ---
+class SlotSubMenuSelectView(discord.ui.View):
+    def __init__(self, current_settings):
+        super().__init__(timeout=180)
+        self.current_settings = current_settings
+
+    @discord.ui.select(
+        placeholder="スロットの変更項目を選んでね",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(label="出目排出確率", description="絵柄ごとの出現比率を変更", value="weights", emoji="🎲"),
+            discord.SelectOption(label="ペイアウト倍率", description="揃った時の獲得倍率を変更", value="payouts", emoji="💰"),
+            discord.SelectOption(label="JP", description="ジャックポットの初期値を設定", value="jp", emoji="🎰"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if not await require_owner(interaction):
+            return
+
+        chosen = select.values[0]
+        if chosen == "weights":
+            await interaction.response.send_modal(WeightsSettingModal(self.current_settings.get("weights", DEFAULT_WEIGHTS)))
+        elif chosen == "payouts":
+            current_p = self.current_settings.get("payouts", PAYOUTS)
+            await interaction.response.send_modal(PayoutsSettingModal(current_p))
+        elif chosen == "jp":
+            await interaction.response.send_message(
+                "設定するジャックポットを選択してね。",
+                view=JPColorSelectView(),
+                ephemeral=True
+            )
+
+
 # ==================================================
-# /setting 選択メニュー
+# /setting メイン選択メニュー
 # ==================================================
 
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="賭け金", description="ゲームごとの最低・最高賭け金を変更", value="min_bet", emoji="🪙"),
-            discord.SelectOption(label="スロット", description="絵柄ごとの比率を変更", value="weights", emoji="🎰"),
+            discord.SelectOption(label="スロット", description="確率・ペイアウト・JPを設定", value="slot_settings", emoji="🎰"),
             discord.SelectOption(label="メンテナンス", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
         ]
 
@@ -2962,8 +3139,12 @@ class SettingActionSelect(discord.ui.Select):
                 view=GameSelectForBetView(),
                 ephemeral=True,
             )
-        elif selected == "weights":
-            await interaction.response.send_modal(WeightsSettingModal(settings["weights"]))
+        elif selected == "slot_settings":
+            await interaction.response.send_message(
+                "スロットの設定項目を選んでね。",
+                view=SlotSubMenuSelectView(settings),
+                ephemeral=True,
+            )
         elif selected == "maintenance":
             await interaction.response.send_message(
                 "メンテナンスモードを切り替えるよ。",
@@ -2975,6 +3156,7 @@ class SettingPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
+
 
 # ==================================================
 # メンテナンスモード

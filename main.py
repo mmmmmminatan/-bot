@@ -2776,13 +2776,33 @@ async def save_and_log_settings(interaction: discord.Interaction, success_msg: s
 
 
 # ==================================================
-# 1. 賭け金設定用 モーダル (最低・最高 / inf対応)
+# 新・/setting 関連クラス・関数群
 # ==================================================
+
+PREFIX_SETTING = "[RESTORE_SETTING]"
+
+async def save_and_log_settings(interaction: discord.Interaction, success_msg: str):
+    if interaction.guild is None:
+        return
+    guild_id = interaction.guild.id
+    save_server_settings(guild_id)
+    settings = get_server_settings(guild_id)
+
+    log_channel = interaction.client.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        try:
+            log_text = f"{PREFIX_SETTING} GuildID:{guild_id} " + json.dumps(settings, default=str)
+            await log_channel.send(log_text)
+        except Exception as e:
+            print(f"[SETTING LOG ERROR] {e}")
+
+    await interaction.response.send_message(success_msg, ephemeral=True)
 
 class BetLimitModal(discord.ui.Modal):
     def __init__(self, game_key: str, game_display_name: str, current_limits: dict):
         super().__init__(title=f"{game_display_name}の賭け金設定")
         self.game_key = game_key
+        self.game_display_name = game_display_name
 
         curr_min = current_limits.get("min", 1)
         curr_max = current_limits.get("max", "inf")
@@ -2838,15 +2858,9 @@ class BetLimitModal(discord.ui.Modal):
         max_display = "制限なし (inf)" if max_val == "inf" else f"${max_val:,}"
         await save_and_log_settings(
             interaction,
-            f"✅ **{game_display_name}** の賭け金を更新したよ。\n最低: `${min_val:,}` / 最高: `{max_display}`"
+            f"✅ **{self.game_display_name}** の賭け金を更新したよ。\n最低: `${min_val:,}` / 最高: `{max_display}`"
         )
 
-
-# ==================================================
-# 2. スロット詳細設定用 モーダル群
-# ==================================================
-
-# ① 出目出現確率
 class WeightsSettingModal(discord.ui.Modal):
     def __init__(self, current_weights):
         super().__init__(title="スロット確率の設定")
@@ -2895,14 +2909,13 @@ class WeightsSettingModal(discord.ui.Modal):
         if "slot_detail" not in settings:
             settings["slot_detail"] = {}
         settings["slot_detail"]["weights"] = parsed
+        settings["weights"] = parsed
 
         await save_and_log_settings(
             interaction,
             f"🎰 出現比率を更新したよ\n{get_weights_text(parsed)}"
         )
 
-
-# ② RED JP ジャックポット開始額
 class RedJpModal(discord.ui.Modal):
     def __init__(self, current_jp):
         super().__init__(title="RED JP ジャックポット開始額")
@@ -2936,16 +2949,14 @@ class RedJpModal(discord.ui.Modal):
 
         await save_and_log_settings(interaction, f"💰 RED JP の開始額を `${val:,}` に設定したよ。")
 
-
-# ③ ペイアウト倍率
 class SlotPayoutsModal(discord.ui.Modal):
     def __init__(self, current_payouts):
         super().__init__(title="スロット ペイアウト倍率設定")
-        current_value = ",".join(f"{s}={current_payouts.get(s, 1)}" for s in SYMBOLS)
+        current_value = ",".join(f"{s}={current_payouts.get(s, PAYOUTS.get(s, 1))}" for s in SYMBOLS)
 
         self.payouts_input = discord.ui.TextInput(
             label="揃ったときの賭け金倍率",
-            placeholder="🍒=2,🍋=5,⭐=10,🔔=20,7️⃣=50,💣=100,JP=500",
+            placeholder="🍒=5,🍋=8,⭐=25,🔔=10,7️⃣=45,💣=35,JP=75",
             default=current_value,
             required=True,
             max_length=200,
@@ -2977,7 +2988,7 @@ class SlotPayoutsModal(discord.ui.Modal):
                 raise ValueError
         except ValueError:
             await interaction.response.send_message(
-                "入力形式が正しくないよ。\n例：`🍒=2,🍋=5,⭐=10,🔔=20,7️⃣=50,💣=100,JP=500`",
+                "入力形式が正しくないよ。\n例：`🍒=5,🍋=8,⭐=25,🔔=10,7️⃣=45,💣=35,JP=75`",
                 ephemeral=True,
             )
             return
@@ -2990,12 +3001,6 @@ class SlotPayoutsModal(discord.ui.Modal):
         text = ", ".join(f"{k}={v}" for k, v in parsed.items())
         await save_and_log_settings(interaction, f"🎰 ペイアウト倍率を更新したよ\n{text}")
 
-
-# ==================================================
-# 3. 階層メニューのビュー＆セレクト
-# ==================================================
-
-# A. ゲーム選択セレクトメニュー（「賭け金」押下後）
 class GameSelect(discord.ui.Select):
     def __init__(self):
         super().__init__(
@@ -3020,7 +3025,7 @@ class GameSelect(discord.ui.Select):
         game_names = {"slot": "スロット", "blackjack": "ブラックジャック", "color": "カラー"}
         
         settings = get_server_settings(interaction.guild.id)
-        bet_limits = settings.get("bet_limits", DEFAULT_SERVER_SETTINGS["bet_limits"])
+        bet_limits = settings.get("bet_limits", DEFAULT_BET_LIMITS)
         current_limits = bet_limits.get(game_key, {"min": 1, "max": "inf"})
 
         await interaction.response.send_modal(BetLimitModal(game_key, game_names[game_key], current_limits))
@@ -3030,8 +3035,6 @@ class GameSelectView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(GameSelect())
 
-
-# B. スロット詳細設定セレクトメニュー（「スロット」押下後）
 class SlotSubSelect(discord.ui.Select):
     def __init__(self):
         super().__init__(
@@ -3054,7 +3057,7 @@ class SlotSubSelect(discord.ui.Select):
 
         selected = self.values[0]
         settings = get_server_settings(interaction.guild.id)
-        slot_detail = settings.get("slot_detail", DEFAULT_SERVER_SETTINGS["slot_detail"])
+        slot_detail = settings.get("slot_detail", DEFAULT_SLOT_DETAIL)
 
         if selected == "weights":
             await interaction.response.send_modal(WeightsSettingModal(slot_detail.get("weights", {})))
@@ -3068,8 +3071,6 @@ class SlotSubView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(SlotSubSelect())
 
-
-# C. メイン設定セレクトメニュー（3項目に絞り込み）
 class SettingActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -3105,11 +3106,6 @@ class SettingPanelView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(SettingActionSelect())
 
-
-# ==================================================
-# 4. メンテナンスモード (そのまま維持)
-# ==================================================
-
 class MaintenanceSettingView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
@@ -3143,11 +3139,6 @@ class MaintenanceSettingView(discord.ui.View):
         
         await save_and_log_settings(interaction, "メンテナンスモードを **OFF** にしたよ。")
 
-
-# ==================================================
-# 5. 再起動時の設定復元関数
-# ==================================================
-
 async def restore_settings_from_logs(bot):
     """起動時にログチャンネルを遡って設定を自動復元する"""
     channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -3178,11 +3169,6 @@ async def restore_settings_from_logs(bot):
     except Exception as e:
         print(f"[SETTING RESTORE ERROR] {e}")
 
-
-# ==================================================
-# /setting コマンド本体
-# ==================================================
-
 @bot.tree.command(name="setting", description="Botの設定パネルを開く（オーナー本人専用）")
 async def setting_command(interaction: discord.Interaction):
     if not await require_owner(interaction):
@@ -3195,12 +3181,19 @@ async def setting_command(interaction: discord.Interaction):
     settings = get_server_settings(interaction.guild.id)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    bet_limits = settings.get("bet_limits", DEFAULT_SERVER_SETTINGS["bet_limits"])
-    slot_detail = settings.get("slot_detail", DEFAULT_SERVER_SETTINGS["slot_detail"])
+    bet_limits = settings.get("bet_limits", DEFAULT_BET_LIMITS)
+    slot_detail = settings.get("slot_detail", DEFAULT_SLOT_DETAIL)
 
-    slot_limits_text = f"最小: ${bet_limits['slot']['min']:,} / 最高: {'制限なし' if bet_limits['slot']['max']=='inf' else f\"${bet_limits['slot']['max']:,}\"}"
-    bj_limits_text = f"最小: ${bet_limits['blackjack']['min']:,} / 最高: {'制限なし' if bet_limits['blackjack']['max']=='inf' else f\"${bet_limits['blackjack']['max']:,}\"}"
-    color_limits_text = f"最小: ${bet_limits['color']['min']:,} / 最高: {'制限なし' if bet_limits['color']['max']=='inf' else f\"${bet_limits['color']['max']:,}\"}"
+    slot_min = bet_limits.get('slot', {}).get('min', 1)
+    slot_max = bet_limits.get('slot', {}).get('max', 'inf')
+    bj_min = bet_limits.get('blackjack', {}).get('min', 100)
+    bj_max = bet_limits.get('blackjack', {}).get('max', 50000)
+    color_min = bet_limits.get('color', {}).get('min', 50)
+    color_max = bet_limits.get('color', {}).get('max', 'inf')
+
+    slot_limits_text = f"最小: ${slot_min:,} / 最高: {'制限なし' if slot_max=='inf' else f\"${slot_max:,}\"}"
+    bj_limits_text = f"最小: ${bj_min:,} / 最高: {'制限なし' if bj_max=='inf' else f\"${bj_max:,}\"}"
+    color_limits_text = f"最小: ${color_min:,} / 最高: {'制限なし' if color_max=='inf' else f\"${color_max:,}\"}"
 
     embed = discord.Embed(
         title="Bot設定パネル",
@@ -3221,6 +3214,7 @@ async def setting_command(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed, view=SettingPanelView(), ephemeral=True)
+
 
 # ==================================================
 # /coinrecovery

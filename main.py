@@ -1544,10 +1544,19 @@ async def color_command(ctx, bet_text: str):
         return
 
     settings = get_server_settings(ctx.guild.id)
-    minimum = int(settings.get("min_bet", 1))
+    bet_limits = settings.get("bet_limits", {})
+    color_limit = bet_limits.get("color", {"min": 0, "max": "inf"})
+    
+    min_bet = color_limit.get("min", 0)
+    max_bet = color_limit.get("max", "inf")
 
-    if bet < minimum:
-        await ctx.reply(f"最低賭け金は {money(minimum)} だよ。", mention_author=False)
+    if bet < min_bet:
+        max_str = "無制限" if max_bet == "inf" else money(max_bet)
+        await ctx.reply(f"カラーの最低賭け金は **{money(min_bet)}** だよ。", mention_author=False)
+        return
+
+    if max_bet != "inf" and bet > max_bet:
+        await ctx.reply(f"カラーの最高賭け金は **{money(max_bet)}** までだよ。", mention_author=False)
         return
 
     current_balance = get_balance(ctx.author.id)
@@ -4373,13 +4382,24 @@ async def blackjack(ctx, bet: int = None):
     # --------------------------------------
 
     if bet is None:
-
         await ctx.send("使い方：`.bj 1000`")
         return
 
-    if bet <= 0:
+    # サーバーの設定（最低・最高賭け金）を取得
+    settings = get_server_settings(ctx.guild.id)
+    bet_limits = settings.get("bet_limits", {})
+    bj_limit = bet_limits.get("bj", {"min": 0, "max": "inf"})
+    
+    min_bet = bj_limit.get("min", 0)
+    max_bet = bj_limit.get("max", "inf")
 
-        await ctx.send("賭け金は1以上にしてください。")
+    if bet < min_bet:
+        await ctx.send(f"ブラックジャックの最低賭け金は **{bj_money(min_bet)}** です。")
+        return
+
+    if max_bet != "inf" and bet > max_bet:
+        max_str = bj_money(max_bet)
+        await ctx.send(f"ブラックジャックの最高賭け金は **{max_str}** までです。")
         return
 
     # --------------------------------------

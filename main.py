@@ -3403,7 +3403,7 @@ def run_web():
 
 
 # ==========================================
-# 🃏 ブラックジャック関連機能
+# 🃏 ブラックジャック関連機能（配当対応完全版）
 # ==========================================
 
 from PIL import Image
@@ -3414,10 +3414,37 @@ import discord
 
 
 # ==========================================
+# 設定
+# ==========================================
+
+BJ_TIMEOUT = 300
+
+# 同時に複数ゲームを開始させない
+active_blackjack_users = set()
+
+
+# ==========================================
+# 金額表示
+# ==========================================
+
+def bj_money(amount):
+    return f"${amount:,}"
+
+
+def bj_money_change(amount):
+    if amount > 0:
+        return f"+${amount:,}"
+    elif amount < 0:
+        return f"-${abs(amount):,}"
+    return "±$0"
+
+
+# ==========================================
 # カード画像
 # ==========================================
 
 def get_card_image_path(suit, value):
+
     if suit == "back":
         return "cards/IMG_0678.png"
 
@@ -3432,6 +3459,7 @@ def get_card_image_path(suit, value):
     }
 
     if suit in suit_offsets:
+
         val_map = {
             "A": 1,
             "J": 11,
@@ -3439,9 +3467,13 @@ def get_card_image_path(suit, value):
             "K": 13
         }
 
-        val = val_map[value.upper()] if isinstance(value, str) and value.upper() in val_map else int(value)
+        if isinstance(value, str) and value.upper() in val_map:
+            val = val_map[value.upper()]
+        else:
+            val = int(value)
 
         file_num = suit_offsets[suit] + (val - 1)
+
         return f"cards/IMG_{file_num:04d}.png"
 
     return "cards/IMG_0678.png"
@@ -3452,13 +3484,16 @@ def get_card_image_path(suit, value):
 # ==========================================
 
 def merge_horizontal(image_paths):
+
     try:
+
         if not image_paths:
             return None
 
         images = []
 
         for path in image_paths:
+
             if not os.path.exists(path):
                 print(f"[BJ IMAGE ERROR] File not found: {path}")
                 return None
@@ -3471,8 +3506,11 @@ def merge_horizontal(image_paths):
         resized_images = []
 
         for img in images:
+
             if img.height != h:
+
                 new_width = int(img.width * h / img.height)
+
                 img = img.resize((new_width, h))
 
             resized_images.append(img)
@@ -3488,13 +3526,21 @@ def merge_horizontal(image_paths):
         x_offset = 0
 
         for img in resized_images:
-            merged_img.paste(img, (x_offset, 0), img)
+
+            merged_img.paste(
+                img,
+                (x_offset, 0),
+                img
+            )
+
             x_offset += img.width
 
         return merged_img
 
     except Exception as e:
+
         print(f"[BJ HORIZONTAL ERROR] {e}")
+
         return None
 
 
@@ -3505,9 +3551,11 @@ def merge_horizontal(image_paths):
 def create_bj_table_image(
     dealer_paths,
     player_paths,
-    output_path="cards/bj_table.png"
+    output_path
 ):
+
     try:
+
         img_dealer = merge_horizontal(dealer_paths)
         img_player = merge_horizontal(player_paths)
 
@@ -3545,14 +3593,16 @@ def create_bj_table_image(
             img_player
         )
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs("cards", exist_ok=True)
 
         table_img.save(output_path)
 
         return output_path
 
     except Exception as e:
+
         print(f"[BJ TABLE ERROR] {e}")
+
         return None
 
 
@@ -3561,27 +3611,51 @@ def create_bj_table_image(
 # ==========================================
 
 def calculate_hand(hand):
+
     score = 0
     aces = 0
 
     for card in hand:
+
         val = card["val"]
 
         if val in ["J", "Q", "K"]:
             score += 10
 
         elif val == "A":
-            aces += 1
             score += 11
+            aces += 1
 
         else:
             score += int(val)
 
     while score > 21 and aces > 0:
+
         score -= 10
         aces -= 1
 
     return score
+
+
+# ==========================================
+# ブラックジャック判定
+# ==========================================
+
+def is_blackjack(hand):
+
+    if len(hand) != 2:
+        return False
+
+    values = [card["val"] for card in hand]
+
+    has_ace = "A" in values
+
+    has_ten = any(
+        val in ["10", "J", "Q", "K"]
+        for val in values
+    )
+
+    return has_ace and has_ten
 
 
 # ==========================================
@@ -3595,47 +3669,116 @@ class BlackjackView(discord.ui.View):
         ctx,
         deck,
         player_hand,
-        dealer_hand
+        dealer_hand,
+        bet
     ):
-        super().__init__(timeout=300)
+
+        super().__init__(timeout=BJ_TIMEOUT)
 
         self.ctx = ctx
         self.deck = deck
+
         self.player_hand = player_hand
         self.dealer_hand = dealer_hand
+
+        self.bet = bet
 
         self.message = None
 
         self.lock = asyncio.Lock()
+
         self.game_over = False
+        self.settled = False
+
+        self.user_id = ctx.author.id
+
+        # ゲームごとに画像ファイルを分ける
+        self.image_path = f"cards/bj_table_{id(self)}.png"
+
+    # --------------------------------------
+    # 勝敗決済
+    # --------------------------------------
+
+    def settle_game(self, outcome):
+
+        if self.settled:
+            return 0, 0
+
+        self.settled = True
+
+        if outcome == "bj":
+
+            # BJ：2.5倍返却
+            returned = self.bet * 5 // 2
+
+        elif outcome == "win":
+
+            # 通常勝利：2倍返却
+            returned = self.bet * 2
+
+        elif outcome == "push":
+
+            # 引き分け：賭け金返却
+            returned = self.bet
+
+        else:
+
+            # 敗北：返却なし
+            returned = 0
+
+        # 純利益
+        profit = returned - self.bet
+
+        # 既存の残高システムに接続
+        current_balance = get_balance(self.user_id)
+
+        set_balance(
+            self.user_id,
+            current_balance + returned
+        )
+
+        # 同時ゲーム防止解除
+        active_blackjack_users.discard(self.user_id)
+
+        return profit, returned
+
+    # --------------------------------------
+    # ゲーム終了処理
+    # --------------------------------------
+
+    def finish_game(self, result, outcome):
+
+        self.game_over = True
+
+        for child in self.children:
+            child.disabled = True
+
+        profit, returned = self.settle_game(outcome)
+
+        if outcome in ["win", "bj"]:
+            color = discord.Color.green()
+
+        elif outcome == "lose":
+            color = discord.Color.red()
+
+        else:
+            color = discord.Color.light_grey()
+
+        self.final_profit = profit
+        self.final_returned = returned
+
+        self.final_result = result
+        self.final_color = color
 
     # --------------------------------------
     # 山札補充
     # --------------------------------------
 
     def check_deck(self):
-        if len(self.deck) < 10:
 
-            suits = [
-                "spade",
-                "club",
-                "diamond",
-                "heart"
-            ]
+        if not self.deck:
 
-            values = [
-                "A", "2", "3", "4", "5",
-                "6", "7", "8", "9", "10",
-                "J", "Q", "K"
-            ]
-
-            self.deck = [
-                {"suit": s, "val": v}
-                for s in suits
-                for v in values
-            ]
-
-            random.shuffle(self.deck)
+            raise RuntimeError("山札がなくなりました。")
 
     # --------------------------------------
     # 操作できる人を制限
@@ -3643,7 +3786,7 @@ class BlackjackView(discord.ui.View):
 
     async def interaction_check(self, interaction):
 
-        if interaction.user.id == self.ctx.author.id:
+        if interaction.user.id == self.user_id:
             return True
 
         await interaction.response.send_message(
@@ -3659,16 +3802,35 @@ class BlackjackView(discord.ui.View):
 
     async def on_timeout(self):
 
-        self.game_over = True
+        async with self.lock:
 
-        for child in self.children:
-            child.disabled = True
+            if self.game_over:
+                return
 
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except discord.HTTPException:
-                pass
+            self.finish_game(
+                "操作時間切れ！賭け金は没収されました。",
+                "lose"
+            )
+
+            embed, files = self.create_embed_and_files(
+                game_over=True
+            )
+
+            if self.message:
+
+                try:
+
+                    await self.message.edit(
+                        embed=embed,
+                        attachments=files,
+                        view=self
+                    )
+
+                except discord.HTTPException as e:
+
+                    print(f"[BJ TIMEOUT ERROR] {e}")
+
+            self.stop()
 
     # --------------------------------------
     # ヒット
@@ -3685,90 +3847,69 @@ class BlackjackView(discord.ui.View):
     ):
 
         if self.lock.locked():
+
             await interaction.response.send_message(
                 "現在処理中です！",
                 ephemeral=True
             )
+
             return
 
-        await self.lock.acquire()
-
-        try:
+        async with self.lock:
 
             if self.game_over:
+
                 await interaction.response.send_message(
                     "このゲームは終了しています。",
                     ephemeral=True
                 )
+
                 return
 
             await interaction.response.defer()
 
-            self.check_deck()
+            try:
 
-            self.player_hand.append(
-                self.deck.pop()
-            )
+                self.check_deck()
 
-            p_score = calculate_hand(
-                self.player_hand
-            )
+                self.player_hand.append(
+                    self.deck.pop()
+                )
 
-            if p_score > 21:
+                p_score = calculate_hand(
+                    self.player_hand
+                )
 
-                self.game_over = True
+                if p_score > 21:
 
-                for child in self.children:
-                    child.disabled = True
+                    self.finish_game(
+                        "バースト！あなたの負けです… 😭",
+                        "lose"
+                    )
 
                 embed, files = self.create_embed_and_files(
-                    game_over=True,
-                    result="バースト！あなたの負けです… 😭"
+                    game_over=self.game_over
                 )
 
-                if files:
-                    await interaction.edit_original_response(
-                        embed=embed,
-                        attachments=files,
-                        view=self
-                    )
-                else:
-                    await interaction.edit_original_response(
-                        embed=embed,
-                        view=self
-                    )
-
-                self.stop()
-
-            else:
-
-                embed, files = self.create_embed_and_files(
-                    game_over=False
+                await interaction.edit_original_response(
+                    embed=embed,
+                    attachments=files,
+                    view=self
                 )
 
-                if files:
-                    await interaction.edit_original_response(
-                        embed=embed,
-                        attachments=files,
-                        view=self
+                if self.game_over:
+                    self.stop()
+
+            except Exception as e:
+
+                print(f"[BJ HIT ERROR] {e}")
+
+                if not interaction.response.is_done():
+
+                    await interaction.response.send_message(
+                        "処理中にエラーが発生しました。",
+                        ephemeral=True
                     )
-                else:
-                    await interaction.edit_original_response(
-                        embed=embed,
-                        view=self
-                    )
-
-        except Exception as e:
-            print(f"[BJ HIT ERROR] {e}")
-
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "処理中にエラーが発生しました。",
-                    ephemeral=True
-                )
-
-        finally:
-            self.lock.release()
 
     # --------------------------------------
     # スタンド
@@ -3785,90 +3926,97 @@ class BlackjackView(discord.ui.View):
     ):
 
         if self.lock.locked():
+
             await interaction.response.send_message(
                 "現在処理中です！",
                 ephemeral=True
             )
+
             return
 
-        await self.lock.acquire()
-
-        try:
+        async with self.lock:
 
             if self.game_over:
+
                 await interaction.response.send_message(
                     "このゲームは終了しています。",
                     ephemeral=True
                 )
+
                 return
 
             await interaction.response.defer()
 
-            while calculate_hand(self.dealer_hand) < 17:
+            try:
 
-                self.check_deck()
+                # ディーラーは17以上になるまで引く
+                while calculate_hand(self.dealer_hand) < 17:
 
-                self.dealer_hand.append(
-                    self.deck.pop()
+                    self.check_deck()
+
+                    self.dealer_hand.append(
+                        self.deck.pop()
+                    )
+
+                p_score = calculate_hand(
+                    self.player_hand
                 )
 
-            p_score = calculate_hand(
-                self.player_hand
-            )
+                d_score = calculate_hand(
+                    self.dealer_hand
+                )
 
-            d_score = calculate_hand(
-                self.dealer_hand
-            )
+                # ----------------------------------
+                # 勝敗判定
+                # ----------------------------------
 
-            # 勝敗判定
+                if d_score > 21:
 
-            if d_score > 21:
-                result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+                    result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+                    outcome = "win"
 
-            elif p_score > d_score:
-                result = "あなたの勝ちです！ 🏆"
+                elif p_score > d_score:
 
-            elif p_score < d_score:
-                result = "あなたの負けです… 😢"
+                    result = "あなたの勝ちです！ 🏆"
+                    outcome = "win"
 
-            else:
-                result = "引き分け (Push) です！ 🤝"
+                elif p_score < d_score:
 
-            self.game_over = True
+                    result = "あなたの負けです… 😢"
+                    outcome = "lose"
 
-            for child in self.children:
-                child.disabled = True
+                else:
 
-            embed, files = self.create_embed_and_files(
-                game_over=True,
-                result=result
-            )
+                    result = "引き分け (Push) です！ 🤝"
+                    outcome = "push"
 
-            if files:
+                self.finish_game(
+                    result,
+                    outcome
+                )
+
+                embed, files = self.create_embed_and_files(
+                    game_over=True
+                )
+
                 await interaction.edit_original_response(
                     embed=embed,
                     attachments=files,
                     view=self
                 )
-            else:
-                await interaction.edit_original_response(
-                    embed=embed,
-                    view=self
-                )
 
-            self.stop()
+                self.stop()
 
-        except Exception as e:
-            print(f"[BJ STAND ERROR] {e}")
+            except Exception as e:
 
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "処理中にエラーが発生しました。",
-                    ephemeral=True
-                )
+                print(f"[BJ STAND ERROR] {e}")
 
-        finally:
-            self.lock.release()
+                if not interaction.response.is_done():
+
+                    await interaction.response.send_message(
+                        "処理中にエラーが発生しました。",
+                        ephemeral=True
+                    )
 
     # --------------------------------------
     # Embed・画像作成
@@ -3876,26 +4024,33 @@ class BlackjackView(discord.ui.View):
 
     def create_embed_and_files(
         self,
-        game_over=False,
-        result=""
+        game_over=False
     ):
+
+        color = (
+            self.final_color
+            if game_over and self.settled
+            else discord.Color.gold()
+        )
 
         embed = discord.Embed(
             title="🃏 ブラックジャック",
-            color=discord.Color.gold()
+            color=color
         )
 
         p_score = calculate_hand(
             self.player_hand
         )
 
+        d_score = calculate_hand(
+            self.dealer_hand
+        )
+
+        # ----------------------------------
         # ディーラーのカード
+        # ----------------------------------
 
         if game_over:
-
-            d_score = calculate_hand(
-                self.dealer_hand
-            )
 
             dealer_text = f"手札（合計: {d_score}）"
 
@@ -3907,6 +4062,13 @@ class BlackjackView(discord.ui.View):
                 for c in self.dealer_hand
             ]
 
+            d_cards_str = ", ".join(
+                [
+                    f"{c['suit']}の{c['val']}"
+                    for c in self.dealer_hand
+                ]
+            )
+
         else:
 
             dealer_text = "手札（2枚目は裏面）"
@@ -3916,13 +4078,17 @@ class BlackjackView(discord.ui.View):
                     self.dealer_hand[0]["suit"],
                     self.dealer_hand[0]["val"]
                 ),
-                get_card_image_path(
-                    "back",
-                    0
-                )
+                get_card_image_path("back", 0)
             ]
 
+            d_cards_str = (
+                f"{self.dealer_hand[0]['suit']}の"
+                f"{self.dealer_hand[0]['val']}, 裏面"
+            )
+
+        # ----------------------------------
         # プレイヤーのカード
+        # ----------------------------------
 
         player_paths = [
             get_card_image_path(
@@ -3932,11 +4098,21 @@ class BlackjackView(discord.ui.View):
             for c in self.player_hand
         ]
 
+        p_cards_str = ", ".join(
+            [
+                f"{c['suit']}の{c['val']}"
+                for c in self.player_hand
+            ]
+        )
+
+        # ----------------------------------
         # 画像合体
+        # ----------------------------------
 
         table_image_path = create_bj_table_image(
             dealer_paths,
-            player_paths
+            player_paths,
+            self.image_path
         )
 
         files = []
@@ -3954,30 +4130,9 @@ class BlackjackView(discord.ui.View):
                 url="attachment://table.png"
             )
 
-        # カード情報
-
-        if game_over:
-
-            d_cards_str = ", ".join(
-                [
-                    f"{c['suit']}の{c['val']}"
-                    for c in self.dealer_hand
-                ]
-            )
-
-        else:
-
-            d_cards_str = (
-                f"{self.dealer_hand[0]['suit']}の"
-                f"{self.dealer_hand[0]['val']}, 裏面"
-            )
-
-        p_cards_str = ", ".join(
-            [
-                f"{c['suit']}の{c['val']}"
-                for c in self.player_hand
-            ]
-        )
+        # ----------------------------------
+        # 手札表示
+        # ----------------------------------
 
         embed.add_field(
             name=f"ディーラーの{dealer_text}",
@@ -3986,16 +4141,58 @@ class BlackjackView(discord.ui.View):
         )
 
         embed.add_field(
-            name=f"プレイヤーの手札 (合計: {p_score})",
+            name=f"プレイヤーの手札（合計: {p_score}）",
             value=p_cards_str,
             inline=False
         )
 
+        # ----------------------------------
+        # 賭け金表示
+        # ----------------------------------
+
+        embed.add_field(
+            name="💰 賭け金",
+            value=bj_money(self.bet),
+            inline=True
+        )
+
         if game_over:
+
+            # ----------------------------------
+            # 試合結果
+            # ----------------------------------
 
             embed.add_field(
                 name="【試合結果】",
-                value=result,
+                value=self.final_result,
+                inline=False
+            )
+
+            # ----------------------------------
+            # 利益・返却額
+            # ----------------------------------
+
+            embed.add_field(
+                name="📊 今回の利益",
+                value=f"**{bj_money_change(self.final_profit)}**",
+                inline=True
+            )
+
+            embed.add_field(
+                name="💵 返却額",
+                value=f"**{bj_money(self.final_returned)}**",
+                inline=True
+            )
+
+            embed.set_footer(
+                text="ブラックジャック • GAME OVER"
+            )
+
+        else:
+
+            embed.add_field(
+                name="🎮 操作",
+                value="ヒットまたはスタンドを選択してください。",
                 inline=False
             )
 
@@ -4007,63 +4204,200 @@ class BlackjackView(discord.ui.View):
 # ==========================================
 
 @bot.command(name="bj")
-async def blackjack(ctx):
+async def blackjack(ctx, bet: int = None):
 
-    suits = [
-        "spade",
-        "club",
-        "diamond",
-        "heart"
-    ]
+    user_id = ctx.author.id
 
-    values = [
-        "A", "2", "3", "4", "5",
-        "6", "7", "8", "9", "10",
-        "J", "Q", "K"
-    ]
+    # --------------------------------------
+    # 賭け金確認
+    # --------------------------------------
 
-    deck = [
-        {"suit": s, "val": v}
-        for s in suits
-        for v in values
-    ]
+    if bet is None:
 
-    random.shuffle(deck)
-
-    player_hand = [
-        deck.pop(),
-        deck.pop()
-    ]
-
-    dealer_hand = [
-        deck.pop(),
-        deck.pop()
-    ]
-
-    view = BlackjackView(
-        ctx,
-        deck,
-        player_hand,
-        dealer_hand
-    )
-
-    embed, files = view.create_embed_and_files(
-        game_over=False
-    )
-
-    if files:
-
-        view.message = await ctx.send(
-            embed=embed,
-            files=files,
-            view=view
+        await ctx.send(
+            "使い方：`.bj 1000`"
         )
 
-    else:
+        return
 
-        view.message = await ctx.send(
-            embed=embed,
-            view=view
+    if bet <= 0:
+
+        await ctx.send(
+            "賭け金は1以上にしてください。"
+        )
+
+        return
+
+    # --------------------------------------
+    # 同時ゲーム防止
+    # --------------------------------------
+
+    if user_id in active_blackjack_users:
+
+        await ctx.send(
+            "既にブラックジャックをプレイ中です！"
+        )
+
+        return
+
+    # --------------------------------------
+    # 残高確認
+    # --------------------------------------
+
+    balance = get_balance(user_id)
+
+    if balance < bet:
+
+        await ctx.send(
+            f"残高不足です！\n"
+            f"必要額：{bj_money(bet)}\n"
+            f"現在の残高：{bj_money(balance)}"
+        )
+
+        return
+
+    # --------------------------------------
+    # 賭け金徴収
+    # --------------------------------------
+
+    active_blackjack_users.add(user_id)
+
+    try:
+
+        set_balance(
+            user_id,
+            balance - bet
+        )
+
+        # ----------------------------------
+        # 山札作成
+        # ----------------------------------
+
+        suits = [
+            "spade",
+            "club",
+            "diamond",
+            "heart"
+        ]
+
+        values = [
+            "A", "2", "3", "4", "5",
+            "6", "7", "8", "9", "10",
+            "J", "Q", "K"
+        ]
+
+        deck = [
+            {"suit": s, "val": v}
+            for s in suits
+            for v in values
+        ]
+
+        random.shuffle(deck)
+
+        # ----------------------------------
+        # 初期手札
+        # ----------------------------------
+
+        player_hand = [
+            deck.pop(),
+            deck.pop()
+        ]
+
+        dealer_hand = [
+            deck.pop(),
+            deck.pop()
+        ]
+
+        # ----------------------------------
+        # View作成
+        # ----------------------------------
+
+        view = BlackjackView(
+            ctx,
+            deck,
+            player_hand,
+            dealer_hand,
+            bet
+        )
+
+        # ----------------------------------
+        # 初期BJ判定
+        # ----------------------------------
+
+        player_bj = is_blackjack(player_hand)
+        dealer_bj = is_blackjack(dealer_hand)
+
+        if player_bj and dealer_bj:
+
+            view.finish_game(
+                "両者ブラックジャック！引き分けです！ 🤝",
+                "push"
+            )
+
+        elif player_bj:
+
+            view.finish_game(
+                "ナチュラルブラックジャック！あなたの勝ちです！ 🎉",
+                "bj"
+            )
+
+        elif dealer_bj:
+
+            view.finish_game(
+                "ディーラーがブラックジャック！あなたの負けです。",
+                "lose"
+            )
+
+        # ----------------------------------
+        # Embed作成
+        # ----------------------------------
+
+        embed, files = view.create_embed_and_files(
+            game_over=view.game_over
+        )
+
+        if files:
+
+            view.message = await ctx.send(
+                embed=embed,
+                files=files,
+                view=view
+            )
+
+        else:
+
+            view.message = await ctx.send(
+                embed=embed,
+                view=view
+            )
+
+        if view.game_over:
+            view.stop()
+
+    except Exception as e:
+
+        print(f"[BJ START ERROR] {e}")
+
+        # 開始時にエラーが発生した場合は返金
+        if 'view' not in locals() or not view.settled:
+
+            try:
+
+                current_balance = get_balance(user_id)
+
+                set_balance(
+                    user_id,
+                    current_balance + bet
+                )
+
+            except Exception as refund_error:
+
+                print(f"[BJ REFUND ERROR] {refund_error}")
+
+            active_blackjack_users.discard(user_id)
+
+        await ctx.send(
+            "ブラックジャックの開始に失敗しました。"
         )
 
     

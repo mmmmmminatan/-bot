@@ -4756,11 +4756,70 @@ async def blackjack(ctx, bet: int = None):
             "ブラックジャックの開始に失敗しました。"
         )
         
+from PIL import Image, ImageDraw
+import os
+
+from PIL import Image, ImageDraw
+import os
+
+from PIL import Image, ImageDraw
+import os
+
 # ==================================================
-# .roulette / .r ルーレットゲーム
+# 🎡 ルーレットゲーム（画像合成・ビジュアル対応版）
 # ==================================================
 
-# 0は緑、その他は赤と黒
+# 座標マップ（マット画像「IMG_0715.jpeg」上の各ベット位置の中心座標）
+# ※ ズレがある場合はここの数値を微調整してください
+ROULETTE_COORDINATES = {
+    "red": (420, 280),
+    "black": (470, 280),
+    "even": (320, 280),
+    "odd": (520, 280),
+    # 必要に応じて数字「0」〜「36」の座標も追加可能です
+}
+
+def generate_roulette_table_image(target_key):
+    """
+    指定された賭け先（target_key）にチップを置いてルーレット画像を生成する
+    """
+    board_path = "cards/IMG_0715.jpeg"
+    chip_path = "cards/IMG_0730.jpeg"
+    
+    if not os.path.exists(board_path) or not os.path.exists(chip_path):
+        return None
+        
+    # ベースのボード画像を読み込む
+    base_image = Image.open(board_path).convert("RGBA")
+    
+    # チップ画像を読み込んで丸型に加工する
+    chip_img = Image.open(chip_path).convert("RGBA")
+    chip_size = 40  # チップのサイズ
+    chip_img = chip_img.resize((chip_size, chip_size), Image.Resampling.LANCZOS)
+    
+    # 円形のマスクを作成して綺麗に丸くくり抜く
+    mask = Image.new("L", (chip_size, chip_size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, chip_size, chip_size), fill=255)
+    
+    rounded_chip = Image.new("RGBA", (chip_size, chip_size))
+    rounded_chip.paste(chip_img, (0, 0), mask=mask)
+    
+    # 賭け先に対応する座標があればチップを貼り付ける
+    target_key = str(target_key).lower()
+    if target_key in ROULETTE_COORDINATES:
+        x, y = ROULETTE_COORDINATES[target_key]
+        paste_x = x - chip_size // 2
+        paste_y = y - chip_size // 2
+        base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)
+        
+    # 生成された画像を保存
+    output_path = "cards/current_roulette_board.png"
+    os.makedirs("cards", exist_ok=True)
+    base_image.save(output_path)
+    
+    return output_path
+
 ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
 
@@ -4885,6 +4944,13 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         game="roulette",
     )
 
+    # チップが置かれたボード画像を生成
+    board_image_path = generate_roulette_table_image(target_clean)
+    
+    files = []
+    if board_image_path and os.path.exists(board_image_path):
+        files.append(discord.File(board_image_path, filename="roulette.png"))
+
     # Embed生成
     color = discord.Color.green() if won else discord.Color.red()
     result_text = f"🎉 **当たり！ 配当: {money(payout)}**" if won else "💸 **ハズレ…**"
@@ -4901,8 +4967,11 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         ),
         color=color,
     )
+    
+    if files:
+        embed.set_image(url="attachment://roulette.png")
 
-    await ctx.reply(embed=embed, mention_author=False)
+    await ctx.reply(embed=embed, files=files if files else None, mention_author=False)
 
     # ログ処理
     record_coin({
@@ -4935,67 +5004,6 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
                 color=color,
             ),
         )
-from PIL import Image, ImageDraw
-import os
-
-# 賭け先の座標マップのサンプル（※実際のルーレット盤の画像サイズに合わせて調整します）
-ROULETTE_COORDINATES = {
-    "red": (300, 400),
-    "black": (400, 400),
-    "even": (200, 400),
-    "odd": (500, 400),
-    # 数字 0〜36 などの座標もここに辞書で追加できます
-}
-
-def generate_roulette_table(user_bets):
-    """
-    user_bets: ユーザーの賭け情報 {"red": 300, "17": 100} など
-    """
-    # 1. ベースとなるルーレットボード画像を読み込む
-    board_path = "cards/IMG_0715.jpeg"
-    if not os.path.exists(board_path):
-        return None
-    
-    base_image = Image.open(board_path).convert("RGBA")
-    
-    # 2. チップ画像（IMG_0730.jpeg）を読み込んで丸型に加工する
-    chip_path = "cards/IMG_0730.jpeg"
-    if not os.path.exists(chip_path):
-        return None
-        
-    chip_img = Image.open(chip_path).convert("RGBA")
-    
-    # チップのサイズを調整（例: 直径 45ピクセル）
-    chip_size = 45
-    chip_img = chip_img.resize((chip_size, chip_size), Image.Resampling.LANCZOS)
-    
-    # 四角い白背景を消すため、円形のマスク（切り抜き型）を作成
-    mask = Image.new("L", (chip_size, chip_size), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, chip_size, chip_size), fill=255)
-    
-    # マスクを使ってチップを綺麗な丸型にする
-    rounded_chip = Image.new("RGBA", (chip_size, chip_size))
-    rounded_chip.paste(chip_img, (0, 0), mask=mask)
-    
-    # 3. ユーザーのベット位置にチップを貼り付ける
-    for target, amount in user_bets.items():
-        target_key = str(target).lower()
-        if target_key in ROULETTE_COORDINATES:
-            x, y = ROULETTE_COORDINATES[target_key]
-            # チップの中心が指定座標にくるように配置
-            paste_x = x - chip_size // 2
-            paste_y = y - chip_size // 2
-            
-            # タワー風に少しずらして重ねたい場合はここでループを回すことも可能
-            base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)
-            
-    # 4. 生成した画像を保存
-    output_path = "cards/current_roulette_board.png"
-    os.makedirs("cards", exist_ok=True)
-    base_image.save(output_path)
-    
-    return output_path
 
     
 # ==================================================

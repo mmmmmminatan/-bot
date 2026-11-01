@@ -3401,228 +3401,670 @@ def run_web():
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
+
 # ==========================================
-# 🃏 ブラックジャック関連機能（上下合体・1枚画像完結版）
+# 🃏 ブラックジャック関連機能
 # ==========================================
 
 from PIL import Image
+import os
+import random
+import asyncio
+import discord
+
+
+# ==========================================
+# カード画像
+# ==========================================
 
 def get_card_image_path(suit, value):
-    if suit == 'back':
+    if suit == "back":
         return "cards/IMG_0678.png"
-    if suit == 'joker':
+
+    if suit == "joker":
         return "cards/IMG_0677.png"
-        
+
     suit_offsets = {
-        'spade': 625,
-        'club': 638,
-        'diamond': 651,
-        'heart': 664
+        "spade": 625,
+        "club": 638,
+        "diamond": 651,
+        "heart": 664
     }
-    
+
     if suit in suit_offsets:
-        base = suit_offsets[suit]
-        if isinstance(value, str):
-            val_map = {'A': 1, 'J': 11, 'Q': 12, 'K': 13}
-            val = val_map.get(value.upper(), int(value))
-        else:
-            val = int(value)
-            
-        file_num = base + (val - 1)
+        val_map = {
+            "A": 1,
+            "J": 11,
+            "Q": 12,
+            "K": 13
+        }
+
+        val = val_map[value.upper()] if isinstance(value, str) and value.upper() in val_map else int(value)
+
+        file_num = suit_offsets[suit] + (val - 1)
         return f"cards/IMG_{file_num:04d}.png"
-        
+
     return "cards/IMG_0678.png"
 
 
+# ==========================================
+# 横並び画像作成
+# ==========================================
+
 def merge_horizontal(image_paths):
     try:
-        images = [Image.open(p) for p in image_paths]
-        if not images:
+        if not image_paths:
             return None
-        
+
+        images = []
+
+        for path in image_paths:
+            if not os.path.exists(path):
+                print(f"[BJ IMAGE ERROR] File not found: {path}")
+                return None
+
+            with Image.open(path) as source:
+                images.append(source.convert("RGBA"))
+
         h = max(img.height for img in images)
+
         resized_images = []
+
         for img in images:
             if img.height != h:
-                img = img.resize((int(img.width * h / img.height), h))
+                new_width = int(img.width * h / img.height)
+                img = img.resize((new_width, h))
+
             resized_images.append(img)
-            
+
         total_width = sum(img.width for img in resized_images)
-        merged_img = Image.new('RGBA', (total_width, h))
-        
+
+        merged_img = Image.new(
+            "RGBA",
+            (total_width, h),
+            (0, 0, 0, 0)
+        )
+
         x_offset = 0
+
         for img in resized_images:
-            merged_img.paste(img, (x_offset, 0))
+            merged_img.paste(img, (x_offset, 0), img)
             x_offset += img.width
-            
+
         return merged_img
+
     except Exception as e:
-        print(f"[HORIZONTAL MERGE ERROR] {e}")
+        print(f"[BJ HORIZONTAL ERROR] {e}")
         return None
 
 
-def create_bj_table_image(dealer_paths, player_paths, output_path="cards/bj_table.png"):
+# ==========================================
+# 上下合体画像作成
+# ==========================================
+
+def create_bj_table_image(
+    dealer_paths,
+    player_paths,
+    output_path="cards/bj_table.png"
+):
     try:
         img_dealer = merge_horizontal(dealer_paths)
         img_player = merge_horizontal(player_paths)
-        
-        if not img_dealer or not img_player:
-            return dealer_paths[0] if dealer_paths else None
-            
-        max_width = max(img_dealer.width, img_player.width)
-        total_height = img_dealer.height + img_player.height
-        
-        table_img = Image.new('RGBA', (max_width, total_height), (0, 0, 0, 0))
-        
-        d_x = (max_width - img_dealer.width) // 2
-        table_img.paste(img_dealer, (d_x, 0))
-        
-        p_x = (max_width - img_player.width) // 2
-        table_img.paste(img_player, (p_x, img_dealer.height))
-        
-        table_img.save(output_path)
-        return output_path
-    except Exception as e:
-        print(f"[TABLE MERGE ERROR] {e}")
-        return dealer_paths[0]
 
+        if img_dealer is None or img_player is None:
+            return None
+
+        max_width = max(
+            img_dealer.width,
+            img_player.width
+        )
+
+        total_height = (
+            img_dealer.height +
+            img_player.height
+        )
+
+        table_img = Image.new(
+            "RGBA",
+            (max_width, total_height),
+            (0, 0, 0, 0)
+        )
+
+        d_x = (max_width - img_dealer.width) // 2
+        p_x = (max_width - img_player.width) // 2
+
+        table_img.paste(
+            img_dealer,
+            (d_x, 0),
+            img_dealer
+        )
+
+        table_img.paste(
+            img_player,
+            (p_x, img_dealer.height),
+            img_player
+        )
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        table_img.save(output_path)
+
+        return output_path
+
+    except Exception as e:
+        print(f"[BJ TABLE ERROR] {e}")
+        return None
+
+
+# ==========================================
+# 手札合計計算
+# ==========================================
 
 def calculate_hand(hand):
     score = 0
     aces = 0
+
     for card in hand:
-        val = card['val']
-        if val in ['J', 'Q', 'K']:
+        val = card["val"]
+
+        if val in ["J", "Q", "K"]:
             score += 10
-        elif val == 'A':
+
+        elif val == "A":
             aces += 1
             score += 11
+
         else:
             score += int(val)
-            
+
     while score > 21 and aces > 0:
         score -= 10
         aces -= 1
+
     return score
 
 
+# ==========================================
+# ブラックジャック画面
+# ==========================================
+
 class BlackjackView(discord.ui.View):
-    def __init__(self, ctx, deck, player_hand, dealer_hand):
-        super().__init__(timeout=60)
+
+    def __init__(
+        self,
+        ctx,
+        deck,
+        player_hand,
+        dealer_hand
+    ):
+        super().__init__(timeout=300)
+
         self.ctx = ctx
         self.deck = deck
         self.player_hand = player_hand
         self.dealer_hand = dealer_hand
+
         self.message = None
 
+        self.lock = asyncio.Lock()
+        self.game_over = False
+
+    # --------------------------------------
+    # 山札補充
+    # --------------------------------------
+
     def check_deck(self):
-        # 山札が残り少なくなったら新しく作り直す
         if len(self.deck) < 10:
-            suits = ['spade', 'club', 'diamond', 'heart']
-            values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-            self.deck = [{'suit': s, 'val': v} for s in suits for v in values]
+
+            suits = [
+                "spade",
+                "club",
+                "diamond",
+                "heart"
+            ]
+
+            values = [
+                "A", "2", "3", "4", "5",
+                "6", "7", "8", "9", "10",
+                "J", "Q", "K"
+            ]
+
+            self.deck = [
+                {"suit": s, "val": v}
+                for s in suits
+                for v in values
+            ]
+
             random.shuffle(self.deck)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user == self.ctx.author:
+    # --------------------------------------
+    # 操作できる人を制限
+    # --------------------------------------
+
+    async def interaction_check(self, interaction):
+
+        if interaction.user.id == self.ctx.author.id:
             return True
-        await interaction.response.send_message("他の人のゲームには干渉できません！", ephemeral=True)
+
+        await interaction.response.send_message(
+            "他の人のゲームには干渉できません！",
+            ephemeral=True
+        )
+
         return False
 
-    @discord.ui.button(label="ヒット (Hit)", style=discord.ButtonStyle.green)
-    async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        
-        self.check_deck()
-        self.player_hand.append(self.deck.pop())
-        p_score = calculate_hand(self.player_hand)
+    # --------------------------------------
+    # タイムアウト
+    # --------------------------------------
 
-        if p_score > 21:
-            for child in self.children:
-                child.disabled = True
-            embed, files = self.create_embed_and_files(game_over=True, result="バースト！あなたの負けです… 😭")
-            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
-            self.stop()
-        else:
-            embed, files = self.create_embed_and_files(game_over=False)
-            await interaction.edit_original_response(embed=embed, attachments=files, view=self)
+    async def on_timeout(self):
 
-    @discord.ui.button(label="スタンド (Stand)", style=discord.ButtonStyle.blurple)
-    async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        
-        while calculate_hand(self.dealer_hand) < 17:
-            self.check_deck()
-            self.dealer_hand.append(self.deck.pop())
-
-        p_score = calculate_hand(self.player_hand)
-        d_score = calculate_hand(self.dealer_hand)
-
-        if d_score > 21:
-            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
-        elif p_score > d_score:
-            result = "あなたの勝ちです！ 🏆"
-        elif p_score < d_score:
-            result = "あなたの負けです… 😢"
-        else:
-            result = "引き分け (Push) です！ 🤝"
+        self.game_over = True
 
         for child in self.children:
             child.disabled = True
 
-        embed, files = self.create_embed_and_files(game_over=True, result=result)
-        await interaction.edit_original_response(embed=embed, attachments=files, view=self)
-        self.stop()
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
-    def create_embed_and_files(self, game_over=False, result=""):
-        embed = discord.Embed(title="🃏 ブラックジャック", color=discord.Color.gold())
-        
-        p_score = calculate_hand(self.player_hand)
-        
+    # --------------------------------------
+    # ヒット
+    # --------------------------------------
+
+    @discord.ui.button(
+        label="ヒット (Hit)",
+        style=discord.ButtonStyle.green
+    )
+    async def hit(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if self.lock.locked():
+            await interaction.response.send_message(
+                "現在処理中です！",
+                ephemeral=True
+            )
+            return
+
+        await self.lock.acquire()
+
+        try:
+
+            if self.game_over:
+                await interaction.response.send_message(
+                    "このゲームは終了しています。",
+                    ephemeral=True
+                )
+                return
+
+            await interaction.response.defer()
+
+            self.check_deck()
+
+            self.player_hand.append(
+                self.deck.pop()
+            )
+
+            p_score = calculate_hand(
+                self.player_hand
+            )
+
+            if p_score > 21:
+
+                self.game_over = True
+
+                for child in self.children:
+                    child.disabled = True
+
+                embed, files = self.create_embed_and_files(
+                    game_over=True,
+                    result="バースト！あなたの負けです… 😭"
+                )
+
+                if files:
+                    await interaction.edit_original_response(
+                        embed=embed,
+                        attachments=files,
+                        view=self
+                    )
+                else:
+                    await interaction.edit_original_response(
+                        embed=embed,
+                        view=self
+                    )
+
+                self.stop()
+
+            else:
+
+                embed, files = self.create_embed_and_files(
+                    game_over=False
+                )
+
+                if files:
+                    await interaction.edit_original_response(
+                        embed=embed,
+                        attachments=files,
+                        view=self
+                    )
+                else:
+                    await interaction.edit_original_response(
+                        embed=embed,
+                        view=self
+                    )
+
+        except Exception as e:
+            print(f"[BJ HIT ERROR] {e}")
+
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "処理中にエラーが発生しました。",
+                    ephemeral=True
+                )
+
+        finally:
+            self.lock.release()
+
+    # --------------------------------------
+    # スタンド
+    # --------------------------------------
+
+    @discord.ui.button(
+        label="スタンド (Stand)",
+        style=discord.ButtonStyle.blurple
+    )
+    async def stand(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if self.lock.locked():
+            await interaction.response.send_message(
+                "現在処理中です！",
+                ephemeral=True
+            )
+            return
+
+        await self.lock.acquire()
+
+        try:
+
+            if self.game_over:
+                await interaction.response.send_message(
+                    "このゲームは終了しています。",
+                    ephemeral=True
+                )
+                return
+
+            await interaction.response.defer()
+
+            while calculate_hand(self.dealer_hand) < 17:
+
+                self.check_deck()
+
+                self.dealer_hand.append(
+                    self.deck.pop()
+                )
+
+            p_score = calculate_hand(
+                self.player_hand
+            )
+
+            d_score = calculate_hand(
+                self.dealer_hand
+            )
+
+            # 勝敗判定
+
+            if d_score > 21:
+                result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+
+            elif p_score > d_score:
+                result = "あなたの勝ちです！ 🏆"
+
+            elif p_score < d_score:
+                result = "あなたの負けです… 😢"
+
+            else:
+                result = "引き分け (Push) です！ 🤝"
+
+            self.game_over = True
+
+            for child in self.children:
+                child.disabled = True
+
+            embed, files = self.create_embed_and_files(
+                game_over=True,
+                result=result
+            )
+
+            if files:
+                await interaction.edit_original_response(
+                    embed=embed,
+                    attachments=files,
+                    view=self
+                )
+            else:
+                await interaction.edit_original_response(
+                    embed=embed,
+                    view=self
+                )
+
+            self.stop()
+
+        except Exception as e:
+            print(f"[BJ STAND ERROR] {e}")
+
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "処理中にエラーが発生しました。",
+                    ephemeral=True
+                )
+
+        finally:
+            self.lock.release()
+
+    # --------------------------------------
+    # Embed・画像作成
+    # --------------------------------------
+
+    def create_embed_and_files(
+        self,
+        game_over=False,
+        result=""
+    ):
+
+        embed = discord.Embed(
+            title="🃏 ブラックジャック",
+            color=discord.Color.gold()
+        )
+
+        p_score = calculate_hand(
+            self.player_hand
+        )
+
+        # ディーラーのカード
+
         if game_over:
-            d_score = calculate_hand(self.dealer_hand)
+
+            d_score = calculate_hand(
+                self.dealer_hand
+            )
+
             dealer_text = f"手札（合計: {d_score}）"
-            dealer_paths = [get_card_image_path(c['suit'], c['val']) for c in self.dealer_hand]
+
+            dealer_paths = [
+                get_card_image_path(
+                    c["suit"],
+                    c["val"]
+                )
+                for c in self.dealer_hand
+            ]
+
         else:
+
             dealer_text = "手札（2枚目は裏面）"
-            path1 = get_card_image_path(self.dealer_hand[0]['suit'], self.dealer_hand[0]['val'])
-            path2 = get_card_image_path('back', 0)
-            dealer_paths = [path1, path2]
 
-        player_paths = [get_card_image_path(c['suit'], c['val']) for c in self.player_hand]
+            dealer_paths = [
+                get_card_image_path(
+                    self.dealer_hand[0]["suit"],
+                    self.dealer_hand[0]["val"]
+                ),
+                get_card_image_path(
+                    "back",
+                    0
+                )
+            ]
 
-        table_image_path = create_bj_table_image(dealer_paths, player_paths, "cards/bj_table.png")
-        files = [discord.File(table_image_path, filename="table.png")]
-        
-        embed.set_image(url="attachment://table.png")
+        # プレイヤーのカード
 
-        d_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.dealer_hand]) if game_over else f"{self.dealer_hand[0]['suit']}の{self.dealer_hand[0]['val']}, 裏面"
-        p_cards_str = ", ".join([f"{c['suit']}の{c['val']}" for c in self.player_hand])
+        player_paths = [
+            get_card_image_path(
+                c["suit"],
+                c["val"]
+            )
+            for c in self.player_hand
+        ]
 
-        embed.add_field(name=f"**ディーラーの{dealer_text}**", value=d_cards_str, inline=False)
-        embed.add_field(name=f"**プレイヤーの手札 (合計: {p_score})**", value=p_cards_str, inline=False)
+        # 画像合体
+
+        table_image_path = create_bj_table_image(
+            dealer_paths,
+            player_paths
+        )
+
+        files = []
+
+        if table_image_path:
+
+            files.append(
+                discord.File(
+                    table_image_path,
+                    filename="table.png"
+                )
+            )
+
+            embed.set_image(
+                url="attachment://table.png"
+            )
+
+        # カード情報
 
         if game_over:
-            embed.add_field(name="**【試合結果】**", value=result, inline=False)
-        
+
+            d_cards_str = ", ".join(
+                [
+                    f"{c['suit']}の{c['val']}"
+                    for c in self.dealer_hand
+                ]
+            )
+
+        else:
+
+            d_cards_str = (
+                f"{self.dealer_hand[0]['suit']}の"
+                f"{self.dealer_hand[0]['val']}, 裏面"
+            )
+
+        p_cards_str = ", ".join(
+            [
+                f"{c['suit']}の{c['val']}"
+                for c in self.player_hand
+            ]
+        )
+
+        embed.add_field(
+            name=f"ディーラーの{dealer_text}",
+            value=d_cards_str,
+            inline=False
+        )
+
+        embed.add_field(
+            name=f"プレイヤーの手札 (合計: {p_score})",
+            value=p_cards_str,
+            inline=False
+        )
+
+        if game_over:
+
+            embed.add_field(
+                name="【試合結果】",
+                value=result,
+                inline=False
+            )
+
         return embed, files
 
 
+# ==========================================
+# ブラックジャック開始コマンド
+# ==========================================
+
 @bot.command(name="bj")
 async def blackjack(ctx):
-    suits = ['spade', 'club', 'diamond', 'heart']
-    values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-    
-    deck = [{'suit': s, 'val': v} for s in suits for v in values]
+
+    suits = [
+        "spade",
+        "club",
+        "diamond",
+        "heart"
+    ]
+
+    values = [
+        "A", "2", "3", "4", "5",
+        "6", "7", "8", "9", "10",
+        "J", "Q", "K"
+    ]
+
+    deck = [
+        {"suit": s, "val": v}
+        for s in suits
+        for v in values
+    ]
+
     random.shuffle(deck)
 
-    player_hand = [deck.pop(), deck.pop()]
-    dealer_hand = [deck.pop(), deck.pop()]
+    player_hand = [
+        deck.pop(),
+        deck.pop()
+    ]
 
-    view = BlackjackView(ctx, deck, player_hand, dealer_hand)
-    embed, files = view.create_embed_and_files(game_over=False)
-    
-    view.message = await ctx.send(embed=embed, files=files, view=view)
+    dealer_hand = [
+        deck.pop(),
+        deck.pop()
+    ]
+
+    view = BlackjackView(
+        ctx,
+        deck,
+        player_hand,
+        dealer_hand
+    )
+
+    embed, files = view.create_embed_and_files(
+        game_over=False
+    )
+
+    if files:
+
+        view.message = await ctx.send(
+            embed=embed,
+            files=files,
+            view=view
+        )
+
+    else:
+
+        view.message = await ctx.send(
+            embed=embed,
+            view=view
+        )
 
     
 # ==================================================

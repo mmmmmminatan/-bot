@@ -4822,10 +4822,20 @@ def generate_roulette_table_image(target_key):
     rounded_chip = Image.new("RGBA", (chip_size, chip_size))
     rounded_chip.paste(chip_img, (0, 0), mask=mask)
     
+    # --------------------------------------------------
+    # 🔑 修正ポイント：入力されたキーの型を調整する
+    # --------------------------------------------------
+    target_clean = str(target_key).strip().lower()
+    
+    # 数字であれば int に変換（例: "7" -> 7）
+    if target_clean.isdigit():
+        lookup_key = int(target_clean)
+    else:
+        lookup_key = target_clean
+    
     # 賭け先に対応する座標があればチップを貼り付ける
-    target_key = str(target_key).lower()
-    if target_key in ROULETTE_COORDINATES:
-        x, y = ROULETTE_COORDINATES[target_key]
+    if lookup_key in ROULETTE_COORDINATES:
+        x, y = ROULETTE_COORDINATES[lookup_key]
         paste_x = x - chip_size // 2
         paste_y = y - chip_size // 2
         base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)

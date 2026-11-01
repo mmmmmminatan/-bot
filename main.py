@@ -689,8 +689,82 @@ def record_coin(data):
     save_json(COIN_LOGS_FILE, coin_logs)
     
 async def recover_coins_for_guild(guild):
-    # 起動時のコイン自動復旧の安全なプレースホルダー関数
-    return "スキップしました"
+    # 起動時のコイン自動復旧処理
+    guild_id = guild.id
+    latest_balances = {}
+    combined_logs = []
+    
+    # 1. JSONログの集約
+    for item in slot_logs:
+        try:
+            if int(item.get("guild_id", 0)) == guild_id:
+                combined_logs.append(item)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    for item in coin_logs:
+        try:
+            if int(item.get("guild_id", 0)) == guild_id:
+                combined_logs.append(item)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    # 2. Discordの固定ログチャンネルから履歴を取得
+    channel = await get_log_channel(guild)
+    if channel is not None:
+        try:
+            async for message in channel.history(limit=1000, oldest_first=True):
+                for embed in message.embeds:
+                    title = embed.title or ""
+                    description = embed.description or ""
+
+                    user_match = re.search(r"<@!?(\d+)>|`(\d{17,20})`", description)
+                    balance_match = re.search(r"残高[:：]\s*\*\*([+-]?\$?[\d,]+)\*\*", description)
+
+                    if user_match and balance_match:
+                        u_id = user_match.group(1) or user_match.group(2)
+                        try:
+                            bal = parse_money_text(balance_match.group(1))
+                            combined_logs.append({
+                                "timestamp": message.created_at.timestamp(),
+                                "user_id": u_id,
+                                "balance": bal,
+                            })
+                        except Exception:
+                            continue
+        except Exception as e:
+            print(f"[COIN RECOVERY] ログ取得エラー ({guild.name}): {e}")
+
+    # 3. タイムスタンプ順にソートして最新の残高を反映
+    combined_logs.sort(key=lambda item: float(item.get("timestamp", 0)))
+
+    for item in combined_logs:
+        user_id = item.get("user_id")
+        if user_id is None:
+            continue
+        try:
+            user_id = str(int(user_id))
+        except (TypeError, ValueError):
+            continue
+
+        balance_value = item.get("balance", item.get("after"))
+        if balance_value is None:
+            continue
+
+        try:
+            latest_balances[user_id] = int(balance_value)
+        except (TypeError, ValueError):
+            continue
+
+    if not latest_balances:
+        return "復旧対象のログなし"
+
+    for user_id, amount in latest_balances.items():
+        balances[user_id] = amount
+
+    save_json(BALANCES_FILE, balances)
+    return f"成功 ({len(latest_balances)}人分を復旧)"
+    
 
 # ==================================================
 # 胴元システム

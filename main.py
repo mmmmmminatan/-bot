@@ -4768,12 +4768,13 @@ import os
 import os
 import random
 import asyncio
+import math
 from datetime import datetime, timezone
 import discord
 from PIL import Image, ImageDraw
 
 # ==================================================
-# 🎡 ルーレットゲーム（ジャックポット・1.5秒回転・結果のボール画像対応版）
+# 🎡 ルーレットゲーム（ジャックポット・1.5秒回転・円形ホイール＆ボール対応版）
 # ==================================================
 
 # ジャックポットのプール管理用関数
@@ -4794,7 +4795,7 @@ def reset_jackpot_pool(amount=10000):
     save_json(JACKPOT_FILE, jackpot_data)
 
 
-# 各ベット位置・出目の正確な座標マップ（画像サイズ: 1070 × 607 用）
+# 各ベット位置・出目の正確な座標マップ（テーブル用 / 画像サイズ: 1070 × 607 用）
 ROULETTE_COORDINATES = {
     # 色（ダイヤの位置）
     "red": (469, 119),
@@ -4829,38 +4830,35 @@ ROULETTE_COORDINATES.update({
     34: (897, 383), 35: (897, 295), 36: (897, 206),
 })
 
-def generate_roulette_table_image(target_key, is_result=False):
+# ヨーロピアンルーレットのホイール上の数字の並び順（時計回り）
+WHEEL_NUMBERS = [
+    0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 
+    10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26
+]
+
+
+def generate_roulette_table_image(target_key):
     """
-    指定された位置にチップ（またはボール）を置いて画像を生成する
-    is_result=True の場合は結果発表用のボール画像を使用する
+    ベット確認用：指定されたテーブル上の位置にチップを置いて画像を生成する
     """
     board_path = "cards/IMG_0715.jpeg"
+    chip_path = "cards/IMG_0730.jpeg"
     
-    # ▼【重要】ボール用の画像ファイル名に変更してください（例: "cards/ball.png" など）
-    if is_result:
-        item_path = "cards/ball.png"  # 結果発表（ボール）用の画像パス
-    else:
-        item_path = "cards/IMG_0730.jpeg"  # ベット確認（チップ）用の画像パス
-    
-    if not os.path.exists(board_path) or not os.path.exists(item_path):
-        # もしボール用画像が見つからない場合のフォールバックとしてチップ画像を使う設定にもできます
-        if is_result and os.path.exists("cards/IMG_0730.jpeg"):
-            item_path = "cards/IMG_0730.jpeg"
-        else:
-            return None
+    if not os.path.exists(board_path) or not os.path.exists(chip_path):
+        return None
         
     base_image = Image.open(board_path).convert("RGBA")
     
-    item_img = Image.open(item_path).convert("RGBA")
-    item_size = 40
-    item_img = item_img.resize((item_size, item_size), Image.Resampling.LANCZOS)
+    chip_img = Image.open(chip_path).convert("RGBA")
+    chip_size = 40
+    chip_img = chip_img.resize((chip_size, chip_size), Image.Resampling.LANCZOS)
     
-    mask = Image.new("L", (item_size, item_size), 0)
+    mask = Image.new("L", (chip_size, chip_size), 0)
     draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, item_size, item_size), fill=255)
+    draw.ellipse((0, 0, chip_size, chip_size), fill=255)
     
-    rounded_item = Image.new("RGBA", (item_size, item_size))
-    rounded_item.paste(item_img, (0, 0), mask=mask)
+    rounded_chip = Image.new("RGBA", (chip_size, chip_size))
+    rounded_chip.paste(chip_img, (0, 0), mask=mask)
     
     target_clean = str(target_key).strip().lower()
     
@@ -4871,15 +4869,72 @@ def generate_roulette_table_image(target_key, is_result=False):
     
     if lookup_key in ROULETTE_COORDINATES:
         x, y = ROULETTE_COORDINATES[lookup_key]
-        paste_x = x - item_size // 2
-        paste_y = y - item_size // 2
-        base_image.paste(rounded_item, (paste_x, paste_y), mask=rounded_item)
+        paste_x = x - chip_size // 2
+        paste_y = y - chip_size // 2
+        base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)
         
     output_path = "cards/current_roulette_board.png"
     os.makedirs("cards", exist_ok=True)
     base_image.save(output_path)
     
     return output_path
+
+
+def generate_wheel_result_image(landed_number):
+    """
+    結果発表用：円形のルーレットホイール画像（cards/roulette_wheel.png など）の出目位置にボールを置く
+    """
+    wheel_path = "cards/roulette_wheel.png"  # 円形ホイールの画像パス（必要に応じて変更してください）
+    ball_path = "cards/ball.png"            # ボールの画像パス（ない場合は IMG_0730.jpeg でも代用可）
+    
+    if not os.path.exists(wheel_path):
+        # ホイール画像がない場合のフォールバックとしてテーブル画像を使うことも可能
+        return generate_roulette_table_image(landed_number)
+        
+    if not os.path.exists(ball_path):
+        ball_path = "cards/IMG_0730.jpeg"  # チップ画像をボール代わりにする場合
+        if not os.path.exists(ball_path):
+            return None
+
+    base_image = Image.open(wheel_path).convert("RGBA")
+    width, height = base_image.size
+    
+    center_x = width / 2
+    center_y = height / 2
+    radius = min(width, height) * 0.35  # 数字が並んでいる円の半径位置（調整可能）
+    
+    try:
+        index = WHEEL_NUMBERS.index(int(landed_number))
+    except ValueError:
+        return None
+        
+    angle_deg = (index * (360 / len(WHEEL_NUMBERS))) - 90
+    angle_rad = math.radians(angle_deg)
+    
+    ball_x = center_x + radius * math.cos(angle_rad)
+    ball_y = center_y + radius * math.sin(angle_rad)
+    
+    ball_img = Image.open(ball_path).convert("RGBA")
+    ball_size = 35
+    ball_img = ball_img.resize((ball_size, ball_size), Image.Resampling.LANCZOS)
+    
+    mask = Image.new("L", (ball_size, ball_size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, ball_size, ball_size), fill=255)
+    
+    rounded_ball = Image.new("RGBA", (ball_size, ball_size))
+    rounded_ball.paste(ball_img, (0, 0), mask=mask)
+    
+    paste_x = int(ball_x - ball_size / 2)
+    paste_y = int(ball_y - ball_size / 2)
+    base_image.paste(rounded_ball, (paste_x, paste_y), mask=rounded_ball)
+    
+    output_path = "cards/current_wheel_result.png"
+    os.makedirs("cards", exist_ok=True)
+    base_image.save(output_path)
+    
+    return output_path
+
 
 ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
@@ -5031,11 +5086,11 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     # ⏱️ 1.5秒間回転させる
     await asyncio.sleep(1.5)
 
-    # 🎯 出目の数字の位置にボール（is_result=True）を置いた画像を生成
-    board_image_path = generate_roulette_table_image(landed_number, is_result=True)
+    # 🎯 円形ホイール画像の出目位置にボールを置いた結果画像を生成
+    board_image_path = generate_wheel_result_image(landed_number)
     files = []
     if board_image_path and os.path.exists(board_image_path):
-        files.append(discord.File(board_image_path, filename="roulette.png"))
+        files.append(discord.File(board_image_path, filename="roulette_result.png"))
 
     color = discord.Color.green() if won else discord.Color.red()
     result_text = f"🎉 **当たり！ 配当: {money(payout)}**" if won else "💸 **ハズレ…**"
@@ -5054,7 +5109,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     )
     
     if files:
-        embed.set_image(url="attachment://roulette.png")
+        embed.set_image(url="attachment://roulette_result.png")
 
     await message.edit(content=None, embed=embed, attachments=files if files else [], view=None)
 
@@ -5090,7 +5145,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         )
 
 
-# 3. ルーレットコマンド本体（ベット確認画面 ＋ 自分のベット位置がわかるチップ画像表示）
+# 3. ルーレットコマンド本体（ベット確認画面 ＋ チップ配置画像表示）
 @bot.command(name="roulette", aliases=["r", "ルーレット"])
 async def roulette_command(ctx, bet_text: str = None, target: str = None):
     if ctx.guild is None:
@@ -5146,8 +5201,8 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even など）", mention_author=False)
         return
 
-    # 🎡 自分が賭けた位置にチップが置かれたボード画像を生成（is_result=False）
-    board_image_path = generate_roulette_table_image(target_clean, is_result=False)
+    # 🎡 自分が賭けた位置にチップが置かれたボード画像を生成
+    board_image_path = generate_roulette_table_image(target_clean)
     files = []
     if board_image_path and os.path.exists(board_image_path):
         files.append(discord.File(board_image_path, filename="roulette_confirm.png"))

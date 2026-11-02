@@ -4774,7 +4774,7 @@ import discord
 from PIL import Image, ImageDraw
 
 # ==================================================
-# 🎡 ルーレットゲーム（ジャックポット・1.5秒回転・円形ホイール＆ボール対応版）
+# 🎡 ルーレットゲーム（ホイールの白背景透過・ボール配置対応版）
 # ==================================================
 
 # ジャックポットのプール管理用関数
@@ -4795,7 +4795,7 @@ def reset_jackpot_pool(amount=10000):
     save_json(JACKPOT_FILE, jackpot_data)
 
 
-# 各ベット位置・出目の正確な座標マップ（テーブル用 / 画像サイズ: 1070 × 607 用）
+# 各ベット位置の正確な座標マップ（ベット確認用のテーブル画像サイズ: 1070 × 607 用）
 ROULETTE_COORDINATES = {
     # 色（ダイヤの位置）
     "red": (469, 119),
@@ -4839,7 +4839,7 @@ WHEEL_NUMBERS = [
 
 def generate_roulette_table_image(target_key):
     """
-    ベット確認用：指定されたテーブル上の位置にチップを置いて画像を生成する
+    【ベット確認用】指定されたテーブル上の位置にチップを置いて画像を生成する
     """
     board_path = "cards/IMG_0715.jpeg"
     chip_path = "cards/IMG_0730.jpeg"
@@ -4882,26 +4882,31 @@ def generate_roulette_table_image(target_key):
 
 def generate_wheel_result_image(landed_number):
     """
-    結果発表用：円形のルーレットホイール画像（cards/roulette_wheel.png など）の出目位置にボールを置く
+    【結果発表用】円形ホイール（IMG_0734.jpeg）の白背景を透過し、出目位置にボールを置いて画像を生成する
     """
-    wheel_path = "cards/roulette_wheel.png"  # 円形ホイールの画像パス（必要に応じて変更してください）
-    ball_path = "cards/ball.png"            # ボールの画像パス（ない場合は IMG_0730.jpeg でも代用可）
+    wheel_path = "cards/IMG_0734.jpeg" 
+    ball_path = "cards/IMG_0730.jpeg"      # ボール（またはチップ）の画像パス
     
-    if not os.path.exists(wheel_path):
-        # ホイール画像がない場合のフォールバックとしてテーブル画像を使うことも可能
-        return generate_roulette_table_image(landed_number)
-        
-    if not os.path.exists(ball_path):
-        ball_path = "cards/IMG_0730.jpeg"  # チップ画像をボール代わりにする場合
-        if not os.path.exists(ball_path):
-            return None
+    if not os.path.exists(wheel_path) or not os.path.exists(ball_path):
+        return None
 
     base_image = Image.open(wheel_path).convert("RGBA")
-    width, height = base_image.size
     
+    # 🖼️ 白い部分（背景）を自動で透明にする処理
+    datas = base_image.getdata()
+    new_data = []
+    for item in datas:
+        # 白に近いピクセル（RGBがすべて220以上など）を透明にする
+        if item[0] > 220 and item[1] > 220 and item[2] > 220:
+            new_data.append((255, 255, 255, 0))
+        else:
+            new_data.append(item)
+    base_image.putdata(new_data)
+
+    width, height = base_image.size
     center_x = width / 2
     center_y = height / 2
-    radius = min(width, height) * 0.35  # 数字が並んでいる円の半径位置（調整可能）
+    radius = min(width, height) * 0.38  # ホイール上の数字の位置（必要に応じて微調整してください）
     
     try:
         index = WHEEL_NUMBERS.index(int(landed_number))
@@ -4915,7 +4920,7 @@ def generate_wheel_result_image(landed_number):
     ball_y = center_y + radius * math.sin(angle_rad)
     
     ball_img = Image.open(ball_path).convert("RGBA")
-    ball_size = 35
+    ball_size = int(min(width, height) * 0.08)  # ボールのサイズを画像の大きさに合わせる
     ball_img = ball_img.resize((ball_size, ball_size), Image.Resampling.LANCZOS)
     
     mask = Image.new("L", (ball_size, ball_size), 0)
@@ -5086,7 +5091,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     # ⏱️ 1.5秒間回転させる
     await asyncio.sleep(1.5)
 
-    # 🎯 円形ホイール画像の出目位置にボールを置いた結果画像を生成
+    # 🎯【結果発表】IMG_0734.jpeg の白背景を透過し、出目にボールを置いた画像を生成
     board_image_path = generate_wheel_result_image(landed_number)
     files = []
     if board_image_path and os.path.exists(board_image_path):

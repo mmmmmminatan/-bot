@@ -4932,7 +4932,7 @@ def generate_wheel_result_image(landed_number):
     center_y = height / 2
     
     # ▼【調整】赤黒数字の帯の位置に合うように半径を外側（0.42）に広げました
-    radius = min(width, height) * 0.22  
+    radius = min(width, height) * 0.24  
     
     try:
         index = WHEEL_NUMBERS.index(int(landed_number))
@@ -4948,7 +4948,7 @@ def generate_wheel_result_image(landed_number):
     ball_img = Image.open(ball_path).convert("RGBA")
     
     # ボールのサイズ（全体の約5.5%）
-    ball_size = int(min(width, height) * 0.055)  
+    ball_size = int(min(width, height) * 0.04)  
     ball_img = ball_img.resize((ball_size, ball_size), Image.Resampling.LANCZOS)
     
     paste_x = int(ball_x - ball_size / 2)

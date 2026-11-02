@@ -21,7 +21,7 @@ from discord.ext import commands
 # 1. ボットの基本設定
 # ==========================================
 intents = discord.Intents.default()
-intents.message_content = True  # メッセージの内容を読み取るために必須
+intents.message_content = True  # メッセージの内容を読むために必須
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -43,9 +43,7 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # ------------------------------------------
     # 「あう」系の発言を検知したときの処理
-    # ------------------------------------------
     if pattern.search(message.content):
         reply_text = (
             "😅うおww😅どわー😂😅お、おう😅\n"
@@ -54,8 +52,15 @@ async def on_message(message):
         )
         await message.channel.send(reply_text)
 
-    # コマンド機能（!commandなど）を使う場合は必須
+    # コマンド機能を使う場合は必須
     await bot.process_commands(message)
+
+
+# ==========================================
+# 3. ボットの起動
+# ==========================================
+# "YOUR_BOT_TOKEN_HERE" の部分をあなたのBotのトークンに書き換えてね
+bot.run("YOUR_BOT_TOKEN_HERE")
 
 
 # ==================================================

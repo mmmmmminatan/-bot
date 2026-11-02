@@ -4774,7 +4774,7 @@ import discord
 from PIL import Image, ImageDraw
 
 # ==================================================
-# 🎡 ルーレットゲーム（金色ボール背景透過・円形ホイール結果表示対応版）
+# 🎡 ルーレットゲーム（ボール位置・半径調整完了版）
 # ==================================================
 
 # ジャックポットのプール管理用関数
@@ -4892,7 +4892,6 @@ def remove_ball_background(ball_path, output_path="cards/transparent_ball.png"):
     
     new_data = []
     for item in datas:
-        # 白に近い部分を透明にする
         if item[0] > 220 and item[1] > 220 and item[2] > 220:
             new_data.append((255, 255, 255, 0))
         else:
@@ -4906,10 +4905,10 @@ def remove_ball_background(ball_path, output_path="cards/transparent_ball.png"):
 
 def generate_wheel_result_image(landed_number):
     """
-    【結果発表用】円形ホイール（IMG_0734.jpeg）の白背景を透過し、出目位置に背景透過した金色のボールを置く
+    【結果発表用】円形ホイール（IMG_0734.jpeg）の白背景を透過し、赤黒数字の帯の上にボールを置く
     """
     wheel_path = "cards/IMG_0734.jpeg" 
-    raw_ball_path = "cards/IMG_0751.jpeg"      # 元の金色のボール画像
+    raw_ball_path = "cards/IMG_0751.jpeg"      
     
     ball_path = remove_ball_background(raw_ball_path, "cards/transparent_ball.png")
     
@@ -4931,7 +4930,9 @@ def generate_wheel_result_image(landed_number):
     width, height = base_image.size
     center_x = width / 2
     center_y = height / 2
-    radius = min(width, height) * 0.38  
+    
+    # ▼【調整】赤黒数字の帯の位置に合うように半径を外側（0.42）に広げました
+    radius = min(width, height) * 0.42  
     
     try:
         index = WHEEL_NUMBERS.index(int(landed_number))
@@ -4945,7 +4946,9 @@ def generate_wheel_result_image(landed_number):
     ball_y = center_y + radius * math.sin(angle_rad)
     
     ball_img = Image.open(ball_path).convert("RGBA")
-    ball_size = int(min(width, height) * 0.08)  
+    
+    # ボールのサイズ（全体の約5.5%）
+    ball_size = int(min(width, height) * 0.055)  
     ball_img = ball_img.resize((ball_size, ball_size), Image.Resampling.LANCZOS)
     
     paste_x = int(ball_x - ball_size / 2)
@@ -5109,7 +5112,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     # ⏱️ 1.5秒間回転させる
     await asyncio.sleep(1.5)
 
-    # 🎯【結果発表】円形ホイール画像の出目位置に背景透過した金色のボールを置いた画像を生成
+    # 🎯【結果発表】円形ホイールの赤黒数字帯の上にボールを置いた画像を生成
     board_image_path = generate_wheel_result_image(landed_number)
     files = []
     if board_image_path and os.path.exists(board_image_path):

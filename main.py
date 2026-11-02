@@ -13,37 +13,49 @@ from discord.ext import commands
 from discord import app_commands
 from flask import Flask
 
-import re
-import discord
-from discord.ext import commands
 
 # ==========================================
-# 1. ボットの基本設定
+# 1. ボットの基本設定 & 「あう」検知パターン
 # ==========================================
 intents = discord.Intents.default()
 intents.message_content = True  # メッセージの内容を読むために必須
+intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(
+    command_prefix=".",
+    intents=intents,
+    help_command=None,
+    case_insensitive=True,
+)
 
-# 「あ」と「う」の間に、あらゆる空白や記号が0文字以上挟まっていても検知する正規表現
-pattern = re.compile(r"あ[\s\u3000-\u303F\uFF00-\uFFEF!-/:-@[-`{-~、。・！？「」『』（）［］｛｝ー～￥]*う")
+# 「あ」と「う」の間に【あらゆる文字、記号、空白】が0文字以上挟まっていても検知する正規表現
+# .*? を使うことで、間にどんな文字や記号が入っても「あ」から「う」までをキャッチします
+pattern = re.compile(r"あ.*?う")
 
 
 # ==========================================
-# 2. イベント処理
+# 2. イベント処理（メッセージ・起動など）
 # ==========================================
 @bot.event
 async def on_ready():
-    print(f"ログインしました: {bot.user}")
+    print(f"ログイン成功: {bot.user} ({bot.user.id})")
 
+    try:
+        synced = await bot.tree.sync()
+        print(f"スラッシュコマンド同期: {len(synced)}個")
+    except Exception:
+        print("[SLASH SYNC ERROR]")
+        traceback.print_exc()
 
 @bot.event
 async def on_message(message):
-    # Bot自身のメッセージには反応しない（無限ループ防止）
+    # Bot自身のメッセージには反応しない
     if message.author.bot:
         return
 
-    # 「あう」系の発言を検知したときの処理
+    # ------------------------------------------
+    # ★ 「あ」〜「う」の発言を検知したときの処理
+    # ------------------------------------------
     if pattern.search(message.content):
         reply_text = (
             "😅うおww😅どわー😂😅お、おう😅\n"
@@ -52,8 +64,9 @@ async def on_message(message):
         )
         await message.channel.send(reply_text)
 
-    # コマンド機能を使う場合は必須
+    # 他のコマンド機能（スロット等）も動かすために必須
     await bot.process_commands(message)
+
 
 # ==================================================
 # 基本設定

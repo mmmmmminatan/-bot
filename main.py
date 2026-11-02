@@ -4773,7 +4773,7 @@ import discord
 from PIL import Image, ImageDraw
 
 # ==================================================
-# 🎡 ルーレットゲーム（ジャックポット・ベット確認・回転GIF・チップ配置画像対応版）
+# 🎡 ルーレットゲーム（ジャックポット・1.5秒回転・出目ボール画像対応版）
 # ==================================================
 
 # ジャックポットのプール管理用関数
@@ -4794,7 +4794,7 @@ def reset_jackpot_pool(amount=10000):
     save_json(JACKPOT_FILE, jackpot_data)
 
 
-# 各ベット位置の正確な座標マップ（画像サイズ: 1070 × 607 用）
+# 各ベット位置・出目の正確な座標マップ（画像サイズ: 1070 × 607 用）
 ROULETTE_COORDINATES = {
     # 色（ダイヤの位置）
     "red": (469, 119),
@@ -4809,7 +4809,7 @@ ROULETTE_COORDINATES = {
     "13 to 24": (535, 550),
     "25 to 36": (770, 550),
     
-    # 0の位置（追加済み）
+    # 0の位置
     0: (108, 294),
 }
 
@@ -4831,7 +4831,7 @@ ROULETTE_COORDINATES.update({
 
 def generate_roulette_table_image(target_key):
     """
-    指定された賭け先（target_key）にチップを置いてルーレット画像を生成する
+    指定されたキー（ベット先または出目）の位置にチップ（またはボール）を置いて画像を生成する
     """
     board_path = "cards/IMG_0715.jpeg"
     chip_path = "cards/IMG_0730.jpeg"
@@ -5006,7 +5006,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         game="roulette",
     )
 
-    # 🔄 回転中のGIF演出（IMG_0745.gif を使用 / 3秒間）
+    # 🔄 回転中のGIF演出（IMG_0745.gif を使用）
     spinning_gif_path = "cards/IMG_0745.gif"
     if os.path.exists(spinning_gif_path):
         try:
@@ -5018,9 +5018,11 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         except:
             pass
     
-    await asyncio.sleep(3)
+    # ⏱️ 約1.5秒間回転させる
+    await asyncio.sleep(1.5)
 
-    board_image_path = generate_roulette_table_image(target_clean)
+    # 🎯 出目の数字の位置にチップ（ボール）を置いた画像を生成
+    board_image_path = generate_roulette_table_image(landed_number)
     files = []
     if board_image_path and os.path.exists(board_image_path):
         files.append(discord.File(board_image_path, filename="roulette.png"))
@@ -5078,7 +5080,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         )
 
 
-# 3. ルーレットコマンド本体（ベット確認画面 ＋ チップ配置画像表示）
+# 3. ルーレットコマンド本体（ベット確認画面 ＋ 自分のベット位置がわかる画像表示）
 @bot.command(name="roulette", aliases=["r", "ルーレット"])
 async def roulette_command(ctx, bet_text: str = None, target: str = None):
     if ctx.guild is None:
@@ -5134,7 +5136,7 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even など）", mention_author=False)
         return
 
-    # 🎡 チップが置かれたボード画像を生成
+    # 🎡 自分が賭けた位置にチップが置かれたボード画像を生成
     board_image_path = generate_roulette_table_image(target_clean)
     files = []
     if board_image_path and os.path.exists(board_image_path):

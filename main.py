@@ -4932,7 +4932,7 @@ def generate_wheel_result_image(landed_number):
     center_y = height / 2
     
     # ▼【調整】赤黒数字の帯の位置に合うように半径を外側（0.42）に広げました
-    radius = min(width, height) * 0.42  
+    radius = min(width, height) * 0.33  
     
     try:
         index = WHEEL_NUMBERS.index(int(landed_number))

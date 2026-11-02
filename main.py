@@ -13,6 +13,51 @@ from discord.ext import commands
 from discord import app_commands
 from flask import Flask
 
+import re
+import discord
+from discord.ext import commands
+
+# ==========================================
+# 1. ボットの基本設定
+# ==========================================
+intents = discord.Intents.default()
+intents.message_content = True  # メッセージの内容を読み取るために必須
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# 「あ」と「う」の間に、あらゆる空白や記号が0文字以上挟まっていても検知する正規表現
+pattern = re.compile(r"あ[\s\u3000-\u303F\uFF00-\uFFEF!-/:-@[-`{-~、。・！？「」『』（）［］｛｝ー～￥]*う")
+
+
+# ==========================================
+# 2. イベント処理
+# ==========================================
+@bot.event
+async def on_ready():
+    print(f"ログインしました: {bot.user}")
+
+
+@bot.event
+async def on_message(message):
+    # Bot自身のメッセージには反応しない（無限ループ防止）
+    if message.author.bot:
+        return
+
+    # ------------------------------------------
+    # 「あう」系の発言を検知したときの処理
+    # ------------------------------------------
+    if pattern.search(message.content):
+        reply_text = (
+            "😅うおww😅どわー😂😅お、おう😅\n"
+            "😅✋⚠️あうを検知しました⚠️✋😅\n"
+            "😅きちー😅✋ったく...wかっこよw😅"
+        )
+        await message.channel.send(reply_text)
+
+    # コマンド機能（!commandなど）を使う場合は必須
+    await bot.process_commands(message)
+
+
 # ==================================================
 # 基本設定
 # ==================================================

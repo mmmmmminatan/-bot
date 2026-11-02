@@ -4765,8 +4765,15 @@ import os
 from PIL import Image, ImageDraw
 import os
 
+import os
+import random
+import asyncio
+from datetime import datetime, timezone
+import discord
+from PIL import Image, ImageDraw
+
 # ==================================================
-# 🎡 ルーレットゲーム（ジャックポット・ベット確認・回転GIF対応版）
+# 🎡 ルーレットゲーム（ジャックポット・ベット確認・回転GIF・チップ配置画像対応版）
 # ==================================================
 
 # ジャックポットのプール管理用関数
@@ -4793,11 +4800,16 @@ ROULETTE_COORDINATES = {
     "red": (469, 119),
     "black": (600, 119),
     
-    # 奇数・偶数
+    # 奇数・偶数・ハイロー・ダースなど（外側エリアの座標）
     "even": (300, 119),
     "odd": (700, 119),
+    "1 to 18": (180, 119),
+    "19 to 36": (820, 119),
+    "1 to 12": (300, 550),
+    "13 to 24": (535, 550),
+    "25 to 36": (770, 550),
     
-    # 0の位置（更新済み）
+    # 0の位置（追加済み）
     0: (108, 294),
 }
 
@@ -4887,7 +4899,7 @@ class RouletteConfirmView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
-        await interaction.response.edit_message(content="🎡 ルーレットを回転中...", embed=None, view=self)
+        await interaction.response.edit_message(content="🎡 ルーレットを回転中...", embed=None, view=self, attachments=[])
         await execute_roulette_game(self.ctx, interaction.message, self.bet, self.target_clean, self.target_raw)
 
     async def on_timeout(self):
@@ -4896,7 +4908,7 @@ class RouletteConfirmView(discord.ui.View):
                 child.disabled = True
             if self.message:
                 try:
-                    await self.message.edit(content="⏰ 時間切れでキャンセルされたよ。", view=self)
+                    await self.message.edit(content="⏰ 時間切れでキャンセルされたよ。", view=self, attachments=[])
                 except:
                     pass
 
@@ -4941,6 +4953,12 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     elif target_clean in ["even", "偶数"]:
         bet_type = "even_odd"
         bet_value = "even"
+    elif target_clean in ["1 to 18", "19 to 36"]:
+        bet_type = "high_low"
+        bet_value = target_clean
+    elif target_clean in ["1 to 12", "13 to 24", "25 to 36"]:
+        bet_type = "dozen"
+        bet_value = target_clean
 
     won = False
     multiplier = 0
@@ -4958,6 +4976,23 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         elif bet_value == "even" and landed_number % 2 == 0:
             won = True
             multiplier = 2
+    elif bet_type == "high_low" and landed_number != 0:
+        if bet_value == "1 to 18" and 1 <= landed_number <= 18:
+            won = True
+            multiplier = 2
+        elif bet_value == "19 to 36" and 19 <= landed_number <= 36:
+            won = True
+            multiplier = 2
+    elif bet_type == "dozen" and landed_number != 0:
+        if bet_value == "1 to 12" and 1 <= landed_number <= 12:
+            won = True
+            multiplier = 3
+        elif bet_value == "13 to 24" and 13 <= landed_number <= 24:
+            won = True
+            multiplier = 3
+        elif bet_value == "25 to 36" and 25 <= landed_number <= 36:
+            won = True
+            multiplier = 3
 
     payout = bet * multiplier if won else 0
     profit = payout - bet
@@ -5043,7 +5078,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         )
 
 
-# 3. ルーレットコマンド本体（ベット確認画面）
+# 3. ルーレットコマンド本体（ベット確認画面 ＋ チップ配置画像表示）
 @bot.command(name="roulette", aliases=["r", "ルーレット"])
 async def roulette_command(ctx, bet_text: str = None, target: str = None):
     if ctx.guild is None:
@@ -5092,12 +5127,18 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     valid_target = False
     if target_clean.isdigit() and 0 <= int(target_clean) <= 36:
         valid_target = True
-    elif target_clean in ["red", "black", "赤", "黒", "odd", "even", "奇数", "偶数"]:
+    elif target_clean in ["red", "black", "赤", "黒", "odd", "even", "奇数", "偶数", "1 to 18", "19 to 36", "1 to 12", "13 to 24", "25 to 36"]:
         valid_target = True
 
     if not valid_target:
-        await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even）", mention_author=False)
+        await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even など）", mention_author=False)
         return
+
+    # 🎡 チップが置かれたボード画像を生成
+    board_image_path = generate_roulette_table_image(target_clean)
+    files = []
+    if board_image_path and os.path.exists(board_image_path):
+        files.append(discord.File(board_image_path, filename="roulette_confirm.png"))
 
     embed = discord.Embed(
         title="🎡 ルーレット ベット確認",
@@ -5105,13 +5146,16 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
             f"プレイヤー：{ctx.author.mention}\n"
             f"賭け金：**{money(bet)}**\n"
             f"賭け先：`{target}`\n\n"
-            "内容を確認して下のボタンを押してね！"
+            "内容とチップの位置を確認して下のボタンを押してね！"
         ),
         color=discord.Color.blurple()
     )
+    
+    if files:
+        embed.set_image(url="attachment://roulette_confirm.png")
 
     view = RouletteConfirmView(ctx, bet, target_clean, target)
-    msg = await ctx.reply(embed=embed, view=view, mention_author=False)
+    msg = await ctx.reply(embed=embed, files=files if files else [], view=view, mention_author=False)
     view.message = msg
 
     

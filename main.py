@@ -4766,8 +4766,26 @@ from PIL import Image, ImageDraw
 import os
 
 # ==================================================
-# 🎡 ルーレットゲーム（1070×607 正確な座標対応版）
+# 🎡 ルーレットゲーム（ジャックポット・ベット確認・回転GIF対応版）
 # ==================================================
+
+# ジャックポットのプール管理用関数
+def get_jackpot_pool():
+    if "pool" not in jackpot_data:
+        jackpot_data["pool"] = 10000
+        save_json(JACKPOT_FILE, jackpot_data)
+    return int(jackpot_data["pool"])
+
+def add_jackpot_pool(amount):
+    current = get_jackpot_pool()
+    jackpot_data["pool"] = current + int(amount)
+    save_json(JACKPOT_FILE, jackpot_data)
+    return jackpot_data["pool"]
+
+def reset_jackpot_pool(amount=10000):
+    jackpot_data["pool"] = int(amount)
+    save_json(JACKPOT_FILE, jackpot_data)
+
 
 # 各ベット位置の正確な座標マップ（画像サイズ: 1070 × 607 用）
 ROULETTE_COORDINATES = {
@@ -4775,9 +4793,12 @@ ROULETTE_COORDINATES = {
     "red": (469, 119),
     "black": (600, 119),
     
-    # 奇数・偶数（必要であれば大体の位置を設定、まずは数字や色を優先）
+    # 奇数・偶数
     "even": (300, 119),
     "odd": (700, 119),
+    
+    # 0の位置（更新済み）
+    0: (108, 294),
 }
 
 # 1〜36 の数字座標を辞書に一気にマージ
@@ -4806,15 +4827,12 @@ def generate_roulette_table_image(target_key):
     if not os.path.exists(board_path) or not os.path.exists(chip_path):
         return None
         
-    # ベースのボード画像を読み込む
     base_image = Image.open(board_path).convert("RGBA")
     
-    # チップ画像を読み込んで丸型に加工する
     chip_img = Image.open(chip_path).convert("RGBA")
-    chip_size = 40  # チップのサイズ
+    chip_size = 40
     chip_img = chip_img.resize((chip_size, chip_size), Image.Resampling.LANCZOS)
     
-    # 円形のマスクを作成して綺麗に丸くくり抜く
     mask = Image.new("L", (chip_size, chip_size), 0)
     draw = ImageDraw.Draw(mask)
     draw.ellipse((0, 0, chip_size, chip_size), fill=255)
@@ -4822,25 +4840,19 @@ def generate_roulette_table_image(target_key):
     rounded_chip = Image.new("RGBA", (chip_size, chip_size))
     rounded_chip.paste(chip_img, (0, 0), mask=mask)
     
-    # --------------------------------------------------
-    # 🔑 修正ポイント：入力されたキーの型を調整する
-    # --------------------------------------------------
     target_clean = str(target_key).strip().lower()
     
-    # 数字であれば int に変換（例: "7" -> 7）
     if target_clean.isdigit():
         lookup_key = int(target_clean)
     else:
         lookup_key = target_clean
     
-    # 賭け先に対応する座標があればチップを貼り付ける
     if lookup_key in ROULETTE_COORDINATES:
         x, y = ROULETTE_COORDINATES[lookup_key]
         paste_x = x - chip_size // 2
         paste_y = y - chip_size // 2
         base_image.paste(rounded_chip, (paste_x, paste_y), mask=rounded_chip)
         
-    # 生成された画像を保存
     output_path = "cards/current_roulette_board.png"
     os.makedirs("cards", exist_ok=True)
     base_image.save(output_path)
@@ -4850,55 +4862,65 @@ def generate_roulette_table_image(target_key):
 ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
 
-@bot.command(name="roulette", aliases=["r", "ルーレット"])
-async def roulette_command(ctx, bet_text: str = None, target: str = None):
-    if ctx.guild is None:
-        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
-        return
 
-    if bet_text is None or target is None:
-        await ctx.reply(
-            "【ルーレットの使い方】\n"
-            "`.r <賭け金> <賭ける対象>`\n\n"
-            "**賭け方の種類:**\n"
-            "・数字（0〜36）: 例 `.r 100 7` （配当 36倍）\n"
-            "・色（red / black / 赤 / 黒）: 例 `.r 100 red` （配当 2倍）\n"
-            "・奇数/偶数（odd / even / 奇数 / 偶数）: 例 `.r 100 even` （配当 2倍）",
-            mention_author=False,
-        )
-        return
+# 1. ベット確認用のボタン View
+class RouletteConfirmView(discord.ui.View):
+    def __init__(self, ctx, bet, target_clean, target_raw):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.bet = bet
+        self.target_clean = target_clean
+        self.target_raw = target_raw
+        self.confirmed = False
+        self.message = None
 
-    # 賭け金の解析
-    bet = resolve_bet(ctx.author.id, bet_text)
-    if bet is None or bet <= 0:
-        await ctx.reply("賭け金は正の数字か `all` で指定してね。", mention_author=False)
-        return
+    @discord.ui.button(label="確認（ルーレット開始）", style=discord.ButtonStyle.green, emoji="🎡")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("他の人のゲームのボタンは押せないよ！", ephemeral=True)
+            return
 
-    # 賭け金制限のチェック
-    settings = get_server_settings(ctx.guild.id)
-    bet_limits = settings.get("bet_limits", {})
-    roulette_limit = bet_limits.get("roulette", {"min": 0, "max": "inf"})
-    
-    min_bet = roulette_limit.get("min", 0)
-    max_bet = roulette_limit.get("max", "inf")
+        if self.confirmed:
+            return
+        self.confirmed = True
 
-    if bet < min_bet:
-        await ctx.reply(f"ルーレットの最低賭け金は **{money(min_bet)}** だよ。", mention_author=False)
-        return
+        for child in self.children:
+            child.disabled = True
 
-    if max_bet != "inf" and bet > max_bet:
-        max_str = money(max_bet)
-        await ctx.reply(f"ルーレットの最高賭け金は **{max_str}** までだよ。", mention_author=False)
-        return
+        await interaction.response.edit_message(content="🎡 ルーレットを回転中...", embed=None, view=self)
+        await execute_roulette_game(self.ctx, interaction.message, self.bet, self.target_clean, self.target_raw)
 
-    # 所持金チェック
+    async def on_timeout(self):
+        if not self.confirmed:
+            for child in self.children:
+                child.disabled = True
+            if self.message:
+                try:
+                    await self.message.edit(content="⏰ 時間切れでキャンセルされたよ。", view=self)
+                except:
+                    pass
+
+
+# 2. ルーレットのメイン処理（ボタン押下後）
+async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
     current_balance = get_balance(ctx.author.id)
     if bet > current_balance:
-        await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
+        await message.edit(content=f"残高が足りないよ！\n残高：**{money(current_balance)}**", view=None)
         return
 
-    # 賭け対象の判定
-    target_clean = target.strip().lower()
+    set_balance(ctx.author.id, current_balance - bet)
+
+    landed_number = random.randint(0, 36)
+    if landed_number == 0:
+        landed_color = "green"
+        color_emoji = "🟢"
+    elif landed_number in ROULETTE_RED:
+        landed_color = "red"
+        color_emoji = "🔴"
+    else:
+        landed_color = "black"
+        color_emoji = "⚫"
+
     bet_type = None
     bet_value = None
 
@@ -4920,26 +4942,6 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         bet_type = "even_odd"
         bet_value = "even"
 
-    if bet_type is None:
-        await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even）", mention_author=False)
-        return
-
-    # 賭け金を一時徴収
-    set_balance(ctx.author.id, current_balance - bet)
-
-    # 抽選 (0〜36)
-    landed_number = random.randint(0, 36)
-    if landed_number == 0:
-        landed_color = "green"
-        color_emoji = "🟢"
-    elif landed_number in ROULETTE_RED:
-        landed_color = "red"
-        color_emoji = "🔴"
-    else:
-        landed_color = "black"
-        color_emoji = "⚫"
-
-    # 勝敗判定
     won = False
     multiplier = 0
 
@@ -4957,28 +4959,37 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
             won = True
             multiplier = 2
 
-    # 配当処理
     payout = bet * multiplier if won else 0
     profit = payout - bet
     new_balance = (current_balance - bet) + payout
     set_balance(ctx.author.id, new_balance)
 
-    # 胴元システムへの反映
-    house_result = transfer_to_house(
+    transfer_to_house(
         player_id=ctx.author.id,
         profit=profit,
-        guild_id=ctx.guild.id,
+        guild_id=ctx.guild.id if ctx.guild else None,
         game="roulette",
     )
 
-    # チップが置かれたボード画像を生成
-    board_image_path = generate_roulette_table_image(target_clean)
+    # 🔄 回転中のGIF演出（IMG_0745.gif を使用 / 3秒間）
+    spinning_gif_path = "cards/IMG_0745.gif"
+    if os.path.exists(spinning_gif_path):
+        try:
+            await message.edit(
+                content=None,
+                embed=discord.Embed(title="🎡 ルーレット回転中...").set_image(url="attachment://spin.gif"),
+                attachments=[discord.File(spinning_gif_path, filename="spin.gif")]
+            )
+        except:
+            pass
     
+    await asyncio.sleep(3)
+
+    board_image_path = generate_roulette_table_image(target_clean)
     files = []
     if board_image_path and os.path.exists(board_image_path):
         files.append(discord.File(board_image_path, filename="roulette.png"))
 
-    # Embed生成
     color = discord.Color.green() if won else discord.Color.red()
     result_text = f"🎉 **当たり！ 配当: {money(payout)}**" if won else "💸 **ハズレ…**"
 
@@ -4986,7 +4997,7 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
         title="🎰 ルーレット結果",
         description=(
             f"プレイヤー：{ctx.author.mention}\n"
-            f"賭けた内容：`{target}` ({money(bet)})\n\n"
+            f"賭けた内容：`{target_raw}` ({money(bet)})\n\n"
             f"🎯 出目：**{color_emoji} {landed_number}**\n\n"
             f"{result_text}\n"
             f"収支：**{money_change(profit)}**\n"
@@ -4998,17 +5009,16 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     if files:
         embed.set_image(url="attachment://roulette.png")
 
-    await ctx.reply(embed=embed, files=files if files else None, mention_author=False)
+    await message.edit(content=None, embed=embed, attachments=files if files else [], view=None)
 
-    # ログ処理
     record_coin({
         "type": "roulette",
         "timestamp": datetime.now(timezone.utc).timestamp(),
-        "guild_id": ctx.guild.id,
+        "guild_id": ctx.guild.id if ctx.guild else None,
         "user_id": ctx.author.id,
         "username": str(ctx.author),
         "bet": bet,
-        "target": target,
+        "target": target_raw,
         "landed": f"{color_emoji}{landed_number}",
         "won": won,
         "payout": payout,
@@ -5023,7 +5033,7 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
                 title="🎰 ルーレットログ",
                 description=(
                     f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-                    f"賭け金：**{money(bet)}** | 賭け先：`{target}`\n"
+                    f"賭け金：**{money(bet)}** | 賭け先：`{target_raw}`\n"
                     f"結果：{color_emoji} **{landed_number}** ({'当たり' if won else 'ハズレ'})\n"
                     f"配当：**{money(payout)}** | 収支：**{money_change(profit)}**\n"
                     f"残高：**{money(new_balance)}**"
@@ -5031,6 +5041,78 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
                 color=color,
             ),
         )
+
+
+# 3. ルーレットコマンド本体（ベット確認画面）
+@bot.command(name="roulette", aliases=["r", "ルーレット"])
+async def roulette_command(ctx, bet_text: str = None, target: str = None):
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+
+    if bet_text is None or target is None:
+        await ctx.reply(
+            "【ルーレットの使い方】\n"
+            "`.r <賭け金> <賭ける対象>`\n\n"
+            "**賭け方の種類:**\n"
+            "・数字（0〜36）: 例 `.r 100 7` （配当 36倍）\n"
+            "・色（red / black / 赤 / 黒）: 例 `.r 100 red` （配当 2倍）\n"
+            "・奇数/偶数（odd / even / 奇数 / 偶数）: 例 `.r 100 even` （配当 2倍）",
+            mention_author=False,
+        )
+        return
+
+    bet = resolve_bet(ctx.author.id, bet_text)
+    if bet is None or bet <= 0:
+        await ctx.reply("賭け金は正の数字か `all` で指定してね。", mention_author=False)
+        return
+
+    settings = get_server_settings(ctx.guild.id)
+    bet_limits = settings.get("bet_limits", {})
+    roulette_limit = bet_limits.get("roulette", {"min": 0, "max": "inf"})
+    
+    min_bet = roulette_limit.get("min", 0)
+    max_bet = roulette_limit.get("max", "inf")
+
+    if bet < min_bet:
+        await ctx.reply(f"ルーレットの最低賭け金は **{money(min_bet)}** だよ。", mention_author=False)
+        return
+
+    if max_bet != "inf" and bet > max_bet:
+        max_str = money(max_bet)
+        await ctx.reply(f"ルーレットの最高賭け金は **{max_str}** までだよ。", mention_author=False)
+        return
+
+    current_balance = get_balance(ctx.author.id)
+    if bet > current_balance:
+        await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
+        return
+
+    target_clean = target.strip().lower()
+    valid_target = False
+    if target_clean.isdigit() and 0 <= int(target_clean) <= 36:
+        valid_target = True
+    elif target_clean in ["red", "black", "赤", "黒", "odd", "even", "奇数", "偶数"]:
+        valid_target = True
+
+    if not valid_target:
+        await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even）", mention_author=False)
+        return
+
+    embed = discord.Embed(
+        title="🎡 ルーレット ベット確認",
+        description=(
+            f"プレイヤー：{ctx.author.mention}\n"
+            f"賭け金：**{money(bet)}**\n"
+            f"賭け先：`{target}`\n\n"
+            "内容を確認して下のボタンを押してね！"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    view = RouletteConfirmView(ctx, bet, target_clean, target)
+    msg = await ctx.reply(embed=embed, view=view, mention_author=False)
+    view.message = msg
 
     
 # ==================================================

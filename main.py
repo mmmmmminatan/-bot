@@ -4831,7 +4831,7 @@ ROULETTE_COORDINATES.update({
 
 def generate_roulette_table_image(target_key):
     """
-    指定されたキー（ベット先または出目）の位置にチップ（またはボール）を置いて画像を生成する
+    指定されたキー（ベット先または出目数字）の位置にチップ（ボール）を置いて画像を生成する
     """
     board_path = "cards/IMG_0715.jpeg"
     chip_path = "cards/IMG_0730.jpeg"
@@ -5018,7 +5018,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
         except:
             pass
     
-    # ⏱️ 約1.5秒間回転させる
+    # ⏱️ 1.5秒間回転させる
     await asyncio.sleep(1.5)
 
     # 🎯 出目の数字の位置にチップ（ボール）を置いた画像を生成

@@ -15,10 +15,11 @@ from flask import Flask
 
 
 # ==========================================
-# 1. ボットの基本設定 & 「あう」検知パターン
+# 1. ボットの基本設定
 # ==========================================
+
 intents = discord.Intents.default()
-intents.message_content = True  # メッセージの内容を読むために必須
+intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(
@@ -28,14 +29,24 @@ bot = commands.Bot(
     case_insensitive=True,
 )
 
-# 「あ」と「う」の間に【あらゆる文字、記号、空白】が0文字以上挟まっていても検知する正規表現
-# .*? を使うことで、間にどんな文字や記号が入っても「あ」から「う」までをキャッチします
+# ==========================================
+# 2. あう検知設定
+# ==========================================
+
+# 「あう」が連続している場合のみ検知
 pattern = re.compile(r"あう")
 
+# 返信する文章
+REPLY_TEXT = (
+    "😅うおww😅どわー😂😅お、おう😅\n"
+    "😅✋⚠️あうを検知しました⚠️✋😅\n"
+    "😅きちー😅✋ったく...wかっこよw😅"
+)
 
 # ==========================================
-# 2. イベント処理（メッセージ・起動など）
+# 3. 起動イベント
 # ==========================================
+
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user} ({bot.user.id})")
@@ -43,28 +54,38 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンド同期: {len(synced)}個")
+
     except Exception:
         print("[SLASH SYNC ERROR]")
         traceback.print_exc()
 
+# ==========================================
+# 4. メッセージ検知イベント
+# ==========================================
+
 @bot.event
 async def on_message(message):
-    # Bot自身のメッセージには反応しない
+
+    # Bot自身・ほかのBotには反応しない
     if message.author.bot:
         return
 
-    # ------------------------------------------
-    # ★ 「あ」〜「う」の発言を検知したときの処理
-    # ------------------------------------------
-    if pattern.search(message.content):
-        reply_text = (
-            "😅うおww😅どわー😂😅お、おう😅\n"
-            "😅✋⚠️あうを検知しました⚠️✋😅\n"
-            "😅きちー😅✋ったく...wかっこよw😅"
-        )
-        await message.channel.send(reply_text)
+    # メッセージ受信ログ
+    print(f"受信メッセージ: {message.content}")
 
-    # 他のコマンド機能（スロット等）も動かすために必須
+    # あうを検知
+    if pattern.search(message.content):
+
+        try:
+            await message.channel.send(REPLY_TEXT)
+
+            print("あうを検知して返信しました！")
+
+        except Exception:
+            print("[REPLY ERROR]")
+            traceback.print_exc()
+
+    # ほかのコマンドも動かす
     await bot.process_commands(message)
 
 

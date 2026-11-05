@@ -617,6 +617,12 @@ async def on_message(message):
         f"content={message.content[:150]}"
     )
 
+    # あう検知
+    if pattern.search(message.content):
+        await message.channel.send(REPLY_TEXT)
+        print("[AU DETECTED] あうを検知しました")
+
+    # 既存機能
     await process_guess_message(message)
     await bot.process_commands(message)
 

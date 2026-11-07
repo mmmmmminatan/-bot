@@ -2166,15 +2166,38 @@ active_mine_users = set()
 
 
 async def send_mine_log(guild, embed):
-    channel = await get_log_channel(guild)
-    if channel is None:
-        print("[MINE LOG] 固定ログチャンネルを取得できず、送信できませんでした。")
-        return
+    # MINESのログは、ゲームを遊んだサーバーに関係なく
+    # LOG_CHANNEL_IDで指定したメインサーバーのチャンネルへ送信する。
     try:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if channel is None:
+            channel = await bot.fetch_channel(LOG_CHANNEL_ID)
+
+        if not isinstance(channel, discord.TextChannel):
+            print("[MINE LOG ERROR] 固定ログ送信先がテキストチャンネルではありません。")
+            return
+
+        me = channel.guild.me
+        if me is None:
+            print("[MINE LOG ERROR] メインサーバーのBotメンバー情報を取得できません。")
+            return
+
+        permissions = channel.permissions_for(me)
+        if not permissions.view_channel or not permissions.send_messages:
+            print("[MINE LOG ERROR] メインサーバーのログチャンネルへの閲覧・送信権限がありません。")
+            return
+
         await channel.send(embed=embed)
-        print(f"[MINE LOG] 送信成功: channel={channel.id}")
+        print(f"[MINE LOG] メインサーバーへ送信成功: channel={channel.id}")
+    except discord.NotFound:
+        print(f"[MINE LOG ERROR] メインサーバーのログチャンネルが見つかりません: {LOG_CHANNEL_ID}")
+    except discord.Forbidden:
+        print("[MINE LOG ERROR] メインサーバーのログチャンネルへのアクセスが拒否されました。")
+    except discord.HTTPException:
+        print("[MINE LOG ERROR] ログ送信中にDiscord APIエラーが発生しました。")
+        traceback.print_exc()
     except Exception:
-        print("[MINE LOG SEND ERROR]")
+        print("[MINE LOG ERROR] ログ送信中に予期しないエラーが発生しました。")
         traceback.print_exc()
 
 
@@ -2470,6 +2493,7 @@ class MineGameView(discord.ui.View):
             color=discord.Color.green() if result == "win" else discord.Color.orange() if result == "timeout" else discord.Color.red(),
             timestamp=datetime.now(timezone.utc),
         )
+        log_embed.add_field(name="プレイしたサーバー", value=f"{self.guild.name} (ID: {self.guild.id})" if self.guild else "不明", inline=False)
         log_embed.add_field(name="ユーザー名", value=str(self.ctx.author), inline=True)
         log_embed.add_field(name="ユーザーID", value=str(self.player_id), inline=True)
         log_embed.add_field(name="賭け金", value=money(self.bet), inline=True)

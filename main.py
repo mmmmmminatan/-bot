@@ -5333,6 +5333,7 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     msg = await ctx.reply(embed=embed, files=files if files else [], view=view, mention_author=False)
     view.message = msg
 
+
 # ==========================================
 # 基本設定（必要に応じて調整）
 # ==========================================

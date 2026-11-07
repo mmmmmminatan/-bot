@@ -5501,8 +5501,8 @@ class ExchangeDetailsModal(discord.ui.Modal):
             data["approval_message_id"] = message.id
             save_exchange_requests()
             await interaction.response.send_message(
-                f"リクエストを送信したよ！受付番号：**#{request_id}**\\n"
-                f"交換相手：{partner.mention}\\n"
+                f"リクエストを送信したよ！受付番号：**#{request_id}**\n"
+                f"交換相手：{partner.mention}\n"
                 "仲介担当が確認中だよ。承認されたら2人がこのチャンネルを見られるようになるよ。",
                 ephemeral=True,
             )
@@ -5686,9 +5686,9 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
         save_exchange_requests()
 
         await approval_channel.send(
-            f"🎉 **この交換リクエストは承認されたよ！**\\n"
-            f"**受け入れた仲介者：** {interaction.user.mention}\\n"
-            f"**交換する2人：** {requester.mention}・{partner.mention}\\n\\n"
+            f"🎉 **この交換リクエストは承認されたよ！**\n"
+            f"**受け入れた仲介者：** {interaction.user.mention}\n"
+            f"**交換する2人：** {requester.mention}・{partner.mention}\n\n"
             "これからは申請者・交換相手・仲介担当がこのチャンネルを使えるよ。"
         )
         await update_exchange_approval_message(interaction.guild, request_id)
@@ -5743,7 +5743,7 @@ class ExchangeApprovalView(discord.ui.View):
         approval_channel = interaction.guild.get_channel(int(data.get("approval_channel_id", 0))) if interaction.guild else None
         if isinstance(approval_channel, discord.TextChannel):
             await approval_channel.send(
-                f"❌ **このリクエストは却下されたよ。**\\n"
+                f"❌ **このリクエストは却下されたよ。**\n"
                 f"**却下した仲介者：** {interaction.user.mention}"
             )
 

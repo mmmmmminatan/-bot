@@ -2213,7 +2213,8 @@ class MineGameView(discord.ui.View):
         self.message = None
         self.cashout_message = None
         self.multiplier = 1.0
-        self.cashout_view = MineCashoutView(self)
+        self.cashout_view = MineCashoutView(self) if self.total_cells > 20 else None
+        self.inline_cashout_button = None
 
         for index in range(self.total_cells):
             button = discord.ui.Button(
@@ -2229,10 +2230,35 @@ class MineGameView(discord.ui.View):
             button.callback = cell_callback
             self.add_item(button)
 
+        # 3x3・4x4は盤面の下に精算ボタンを配置（5x5のみ別メッセージ）
+        if self.total_cells <= 20:
+            cashout_button = discord.ui.Button(
+                label="Cash Out",
+                emoji="💵",
+                style=discord.ButtonStyle.success,
+                disabled=True,
+                row=size,
+                custom_id=f"minecashout_inline:{self.player_id}",
+            )
+            cashout_button.callback = self.inline_cashout_callback
+            self.add_item(cashout_button)
+            self.inline_cashout_button = cashout_button
+
+    async def inline_cashout_callback(self, interaction):
+        await self.cashout(interaction)
+
     def current_multiplier(self):
         opened = len(self.opened_safe)
         if opened <= 0:
             return 1.0
+        denominator = math.comb(self.total_cells, opened)
+        numerator = math.comb(self.safe_total, opened)
+        return round(0.95 * denominator / numerator, 2)
+
+    def next_multiplier(self):
+        opened = len(self.opened_safe) + 1
+        if opened > self.safe_total:
+            return self.multiplier
         denominator = math.comb(self.total_cells, opened)
         numerator = math.comb(self.safe_total, opened)
         return round(0.95 * denominator / numerator, 2)
@@ -2256,12 +2282,20 @@ class MineGameView(discord.ui.View):
             description = result_text or "時間切れでゲーム終了。賭け金は返金したよ。"
 
         embed = discord.Embed(title=title, description=description, color=color)
-        embed.add_field(name="プレイヤー", value=self.ctx.author.mention, inline=True)
-        embed.add_field(name="賭け金", value=money(self.bet), inline=True)
-        embed.add_field(name="盤面", value=f"{self.size}×{self.size}", inline=True)
-        embed.add_field(name="爆弾", value=f"{self.bomb_count}個", inline=True)
-        embed.add_field(name="安全マス", value=f"{len(self.opened_safe)} / {self.safe_total}", inline=True)
-        embed.add_field(name="現在倍率", value=f"{self.multiplier:.2f}倍", inline=True)
+        embed.description = (
+            f"💣 {self.ctx.author.mention} started a mines game.\n\n"
+            f"**Bet:** `{self.bet:,}`　 **Mines:** `{self.bomb_count}`\n"
+            f"**Cash Out:** `{int(self.bet * self.multiplier) if self.opened_safe else 0}` `({self.multiplier if self.opened_safe else 0:.3f}x)`\n"
+            f"**Next:** `{int(self.bet * self.next_multiplier())}` `({self.next_multiplier():.3f}x)`"
+            if status == "playing" else description
+        )
+        if status != "playing":
+            embed.add_field(name="プレイヤー", value=self.ctx.author.mention, inline=True)
+            embed.add_field(name="賭け金", value=money(self.bet), inline=True)
+            embed.add_field(name="盤面", value=f"{self.size}×{self.size}", inline=True)
+            embed.add_field(name="爆弾", value=f"{self.bomb_count}個", inline=True)
+            embed.add_field(name="安全マス", value=f"{len(self.opened_safe)} / {self.safe_total}", inline=True)
+            embed.add_field(name="現在倍率", value=f"{self.multiplier:.2f}倍", inline=True)
         return embed
 
     def reveal_board(self, exploded_index=None):
@@ -2311,12 +2345,15 @@ class MineGameView(discord.ui.View):
                     item.style = discord.ButtonStyle.success
                     item.disabled = True
 
-        self.cashout_view.button.disabled = False
-        if self.cashout_message:
-            try:
-                await self.cashout_message.edit(view=self.cashout_view)
-            except discord.HTTPException:
-                pass
+        if self.inline_cashout_button:
+            self.inline_cashout_button.disabled = False
+        if self.cashout_view:
+            self.cashout_view.button.disabled = False
+            if self.cashout_message:
+                try:
+                    await self.cashout_message.edit(view=self.cashout_view)
+                except discord.HTTPException:
+                    pass
 
         if len(self.opened_safe) >= self.safe_total:
             await interaction.response.defer()
@@ -2370,12 +2407,15 @@ class MineGameView(discord.ui.View):
         )
 
         self.reveal_board(exploded_index=exploded_index)
-        self.cashout_view.button.disabled = True
-        if self.cashout_message:
-            try:
-                await self.cashout_message.edit(view=self.cashout_view)
-            except discord.HTTPException:
-                pass
+        if self.inline_cashout_button:
+            self.inline_cashout_button.disabled = True
+        if self.cashout_view:
+            self.cashout_view.button.disabled = True
+            if self.cashout_message:
+                try:
+                    await self.cashout_message.edit(view=self.cashout_view)
+                except discord.HTTPException:
+                    pass
         if result == "win":
             result_text += f"\n払い戻し：**{money(payout)}**\n利益：**{money_change(profit)}**"
         elif result == "timeout":
@@ -2453,10 +2493,11 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
-        view.cashout_message = await ctx.send(
-            "安全マスを1つ以上開くと、ここから精算できるよ。",
-            view=view.cashout_view,
-        )
+        if view.cashout_view:
+            view.cashout_message = await ctx.send(
+                "安全マスを1つ以上開くと、ここから精算できるよ。",
+                view=view.cashout_view,
+            )
     except Exception:
         view.finished = True
         active_mine_users.discard(ctx.author.id)

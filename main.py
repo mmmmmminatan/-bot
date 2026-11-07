@@ -5685,12 +5685,15 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
         data["channel_id"] = approval_channel.id
         save_exchange_requests()
 
-        await approval_channel.send(
+        close_message = await approval_channel.send(
             f"🎉 **この交換リクエストは承認されたよ！**\n"
             f"**受け入れた仲介者：** {interaction.user.mention}\n"
             f"**交換する2人：** {requester.mention}・{partner.mention}\n\n"
-            "これからは申請者・交換相手・仲介担当がこのチャンネルを使えるよ。"
+            "これからは申請者・交換相手・担当仲介者がこのチャンネルを使えるよ。",
+            view=ExchangeCloseView(request_id),
         )
+        data["close_message_id"] = close_message.id
+        save_exchange_requests()
         await update_exchange_approval_message(interaction.guild, request_id)
         await interaction.followup.send(
             f"承認完了！{requester.mention} と {partner.mention} が {approval_channel.mention} を見られるようになったよ。",
@@ -5704,6 +5707,64 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
     except discord.HTTPException as error:
         print(f"[EXCHANGE APPROVAL ERROR] {error}")
         await interaction.followup.send("承認処理中にエラーが発生したよ。", ephemeral=True)
+
+
+class ExchangeCloseView(discord.ui.View):
+    def __init__(self, request_id):
+        super().__init__(timeout=None)
+        self.request_id = str(request_id)
+
+    @discord.ui.button(
+        label="チャンネルを閉じる（削除）",
+        style=discord.ButtonStyle.danger,
+        emoji="🔒",
+        custom_id="exchange:close_channel",
+    )
+    async def close_channel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_exchange_mediator(interaction.user):
+            await interaction.response.send_message(
+                "「仲介」ロールを持つ人だけがチャンネルを削除できるよ。",
+                ephemeral=True,
+            )
+            return
+
+        data = get_exchange_request(self.request_id)
+        if not data or data.get("status") != "approved":
+            await interaction.response.send_message(
+                "このリクエストは承認済みではないよ。",
+                ephemeral=True,
+            )
+            return
+
+        if interaction.channel is None or interaction.channel.id != int(data.get("channel_id", 0)):
+            await interaction.response.send_message(
+                "このボタンは対象の交換チャンネルでは使えないよ。",
+                ephemeral=True,
+            )
+            return
+
+        channel = interaction.channel
+        await interaction.response.send_message(
+            "この交換チャンネルを削除するね。",
+            ephemeral=True,
+        )
+        try:
+            await channel.delete(reason=f"交換リクエスト #{self.request_id} を仲介ロールの操作で終了")
+            data["status"] = "closed"
+            data["closed_by"] = interaction.user.id
+            data["closed_at"] = datetime.now(timezone.utc).isoformat()
+            save_exchange_requests()
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "削除できなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
+                ephemeral=True,
+            )
+        except discord.HTTPException as error:
+            print(f"[EXCHANGE CLOSE ERROR] {error}")
+            await interaction.followup.send(
+                "チャンネル削除中にエラーが発生したよ。",
+                ephemeral=True,
+            )
 
 
 class ExchangeApprovalView(discord.ui.View):
@@ -5759,6 +5820,14 @@ async def restore_exchange_views():
                 )
             except Exception:
                 print(f"[EXCHANGE VIEW RESTORE ERROR] {request_id}")
+        elif data.get("status") == "approved" and data.get("close_message_id"):
+            try:
+                bot.add_view(
+                    ExchangeCloseView(request_id),
+                    message_id=int(data["close_message_id"]),
+                )
+            except Exception:
+                print(f"[EXCHANGE CLOSE VIEW RESTORE ERROR] {request_id}")
 
 async def exchange_views_ready():
     if getattr(bot, "_exchange_views_registered", False):

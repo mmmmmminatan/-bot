@@ -1668,9 +1668,6 @@ async def color_command(ctx, bet_text: str):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
-        if size == 5:
-            view.cashout_view = MineCashoutView(view)
-            view.cashout_message = await ctx.send(view=view.cashout_view)
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2527,9 +2524,6 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
-        if size == 5:
-            view.cashout_view = MineCashoutView(view)
-            view.cashout_message = await ctx.send(view=view.cashout_view)
     except Exception:
         view.finished = True
         active_mine_users.discard(ctx.author.id)

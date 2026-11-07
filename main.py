@@ -1671,6 +1671,9 @@ async def color_command(ctx, bet_text: str):
         if size == 5:
             view.cashout_view = MineCashoutView(view)
             view.cashout_message = await ctx.send(view=view.cashout_view)
+        if size == 5:
+            view.cashout_view = MineCashoutView(view)
+            view.cashout_message = await ctx.send(view=view.cashout_view)
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2236,33 +2239,6 @@ class MineGameView(discord.ui.View):
             button.callback = cell_callback
             self.add_item(button)
             self.cell_buttons[index] = button
-
-        if size == 5:
-            options = [
-                discord.SelectOption(
-                    label=f"{index // size + 1}行{index % size + 1}列",
-                    value=str(index),
-                    emoji="❔",
-                )
-                for index in range(button_cell_limit, self.total_cells)
-            ]
-            self.cell_select = discord.ui.Select(
-                placeholder="4・5行目のマスを選択",
-                min_values=1,
-                max_values=1,
-                options=options,
-                row=3,
-                custom_id=f"mineselect:{self.player_id}",
-            )
-
-            async def select_cell_callback(interaction):
-                if interaction.user.id != self.player_id:
-                    await interaction.response.send_message("このゲームを操作できるのは賭けた本人だけだよ。", ephemeral=True)
-                    return
-                await self.open_cell(interaction, int(self.cell_select.values[0]))
-
-            self.cell_select.callback = select_cell_callback
-            self.add_item(self.cell_select)
 
         if size != 5:
             cashout_button = discord.ui.Button(

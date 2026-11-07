@@ -1667,6 +1667,10 @@ async def color_command(ctx, bet_text: str):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
+        view.cashout_message = await ctx.send(
+            "安全マスを1つ以上開くと、ここから精算できるよ。",
+            view=view.cashout_view,
+        )
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2177,6 +2181,24 @@ async def send_mine_log(guild, embed):
         traceback.print_exc()
 
 
+class MineCashoutView(discord.ui.View):
+    def __init__(self, game):
+        super().__init__(timeout=None)
+        self.game = game
+        button = discord.ui.Button(
+            label="💰 精算",
+            style=discord.ButtonStyle.success,
+            disabled=True,
+            custom_id=f"minecashout:{game.player_id}",
+        )
+        button.callback = self.cashout_callback
+        self.add_item(button)
+        self.button = button
+
+    async def cashout_callback(self, interaction):
+        await self.game.cashout(interaction)
+
+
 class MineGameView(discord.ui.View):
     def __init__(self, ctx, bet, size, bomb_count):
         super().__init__(timeout=300)
@@ -2192,7 +2214,9 @@ class MineGameView(discord.ui.View):
         self.opened_safe = set()
         self.finished = False
         self.message = None
+        self.cashout_message = None
         self.multiplier = 1.0
+        self.cashout_view = MineCashoutView(self)
 
         for index in range(self.total_cells):
             button = discord.ui.Button(
@@ -2207,15 +2231,6 @@ class MineGameView(discord.ui.View):
 
             button.callback = cell_callback
             self.add_item(button)
-
-        self.cashout_button = discord.ui.Button(
-            label="💰 精算",
-            style=discord.ButtonStyle.success,
-            row=4,
-            disabled=True,
-        )
-        self.cashout_button.callback = self.cashout
-        self.add_item(self.cashout_button)
 
     def current_multiplier(self):
         opened = len(self.opened_safe)
@@ -2254,7 +2269,7 @@ class MineGameView(discord.ui.View):
 
     def reveal_board(self):
         for index, item in enumerate(self.children):
-            if not isinstance(item, discord.ui.Button) or item is self.cashout_button:
+            if not isinstance(item, discord.ui.Button):
                 continue
             item.disabled = True
             if index in self.bombs:
@@ -2266,8 +2281,6 @@ class MineGameView(discord.ui.View):
             else:
                 item.label = "・"
                 item.style = discord.ButtonStyle.secondary
-        self.cashout_button.disabled = True
-
     async def open_cell(self, interaction, index):
         if interaction.user.id != self.player_id:
             await interaction.response.send_message("このゲームを操作できるのは賭けた本人だけだよ。", ephemeral=True)
@@ -2288,13 +2301,18 @@ class MineGameView(discord.ui.View):
         self.multiplier = self.current_multiplier()
 
         for item in self.children:
-            if isinstance(item, discord.ui.Button) and item is not self.cashout_button:
+            if isinstance(item, discord.ui.Button):
                 if item.custom_id == f"mine:{self.player_id}:{index}":
                     item.label = "💎"
                     item.style = discord.ButtonStyle.success
                     item.disabled = True
 
-        self.cashout_button.disabled = False
+        self.cashout_view.button.disabled = False
+        if self.cashout_message:
+            try:
+                await self.cashout_message.edit(view=self.cashout_view)
+            except discord.HTTPException:
+                pass
 
         if len(self.opened_safe) >= self.safe_total:
             await interaction.response.defer()
@@ -2348,6 +2366,12 @@ class MineGameView(discord.ui.View):
         )
 
         self.reveal_board()
+        self.cashout_view.button.disabled = True
+        if self.cashout_message:
+            try:
+                await self.cashout_message.edit(view=self.cashout_view)
+            except discord.HTTPException:
+                pass
         if result == "win":
             result_text += f"\n払い戻し：**{money(payout)}**\n利益：**{money_change(profit)}**"
         elif result == "timeout":

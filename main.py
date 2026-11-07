@@ -2264,12 +2264,15 @@ class MineGameView(discord.ui.View):
         embed.add_field(name="現在倍率", value=f"{self.multiplier:.2f}倍", inline=True)
         return embed
 
-    def reveal_board(self):
+    def reveal_board(self, exploded_index=None):
         for index, item in enumerate(self.children):
             if not isinstance(item, discord.ui.Button):
                 continue
             item.disabled = True
-            if index in self.bombs:
+            if index == exploded_index:
+                item.label = "💥"
+                item.style = discord.ButtonStyle.danger
+            elif index in self.bombs:
                 item.label = "💣"
                 item.style = discord.ButtonStyle.danger
             elif index in self.opened_safe:
@@ -2291,7 +2294,11 @@ class MineGameView(discord.ui.View):
 
         if index in self.bombs:
             await interaction.response.defer()
-            await self.finish_game("lose", "💥 爆弾を引いたため賭け金を失ったよ。")
+            await self.finish_game(
+                "lose",
+                "💥 爆弾を引いたため賭け金を失ったよ。",
+                exploded_index=index,
+            )
             return
 
         self.opened_safe.add(index)
@@ -2334,7 +2341,7 @@ class MineGameView(discord.ui.View):
         await interaction.response.defer()
         await self.finish_game("win", "💰 好きなタイミングで精算したよ！")
 
-    async def finish_game(self, result, result_text):
+    async def finish_game(self, result, result_text, exploded_index=None):
         if self.finished:
             return
         self.finished = True
@@ -2362,7 +2369,7 @@ class MineGameView(discord.ui.View):
             "mine",
         )
 
-        self.reveal_board()
+        self.reveal_board(exploded_index=exploded_index)
         self.cashout_view.button.disabled = True
         if self.cashout_message:
             try:

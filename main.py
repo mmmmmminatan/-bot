@@ -2213,14 +2213,17 @@ class MineGameView(discord.ui.View):
         self.message = None
         self.cashout_message = None
         self.multiplier = 1.0
-        self.cashout_view = MineCashoutView(self) if self.total_cells > 20 else None
+        self.cashout_view = None
         self.inline_cashout_button = None
+        self.cell_buttons = {}
+        self.cell_select = None
+        button_cell_limit = 15 if size == 5 else self.total_cells
 
-        for index in range(self.total_cells):
+        for index in range(button_cell_limit):
             button = discord.ui.Button(
                 label="？",
                 style=discord.ButtonStyle.secondary,
-                row=index // 5,
+                row=index // size,
                 custom_id=f"mine:{self.player_id}:{index}",
             )
 
@@ -2229,20 +2232,46 @@ class MineGameView(discord.ui.View):
 
             button.callback = cell_callback
             self.add_item(button)
+            self.cell_buttons[index] = button
 
-        # 3x3・4x4は盤面の下に精算ボタンを配置（5x5のみ別メッセージ）
-        if self.total_cells <= 20:
-            cashout_button = discord.ui.Button(
+        if size == 5:
+            options = [
+                discord.SelectOption(
+                    label=f"{index // size + 1}行{index % size + 1}列",
+                    value=str(index),
+                    emoji="❔",
+                )
+                for index in range(button_cell_limit, self.total_cells)
+            ]
+            self.cell_select = discord.ui.Select(
+                placeholder="4・5行目のマスを選択",
+                min_values=1,
+                max_values=1,
+                options=options,
+                row=3,
+                custom_id=f"mineselect:{self.player_id}",
+            )
+
+            async def select_cell_callback(interaction):
+                if interaction.user.id != self.player_id:
+                    await interaction.response.send_message("このゲームを操作できるのは賭けた本人だけだよ。", ephemeral=True)
+                    return
+                await self.open_cell(interaction, int(self.cell_select.values[0]))
+
+            self.cell_select.callback = select_cell_callback
+            self.add_item(self.cell_select)
+
+        cashout_button = discord.ui.Button(
                 label="Cash Out",
                 emoji="💵",
                 style=discord.ButtonStyle.success,
                 disabled=True,
-                row=size,
+                row=4 if size == 5 else size,
                 custom_id=f"minecashout_inline:{self.player_id}",
             )
-            cashout_button.callback = self.inline_cashout_callback
-            self.add_item(cashout_button)
-            self.inline_cashout_button = cashout_button
+        cashout_button.callback = self.inline_cashout_callback
+        self.add_item(cashout_button)
+        self.inline_cashout_button = cashout_button
 
     async def inline_cashout_callback(self, interaction):
         await self.cashout(interaction)
@@ -2299,12 +2328,7 @@ class MineGameView(discord.ui.View):
         return embed
 
     def reveal_board(self, exploded_index=None):
-        for index, item in enumerate(self.children):
-            if not isinstance(item, discord.ui.Button):
-                continue
-            if item is self.inline_cashout_button:
-                item.disabled = True
-                continue
+        for index, item in self.cell_buttons.items():
             item.disabled = True
             if index == exploded_index:
                 item.label = "💥"
@@ -2318,6 +2342,24 @@ class MineGameView(discord.ui.View):
             else:
                 item.label = "・"
                 item.style = discord.ButtonStyle.secondary
+
+        if self.cell_select:
+            options = []
+            for option in self.cell_select.options:
+                index = int(option.value)
+                row_col = f"{index // self.size + 1}行{index % self.size + 1}列"
+                if index == exploded_index:
+                    label, emoji = f"💥 {row_col}", "💥"
+                elif index in self.bombs:
+                    label, emoji = f"💣 {row_col}", "💣"
+                elif index in self.opened_safe:
+                    label, emoji = f"💎 {row_col}", "💎"
+                else:
+                    label, emoji = f"・ {row_col}", "▫️"
+                options.append(discord.SelectOption(label=label, value=str(index), emoji=emoji))
+            self.cell_select.options = options
+            self.cell_select.disabled = True
+            self.cell_select.placeholder = "ゲーム終了"
     async def open_cell(self, interaction, index):
         if interaction.user.id != self.player_id:
             await interaction.response.send_message("このゲームを操作できるのは賭けた本人だけだよ。", ephemeral=True)
@@ -2341,12 +2383,24 @@ class MineGameView(discord.ui.View):
         self.opened_safe.add(index)
         self.multiplier = self.current_multiplier()
 
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                if item.custom_id == f"mine:{self.player_id}:{index}":
-                    item.label = "💎"
-                    item.style = discord.ButtonStyle.success
-                    item.disabled = True
+        if index in self.cell_buttons:
+            button = self.cell_buttons[index]
+            button.label = "💎"
+            button.style = discord.ButtonStyle.success
+            button.disabled = True
+        if self.cell_select:
+            options = []
+            for option in self.cell_select.options:
+                cell_index = int(option.value)
+                if cell_index == index:
+                    options.append(discord.SelectOption(
+                        label=f"💎 {cell_index // self.size + 1}行{cell_index % self.size + 1}列",
+                        value=str(cell_index),
+                        emoji="💎",
+                    ))
+                else:
+                    options.append(option)
+            self.cell_select.options = options
 
         if self.inline_cashout_button:
             self.inline_cashout_button.disabled = False
@@ -2496,11 +2550,6 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
-        if view.cashout_view:
-            view.cashout_message = await ctx.send(
-                "安全マスを1つ以上開くと、ここから精算できるよ。",
-                view=view.cashout_view,
-            )
     except Exception:
         view.finished = True
         active_mine_users.discard(ctx.author.id)

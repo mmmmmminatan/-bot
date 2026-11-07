@@ -5615,18 +5615,6 @@ def run_web():
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
-# ==========================================
-# 7. 起動処理
-# ==========================================
-
-if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません。")
-
-    Thread(target=run_web, daemon=True).start()
-    bot.run(TOKEN)
-
-
 # ==================================================
 # 起動
 # ==================================================

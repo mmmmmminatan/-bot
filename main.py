@@ -110,6 +110,7 @@ SETTINGS_FILE = Path("server_settings.json")
 DAILY_FILE = Path("daily_logs.json")
 GUESS_FILE = Path("guess_data.json")
 JACKPOT_FILE = Path("jackpot_data.json")
+WELCOME_LOG_FILE = Path("welcome_log_configs.json")
 
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
@@ -242,6 +243,7 @@ server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
 jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
+welcome_log_configs = load_json(WELCOME_LOG_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
@@ -5895,6 +5897,165 @@ async def request_channel_command(interaction: discord.Interaction):
 
 
 bot.tree.add_command(request_group)
+
+
+# ==================================================
+# /welcome log 入退出ログ設定
+# ==================================================
+
+welcome_group = app_commands.Group(
+    name="welcome",
+    description="参加・退出ログの設定",
+)
+
+
+@welcome_group.command(
+    name="log",
+    description="このチャンネルをメンバー参加・退出ログの送信先に設定する",
+)
+@app_commands.describe(channel="ログを送信するチャンネル（省略すると現在のチャンネル）")
+@app_commands.default_permissions(administrator=True)
+async def welcome_log_command(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel = None,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "このコマンドはサーバー内で使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "この設定はサーバー管理者だけが使えるよ。",
+            ephemeral=True,
+        )
+        return
+
+    target = channel or interaction.channel
+    if not isinstance(target, discord.TextChannel):
+        await interaction.response.send_message(
+            "ログ送信先にはテキストチャンネルを指定してね。",
+            ephemeral=True,
+        )
+        return
+
+    bot_member = interaction.guild.me
+    if bot_member is None:
+        await interaction.response.send_message(
+            "Botのメンバー情報を取得できなかったよ。",
+            ephemeral=True,
+        )
+        return
+
+    permissions = target.permissions_for(bot_member)
+    if not permissions.view_channel or not permissions.send_messages or not permissions.embed_links:
+        await interaction.response.send_message(
+            "Botにこのチャンネルの「チャンネルを見る」「メッセージを送信」「埋め込みリンク」の権限が必要だよ。",
+            ephemeral=True,
+        )
+        return
+
+    welcome_log_configs[str(interaction.guild.id)] = target.id
+    save_json(WELCOME_LOG_FILE, welcome_log_configs)
+
+    embed = discord.Embed(
+        title="✅ 入退出ログを設定したよ！",
+        description=(
+            f"送信先：{target.mention}\n\n"
+            "🟩 **参加ログ：緑色の埋め込み**\n"
+            "🟥 **退出ログ：赤色の埋め込み**\n\n"
+            "これからメンバーが参加・退出すると、自動でここに記録するよ。"
+        ),
+        color=discord.Color.green(),
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+bot.tree.add_command(welcome_group)
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    channel_id = welcome_log_configs.get(str(member.guild.id))
+    if not channel_id:
+        return
+
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(channel_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            print(f"[WELCOME LOG] 参加ログ送信先を取得できません: {channel_id}")
+            return
+
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
+    joined_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
+    member_count = member.guild.member_count or "不明"
+
+    embed = discord.Embed(
+        title="📥 メンバー参加",
+        description=f"{member.mention} がサーバーに参加しました！",
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="ユーザー名", value=f"{member}（{member.name}）", inline=True)
+    embed.add_field(name="ユーザーID", value=f"`{member.id}`", inline=True)
+    embed.add_field(name="アカウント作成日時", value=created_at, inline=False)
+    embed.add_field(name="参加日時", value=joined_at, inline=False)
+    embed.add_field(name="現在のメンバー数", value=str(member_count), inline=True)
+    embed.set_footer(text=f"JOIN • {member.guild.name}")
+
+    try:
+        await channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"[WELCOME LOG JOIN ERROR] {error}")
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    channel_id = welcome_log_configs.get(str(member.guild.id))
+    if not channel_id:
+        return
+
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(channel_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            print(f"[WELCOME LOG] 退出ログ送信先を取得できません: {channel_id}")
+            return
+
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
+    left_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
+    member_count = member.guild.member_count or "不明"
+
+    embed = discord.Embed(
+        title="📤 メンバー退出",
+        description=f"**{discord.utils.escape_markdown(str(member))}** がサーバーを退出しました。",
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="ユーザー名", value=f"{member}（{member.name}）", inline=True)
+    embed.add_field(name="ユーザーID", value=f"`{member.id}`", inline=True)
+    embed.add_field(name="アカウント作成日時", value=created_at, inline=False)
+    embed.add_field(name="退出日時", value=left_at, inline=False)
+    embed.add_field(name="退出後のメンバー数", value=str(member_count), inline=True)
+    embed.set_footer(text=f"LEAVE • {member.guild.name}")
+
+    try:
+        await channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"[WELCOME LOG LEAVE ERROR] {error}")
 
 
 # ==================================================

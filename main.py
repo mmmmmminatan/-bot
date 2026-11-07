@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 import random
 import re
@@ -1667,10 +1668,6 @@ async def color_command(ctx, bet_text: str):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
-        view.cashout_message = await ctx.send(
-            "安全マスを1つ以上開くと、ここから精算できるよ。",
-            view=view.cashout_view,
-        )
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2449,9 +2446,22 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
+        view.cashout_message = await ctx.send(
+            "安全マスを1つ以上開くと、ここから精算できるよ。",
+            view=view.cashout_view,
+        )
     except Exception:
-        set_balance(ctx.author.id, get_balance(ctx.author.id) + bet)
+        view.finished = True
         active_mine_users.discard(ctx.author.id)
+        set_balance(ctx.author.id, get_balance(ctx.author.id) + bet)
+        if view.message:
+            for item in view.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+            try:
+                await view.message.edit(content="ゲームの開始に失敗したため賭け金を返金したよ。", embed=None, view=view)
+            except discord.HTTPException:
+                pass
         raise
 
 

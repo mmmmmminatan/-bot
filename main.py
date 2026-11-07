@@ -5333,28 +5333,8 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     msg = await ctx.reply(embed=embed, files=files if files else [], view=view, mention_author=False)
     view.message = msg
 
-import discord
-from discord.ext import commands
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-
-# スラッシュコマンド（app_commands）を利用するために bot を commands.Bot から継承するか、tree を使用します
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        # 起動時にスラッシュコマンドをDiscordに同期する
-        await self.tree.sync()
-        print("スラッシュコマンドを同期しました。")
-
-bot = MyBot()
-
 # ==========================================
-# 基本設定
+# 基本設定（必要に応じて調整）
 # ==========================================
 MEDIATOR_ROLE_NAME = "仲介"
 CATEGORY_NAME = "仲介取引"
@@ -5487,6 +5467,7 @@ class RequestSelectView(discord.ui.View):
 # ==========================================
 # 3. スラッシュコマンドの定義 (/request ch)
 # ==========================================
+# ※ 既存のbotインスタンスの変数名に合わせて @bot.tree.command を使用してください
 @bot.tree.command(name="request", description="リクエストパネルを設置するチャンネルを指定します")
 @discord.app_commands.describe(ch="パネルを設置するテキストチャンネル")
 @discord.app_commands.checks.has_permissions(administrator=True)
@@ -5501,7 +5482,7 @@ async def request_command(interaction: discord.Interaction, ch: discord.TextChan
     # 指定されたチャンネルにパネルを送信
     await ch.send(embed=embed, view=view)
     
-    # コマンドを実行した本人に対して成功を通知（ephemeral=True で他の人には見えない）
+    # コマンドを実行した本人に対して成功を通知
     await interaction.response.send_message(f"✅ {ch.mention} にリクエストパネルを設置しました！", ephemeral=True)
 
 
@@ -5512,16 +5493,6 @@ async def request_command_error(interaction: discord.Interaction, error):
         await interaction.response.send_message("❌ このコマンドを実行する権限がありません（管理者のみ）。", ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ エラーが発生しました: {error}", ephemeral=True)
-
-
-# ==========================================
-# 4. ボットの起動イベント
-# ==========================================
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-
-bot.run("YOUR_BOT_TOKEN")
 
 # ==================================================
 # 起動

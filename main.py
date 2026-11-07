@@ -5340,6 +5340,7 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
 # ==================================================
 
 EXCHANGE_MEDIATOR_ROLE_NAME = "仲介"
+EXCHANGE_CATEGORY_ID = 1556346079883296850
 EXCHANGE_REQUESTS_FILE = Path("exchange_requests.json")
 exchange_requests = load_json(EXCHANGE_REQUESTS_FILE, {})
 if not isinstance(exchange_requests, dict):
@@ -5454,24 +5455,63 @@ class ExchangeDetailsModal(discord.ui.Modal):
         save_exchange_requests()
 
         try:
-            message = await interaction.channel.send(
-                content="📨 **新しい交換リクエストが届いたよ！仲介ロールの人は内容を確認してね。**",
+            category = interaction.guild.get_channel(EXCHANGE_CATEGORY_ID)
+            if not isinstance(category, discord.CategoryChannel):
+                raise RuntimeError(f"交換用カテゴリが見つからないよ: {EXCHANGE_CATEGORY_ID}")
+
+            mediator_role = discord.utils.get(
+                interaction.guild.roles,
+                name=EXCHANGE_MEDIATOR_ROLE_NAME,
+            )
+            if mediator_role is None:
+                raise RuntimeError("「仲介」ロールが見つからないよ。")
+
+            overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                mediator_role: discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    manage_messages=True,
+                ),
+            }
+            bot_member = interaction.guild.me
+            if bot_member is not None:
+                overwrites[bot_member] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    manage_channels=True,
+                    manage_messages=True,
+                )
+
+            approval_channel = await interaction.guild.create_text_channel(
+                name=f"request-{request_id[-8:]}",
+                category=category,
+                overwrites=overwrites,
+                topic=f"交換リクエスト #{request_id} | 承認待ち",
+                reason=f"交換リクエスト #{request_id} の承認用チャンネル",
+            )
+            data["approval_channel_id"] = approval_channel.id
+            message = await approval_channel.send(
+                content="📨 **新しい交換リクエストが届いたよ！「仲介」ロールの人は内容を確認してね。**",
                 embed=make_exchange_embed(request_id, data),
                 view=ExchangeApprovalView(request_id),
             )
-            data["approval_channel_id"] = interaction.channel_id
             data["approval_message_id"] = message.id
             save_exchange_requests()
             await interaction.response.send_message(
-                f"リクエストを送信したよ！受付番号：**#{request_id}**\n"
-                f"交換相手：{partner.mention}\n仲介担当の承認を待ってね。",
+                f"リクエストを送信したよ！受付番号：**#{request_id}**\\n"
+                f"交換相手：{partner.mention}\\n"
+                "仲介担当が確認中だよ。承認されたら2人がこのチャンネルを見られるようになるよ。",
                 ephemeral=True,
             )
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException, RuntimeError) as error:
             data["status"] = "error"
             save_exchange_requests()
+            print(f"[EXCHANGE APPROVAL CHANNEL ERROR] {error}")
             await interaction.response.send_message(
-                "このチャンネルにメッセージを送る権限がないみたい。管理者に確認してね。",
+                "承認用チャンネルを作れなかったよ。カテゴリID・「仲介」ロール・Botのチャンネル管理権限を確認してね。",
                 ephemeral=True,
             )
 
@@ -5573,8 +5613,8 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
 
     requester_id = int(data["requester_id"])
     partner_id = int(data["partner_id"])
-    if partner_id == requester_id or partner_id == interaction.user.id:
-        await interaction.followup.send("交換相手の指定が正しくないため、チャンネルを作れないよ。", ephemeral=True)
+    if partner_id == requester_id:
+        await interaction.followup.send("交換相手の指定が正しくないため、処理できないよ。", ephemeral=True)
         return
 
     requester = interaction.guild.get_member(requester_id)
@@ -5592,65 +5632,58 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
 
     if requester is None or partner is None or partner.bot:
         await interaction.followup.send(
-            "申請者または交換相手がサーバー内にいないため、チャンネルを作れないよ。",
+            "申請者または交換相手がサーバー内にいないため、承認できないよ。",
             ephemeral=True,
         )
         return
 
-    everyone = interaction.guild.default_role
-    bot_member = interaction.guild.me
-    overwrites = {
-        everyone: discord.PermissionOverwrite(view_channel=False),
-        requester: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True,
-            attach_files=True, embed_links=True,
-        ),
-        partner: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True,
-            attach_files=True, embed_links=True,
-        ),
-        interaction.user: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True,
-            manage_messages=True,
-        ),
-    }
-    if bot_member is not None:
-        overwrites[bot_member] = discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True,
-            manage_channels=True, manage_messages=True,
-        )
+    approval_channel = interaction.guild.get_channel(int(data.get("approval_channel_id", 0)))
+    if not isinstance(approval_channel, discord.TextChannel):
+        await interaction.followup.send("承認用チャンネルが見つからないよ。", ephemeral=True)
+        return
 
     try:
-        channel = await interaction.guild.create_text_channel(
-            name=f"exchange-{str(request_id)[-8:]}",
-            overwrites=overwrites,
-            topic=f"交換リクエスト #{request_id} | 申請者:{requester_id} | 相手:{partner_id} | 仲介:{interaction.user.id}",
-            reason=f"交換リクエスト #{request_id} の専用チャンネル",
+        await approval_channel.set_permissions(
+            requester,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            embed_links=True,
         )
+        await approval_channel.set_permissions(
+            partner,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            embed_links=True,
+        )
+
         data["status"] = "approved"
         data["mediator_id"] = interaction.user.id
-        data["channel_id"] = channel.id
+        data["channel_id"] = approval_channel.id
         save_exchange_requests()
-        await channel.send(
-            f"{requester.mention} {partner.mention} {interaction.user.mention}\n"
-            "**交換専用チャンネルを作成したよ！**\n"
-            "ここは申請者・交換相手・承認した仲介者だけが閲覧できるチャンネルだよ。\n\n"
-            f"**種類：** {data.get('type', '未設定')}\n"
-            f"**内容：** {data.get('details', 'なし')}"
+
+        await approval_channel.send(
+            f"🎉 **この交換リクエストは承認されたよ！**\\n"
+            f"**受け入れた仲介者：** {interaction.user.mention}\\n"
+            f"**交換する2人：** {requester.mention}・{partner.mention}\\n\\n"
+            "これからは申請者・交換相手・仲介担当がこのチャンネルを使えるよ。"
         )
         await update_exchange_approval_message(interaction.guild, request_id)
         await interaction.followup.send(
-            f"承認完了！専用チャンネル {channel.mention} を作成したよ。",
+            f"承認完了！{requester.mention} と {partner.mention} が {approval_channel.mention} を見られるようになったよ。",
             ephemeral=True,
         )
     except discord.Forbidden:
         await interaction.followup.send(
-            "チャンネルを作れなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
+            "権限を変更できなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
             ephemeral=True,
         )
     except discord.HTTPException as error:
-        print(f"[EXCHANGE CHANNEL ERROR] {error}")
-        await interaction.followup.send("チャンネル作成中にエラーが発生したよ。", ephemeral=True)
+        print(f"[EXCHANGE APPROVAL ERROR] {error}")
+        await interaction.followup.send("承認処理中にエラーが発生したよ。", ephemeral=True)
 
 
 class ExchangeApprovalView(discord.ui.View):
@@ -5687,6 +5720,12 @@ class ExchangeApprovalView(discord.ui.View):
             embed=make_exchange_embed(self.request_id, data),
             view=None,
         )
+        approval_channel = interaction.guild.get_channel(int(data.get("approval_channel_id", 0))) if interaction.guild else None
+        if isinstance(approval_channel, discord.TextChannel):
+            await approval_channel.send(
+                f"❌ **このリクエストは却下されたよ。**\\n"
+                f"**却下した仲介者：** {interaction.user.mention}"
+            )
 
 
 async def restore_exchange_views():

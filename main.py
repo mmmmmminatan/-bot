@@ -1668,6 +1668,9 @@ async def color_command(ctx, bet_text: str):
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message
+        if size == 5:
+            view.cashout_view = MineCashoutView(view)
+            view.cashout_message = await ctx.send(view=view.cashout_view)
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2217,7 +2220,7 @@ class MineGameView(discord.ui.View):
         self.inline_cashout_button = None
         self.cell_buttons = {}
         self.cell_select = None
-        button_cell_limit = 15 if size == 5 else self.total_cells
+        button_cell_limit = self.total_cells
 
         for index in range(button_cell_limit):
             button = discord.ui.Button(
@@ -2261,17 +2264,18 @@ class MineGameView(discord.ui.View):
             self.cell_select.callback = select_cell_callback
             self.add_item(self.cell_select)
 
-        cashout_button = discord.ui.Button(
+        if size != 5:
+            cashout_button = discord.ui.Button(
                 label="Cash Out",
                 emoji="💵",
                 style=discord.ButtonStyle.success,
                 disabled=True,
-                row=4 if size == 5 else size,
+                row=size,
                 custom_id=f"minecashout_inline:{self.player_id}",
             )
-        cashout_button.callback = self.inline_cashout_callback
-        self.add_item(cashout_button)
-        self.inline_cashout_button = cashout_button
+            cashout_button.callback = self.inline_cashout_callback
+            self.add_item(cashout_button)
+            self.inline_cashout_button = cashout_button
 
     async def inline_cashout_callback(self, interaction):
         await self.cashout(interaction)

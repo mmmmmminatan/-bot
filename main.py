@@ -1671,9 +1671,6 @@ async def color_command(ctx, bet_text: str):
         if size == 5:
             view.cashout_view = MineCashoutView(view)
             view.cashout_message = await ctx.send(view=view.cashout_view)
-        if size == 5:
-            view.cashout_view = MineCashoutView(view)
-            view.cashout_message = await ctx.send(view=view.cashout_view)
     except Exception:
         current_balance = get_balance(ctx.author.id)
         set_balance(ctx.author.id, current_balance + bet)
@@ -2503,8 +2500,8 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     if ctx.author.id in active_mine_users:
         await ctx.reply("すでにマインズをプレイ中だよ！先に今のゲームを終わらせてね。", mention_author=False)
         return
-    if not 3 <= size <= 5:
-        await ctx.reply("マスのサイズは3〜5で指定してね（例：.mine 1000 3 6）。", mention_author=False)
+    if not 3 <= size <= 4:
+        await ctx.reply("マスのサイズは3か4で指定してね（例：.mine 1000 3 3）。5×5は現在利用できないよ。", mention_author=False)
         return
 
     total_cells = size * size

@@ -711,10 +711,6 @@ async def get_log_channel(guild):
             print("[LOG ERROR] 指定先がテキストチャンネルではありません。")
             return None
 
-        if channel.guild.id != guild.id:
-            print("[LOG ERROR] 固定ログチャンネルが実行サーバーと異なります。")
-            return None
-
         me = channel.guild.me
         if me is None:
             print("[LOG ERROR] Botのサーバーメンバー情報を取得できません。")
@@ -806,12 +802,18 @@ async def send_slot_log(guild, embed):
     channel = await get_log_channel(guild)
 
     if channel is None:
-        print("[SLOT LOG] 固定ログチャンネルを取得できず、送信できませんでした。")
+        print("[SLOT LOG] メインサーバーの固定ログチャンネルを取得できず、送信できませんでした。")
         return
 
     try:
+        if guild is not None:
+            embed.add_field(
+                name="プレイしたサーバー",
+                value=f"{guild.name} (ID: {guild.id})",
+                inline=False,
+            )
         await channel.send(embed=embed)
-        print(f"[SLOT LOG] 送信成功: channel={channel.id}")
+        print(f"[SLOT LOG] メインサーバーへ送信成功: channel={channel.id}")
     except Exception:
         print("[SLOT LOG SEND ERROR]")
         traceback.print_exc()
@@ -820,12 +822,18 @@ async def send_coin_log(guild, embed):
     channel = await get_log_channel(guild)
 
     if channel is None:
-        print("[COIN LOG] 固定ログチャンネルを取得できず、送信できませんでした。")
+        print("[COIN LOG] メインサーバーの固定ログチャンネルを取得できず、送信できませんでした。")
         return
 
     try:
+        if guild is not None:
+            embed.add_field(
+                name="プレイしたサーバー",
+                value=f"{guild.name} (ID: {guild.id})",
+                inline=False,
+            )
         await channel.send(embed=embed)
-        print(f"[COIN LOG] 送信成功: channel={channel.id}")
+        print(f"[COIN LOG] メインサーバーへ送信成功: channel={channel.id}")
     except Exception:
         print("[COIN LOG SEND ERROR]")
         traceback.print_exc()
@@ -2169,6 +2177,13 @@ async def send_mine_log(guild, embed):
     # MINESのログは、ゲームを遊んだサーバーに関係なく
     # LOG_CHANNEL_IDで指定したメインサーバーのチャンネルへ送信する。
     try:
+        if guild is not None:
+            embed.add_field(
+                name="プレイしたサーバー",
+                value=f"{guild.name} (ID: {guild.id})",
+                inline=False,
+            )
+
         channel = bot.get_channel(LOG_CHANNEL_ID)
         if channel is None:
             channel = await bot.fetch_channel(LOG_CHANNEL_ID)
@@ -4467,6 +4482,13 @@ class BlackjackView(discord.ui.View):
                 value=bj_money(balance),
                 inline=True
             )
+
+            if self.ctx.guild is not None:
+                embed.add_field(
+                    name="プレイしたサーバー",
+                    value=f"{self.ctx.guild.name} (ID: {self.ctx.guild.id})",
+                    inline=False,
+                )
 
             await channel.send(embed=embed)
 

@@ -5405,9 +5405,10 @@ async def update_exchange_approval_message(guild, request_id):
         print(f"[EXCHANGE] 承認メッセージ更新失敗: {request_id}")
 
 class ExchangeDetailsModal(discord.ui.Modal):
-    def __init__(self, exchange_type):
+    def __init__(self, exchange_type, partner_id):
         super().__init__(title="交換リクエスト内容を入力")
         self.exchange_type = exchange_type
+        self.partner_id = int(partner_id)
         self.details = discord.ui.TextInput(
             label="交換したい内容・条件",
             placeholder="例：アイテムAとアイテムBを交換したい",
@@ -5421,11 +5422,28 @@ class ExchangeDetailsModal(discord.ui.Modal):
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
+
+        partner = interaction.guild.get_member(self.partner_id)
+        if partner is None:
+            try:
+                partner = await interaction.guild.fetch_member(self.partner_id)
+            except (discord.NotFound, discord.HTTPException):
+                partner = None
+
+        if partner is None or partner.bot or partner.id == interaction.user.id:
+            await interaction.response.send_message(
+                "選択した交換相手が見つからないか、自分自身が選ばれているよ。もう一度やり直してね。",
+                ephemeral=True,
+            )
+            return
+
         request_id = str(int(datetime.now(timezone.utc).timestamp() * 1000))
         while request_id in exchange_requests:
             request_id = str(int(request_id) + 1)
+
         data = {
             "requester_id": interaction.user.id,
+            "partner_id": partner.id,
             "type": self.exchange_type,
             "details": str(self.details.value).strip(),
             "status": "pending",
@@ -5434,6 +5452,7 @@ class ExchangeDetailsModal(discord.ui.Modal):
         }
         exchange_requests[request_id] = data
         save_exchange_requests()
+
         try:
             message = await interaction.channel.send(
                 content="📨 **新しい交換リクエストが届いたよ！仲介ロールの人は内容を確認してね。**",
@@ -5444,7 +5463,8 @@ class ExchangeDetailsModal(discord.ui.Modal):
             data["approval_message_id"] = message.id
             save_exchange_requests()
             await interaction.response.send_message(
-                f"リクエストを送信したよ！受付番号：**#{request_id}**\n仲介担当の承認を待ってね。",
+                f"リクエストを送信したよ！受付番号：**#{request_id}**\n"
+                f"交換相手：{partner.mention}\n仲介担当の承認を待ってね。",
                 ephemeral=True,
             )
         except discord.Forbidden:
@@ -5455,6 +5475,7 @@ class ExchangeDetailsModal(discord.ui.Modal):
                 ephemeral=True,
             )
 
+
 class ExchangeTypeSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -5462,7 +5483,7 @@ class ExchangeTypeSelect(discord.ui.Select):
             for label, description in EXCHANGE_TYPES
         ]
         super().__init__(
-            placeholder="リクエストの種類を選んでね",
+            placeholder="どんなリクエストか選んでね",
             min_values=1,
             max_values=1,
             options=options,
@@ -5470,12 +5491,55 @@ class ExchangeTypeSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(ExchangeDetailsModal(self.values[0]))
+        self.view.exchange_type = self.values[0]
+        await interaction.response.defer()
+
+
+class ExchangePartnerSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="交換相手を選んでね",
+            min_values=1,
+            max_values=1,
+            custom_id="exchange:partner_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        if selected.bot:
+            await interaction.response.send_message("Botは交換相手に指定できないよ。", ephemeral=True)
+            return
+        if selected.id == interaction.user.id:
+            await interaction.response.send_message("自分自身は交換相手に指定できないよ。", ephemeral=True)
+            return
+        self.view.partner_id = selected.id
+        await interaction.response.defer()
+
 
 class ExchangeTypeView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
+        self.exchange_type = None
+        self.partner_id = None
         self.add_item(ExchangeTypeSelect())
+        self.add_item(ExchangePartnerSelect())
+
+    @discord.ui.button(
+        label="次へ：内容を入力",
+        style=discord.ButtonStyle.success,
+        custom_id="exchange:continue_request",
+    )
+    async def continue_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.exchange_type is None:
+            await interaction.response.send_message("リクエストの種類を選んでね。", ephemeral=True)
+            return
+        if self.partner_id is None:
+            await interaction.response.send_message("交換相手を選んでね。", ephemeral=True)
+            return
+        await interaction.response.send_modal(
+            ExchangeDetailsModal(self.exchange_type, self.partner_id)
+        )
+
 
 class ExchangePanelView(discord.ui.View):
     def __init__(self):
@@ -5492,119 +5556,102 @@ class ExchangePanelView(discord.ui.View):
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
         await interaction.response.send_message(
-            "リクエストの種類を選択してね。",
+            "① リクエストの種類を選択\n② 交換相手をメンバー一覧から選択\n③「次へ」を押して内容を入力してね。",
             view=ExchangeTypeView(),
             ephemeral=True,
         )
 
-class ExchangePartnerModal(discord.ui.Modal):
-    def __init__(self, request_id):
-        super().__init__(title="交換相手を指定")
-        self.request_id = str(request_id)
-        self.partner_id_input = discord.ui.TextInput(
-            label="交換相手のDiscordユーザーID",
-            placeholder="例：123456789012345678",
-            max_length=25,
-            required=True,
-        )
-        self.add_item(self.partner_id_input)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        data = get_exchange_request(self.request_id)
-        if not data or data.get("status") != "pending":
-            await interaction.response.send_message("このリクエストは既に処理済みだよ。", ephemeral=True)
-            return
-        if interaction.guild is None or not is_exchange_mediator(interaction.user):
-            await interaction.response.send_message("仲介ロールを持つ人だけ操作できるよ。", ephemeral=True)
-            return
-        raw_id = str(self.partner_id_input.value).strip()
-        if not raw_id.isdigit():
-            await interaction.response.send_message("ユーザーIDは数字だけで入力してね。", ephemeral=True)
-            return
-        partner_id = int(raw_id)
-        requester_id = int(data["requester_id"])
-        if partner_id == requester_id or partner_id == interaction.user.id:
-            await interaction.response.send_message("申請者や自分自身は交換相手に指定できないよ。", ephemeral=True)
-            return
-        partner = interaction.guild.get_member(partner_id)
-        if partner is None:
-            try:
-                partner = await interaction.guild.fetch_member(partner_id)
-            except (discord.NotFound, discord.HTTPException):
-                partner = None
-        if partner is None or partner.bot:
-            await interaction.response.send_message("そのユーザーはサーバー内で見つからなかったよ。Botは指定できないよ。", ephemeral=True)
-            return
-        requester = interaction.guild.get_member(requester_id)
-        if requester is None:
-            try:
-                requester = await interaction.guild.fetch_member(requester_id)
-            except (discord.NotFound, discord.HTTPException):
-                requester = None
-        if requester is None:
-            await interaction.response.send_message("申請者がサーバー内にいないため、チャンネルを作れないよ。", ephemeral=True)
-            return
+async def create_exchange_channel(interaction: discord.Interaction, request_id: str):
+    data = get_exchange_request(request_id)
+    if not data or data.get("status") != "pending":
+        await interaction.followup.send("このリクエストは既に処理済みだよ。", ephemeral=True)
+        return
+    if interaction.guild is None or not is_exchange_mediator(interaction.user):
+        await interaction.followup.send("「仲介」ロールを持つ人だけ承認できるよ。", ephemeral=True)
+        return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        everyone = interaction.guild.default_role
-        bot_member = interaction.guild.me
-        overwrites = {
-            everyone: discord.PermissionOverwrite(view_channel=False),
-            requester: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True,
-                attach_files=True, embed_links=True,
-            ),
-            partner: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True,
-                attach_files=True, embed_links=True,
-            ),
-            interaction.user: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True,
-                manage_messages=True,
-            ),
-        }
-        if bot_member is not None:
-            overwrites[bot_member] = discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True,
-                manage_channels=True, manage_messages=True,
-            )
-        safe_name = f"exchange-{self.request_id[-8:]}"
+    requester_id = int(data["requester_id"])
+    partner_id = int(data["partner_id"])
+    if partner_id == requester_id or partner_id == interaction.user.id:
+        await interaction.followup.send("交換相手の指定が正しくないため、チャンネルを作れないよ。", ephemeral=True)
+        return
+
+    requester = interaction.guild.get_member(requester_id)
+    partner = interaction.guild.get_member(partner_id)
+    if requester is None:
         try:
-            channel = await interaction.guild.create_text_channel(
-                name=safe_name,
-                overwrites=overwrites,
-                topic=f"交換リクエスト #{self.request_id} | 申請者:{requester_id} | 相手:{partner_id} | 仲介:{interaction.user.id}",
-                reason=f"交換リクエスト #{self.request_id} の専用チャンネル",
-            )
-            data["status"] = "approved"
-            data["mediator_id"] = interaction.user.id
-            data["partner_id"] = partner_id
-            data["channel_id"] = channel.id
-            save_exchange_requests()
-            await channel.send(
-                f"{requester.mention} {partner.mention} {interaction.user.mention}\n"
-                f"**交換専用チャンネルを作成したよ！**\n"
-                f"ここは申請者・交換相手・承認した仲介者だけが閲覧できるチャンネルだよ。\n\n"
-                f"**種類：** {data.get('type', '未設定')}\n"
-                f"**内容：** {data.get('details', 'なし')}"
-            )
-            await update_exchange_approval_message(interaction.guild, self.request_id)
-            await interaction.followup.send(
-                f"承認完了！専用チャンネル {channel.mention} を作成したよ。",
-                ephemeral=True,
-            )
-        except discord.Forbidden:
-            data["status"] = "pending"
-            save_exchange_requests()
-            await interaction.followup.send(
-                "チャンネルを作れなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
-                ephemeral=True,
-            )
-        except discord.HTTPException as error:
-            data["status"] = "pending"
-            save_exchange_requests()
-            print(f"[EXCHANGE CHANNEL ERROR] {error}")
-            await interaction.followup.send("チャンネル作成中にエラーが発生したよ。", ephemeral=True)
+            requester = await interaction.guild.fetch_member(requester_id)
+        except (discord.NotFound, discord.HTTPException):
+            requester = None
+    if partner is None:
+        try:
+            partner = await interaction.guild.fetch_member(partner_id)
+        except (discord.NotFound, discord.HTTPException):
+            partner = None
+
+    if requester is None or partner is None or partner.bot:
+        await interaction.followup.send(
+            "申請者または交換相手がサーバー内にいないため、チャンネルを作れないよ。",
+            ephemeral=True,
+        )
+        return
+
+    everyone = interaction.guild.default_role
+    bot_member = interaction.guild.me
+    overwrites = {
+        everyone: discord.PermissionOverwrite(view_channel=False),
+        requester: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True,
+            attach_files=True, embed_links=True,
+        ),
+        partner: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True,
+            attach_files=True, embed_links=True,
+        ),
+        interaction.user: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True,
+            manage_messages=True,
+        ),
+    }
+    if bot_member is not None:
+        overwrites[bot_member] = discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True,
+            manage_channels=True, manage_messages=True,
+        )
+
+    try:
+        channel = await interaction.guild.create_text_channel(
+            name=f"exchange-{str(request_id)[-8:]}",
+            overwrites=overwrites,
+            topic=f"交換リクエスト #{request_id} | 申請者:{requester_id} | 相手:{partner_id} | 仲介:{interaction.user.id}",
+            reason=f"交換リクエスト #{request_id} の専用チャンネル",
+        )
+        data["status"] = "approved"
+        data["mediator_id"] = interaction.user.id
+        data["channel_id"] = channel.id
+        save_exchange_requests()
+        await channel.send(
+            f"{requester.mention} {partner.mention} {interaction.user.mention}\n"
+            "**交換専用チャンネルを作成したよ！**\n"
+            "ここは申請者・交換相手・承認した仲介者だけが閲覧できるチャンネルだよ。\n\n"
+            f"**種類：** {data.get('type', '未設定')}\n"
+            f"**内容：** {data.get('details', 'なし')}"
+        )
+        await update_exchange_approval_message(interaction.guild, request_id)
+        await interaction.followup.send(
+            f"承認完了！専用チャンネル {channel.mention} を作成したよ。",
+            ephemeral=True,
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "チャンネルを作れなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
+            ephemeral=True,
+        )
+    except discord.HTTPException as error:
+        print(f"[EXCHANGE CHANNEL ERROR] {error}")
+        await interaction.followup.send("チャンネル作成中にエラーが発生したよ。", ephemeral=True)
+
 
 class ExchangeApprovalView(discord.ui.View):
     def __init__(self, request_id):
@@ -5624,9 +5671,10 @@ class ExchangeApprovalView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="承認して相手を指定", style=discord.ButtonStyle.success, custom_id="exchange:approve")
+    @discord.ui.button(label="承認", style=discord.ButtonStyle.success, custom_id="exchange:approve")
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ExchangePartnerModal(self.request_id))
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await create_exchange_channel(interaction, self.request_id)
 
     @discord.ui.button(label="却下", style=discord.ButtonStyle.danger, custom_id="exchange:reject")
     async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -5639,6 +5687,7 @@ class ExchangeApprovalView(discord.ui.View):
             embed=make_exchange_embed(self.request_id, data),
             view=None,
         )
+
 
 async def restore_exchange_views():
     bot.add_view(ExchangePanelView())

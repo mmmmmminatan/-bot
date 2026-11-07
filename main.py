@@ -5660,6 +5660,26 @@ async def create_exchange_channel(interaction: discord.Interaction, request_id: 
             embed_links=True,
         )
 
+        # 承認後は「仲介」ロール全員ではなく、承認した仲介者1人だけ残す
+        mediator_role = discord.utils.get(
+            interaction.guild.roles,
+            name=EXCHANGE_MEDIATOR_ROLE_NAME,
+        )
+        if mediator_role is not None:
+            await approval_channel.set_permissions(
+                mediator_role,
+                view_channel=False,
+                send_messages=False,
+                read_message_history=False,
+            )
+        await approval_channel.set_permissions(
+            interaction.user,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_messages=True,
+        )
+
         data["status"] = "approved"
         data["mediator_id"] = interaction.user.id
         data["channel_id"] = approval_channel.id

@@ -5610,8 +5610,6 @@ class ExchangeApprovalView(discord.ui.View):
     def __init__(self, request_id):
         super().__init__(timeout=None)
         self.request_id = str(request_id)
-        self.approve_button.custom_id = f"exchange:approve:{self.request_id}"
-        self.reject_button.custom_id = f"exchange:reject:{self.request_id}"
 
     async def interaction_check(self, interaction: discord.Interaction):
         if not is_exchange_mediator(interaction.user):
@@ -5626,11 +5624,11 @@ class ExchangeApprovalView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="承認して相手を指定", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="承認して相手を指定", style=discord.ButtonStyle.success, custom_id="exchange:approve")
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ExchangePartnerModal(self.request_id))
 
-    @discord.ui.button(label="却下", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="却下", style=discord.ButtonStyle.danger, custom_id="exchange:reject")
     async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = get_exchange_request(self.request_id)
         data["status"] = "rejected"

@@ -5334,22 +5334,6 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     view.message = msg
 
 
-import asyncio
-import json
-import os
-import random
-import re
-import traceback
-from pathlib import Path
-from threading import Thread
-from datetime import datetime, timezone, timedelta
-
-import discord
-from discord.ext import commands
-from discord import app_commands
-from flask import Flask
-
-
 # ==========================================
 # 1. ボットの基本設定
 # ==========================================

@@ -5675,6 +5675,51 @@ async def exchange_panel_command(ctx):
     await ctx.send(embed=embed, view=ExchangePanelView())
 
 
+# /request ch で交換リクエストパネルを設置
+request_group = app_commands.Group(
+    name="request",
+    description="リクエスト関連の操作",
+)
+
+@request_group.command(
+    name="ch",
+    description="このチャンネルに交換リクエストパネルを設置する",
+)
+@app_commands.default_permissions(administrator=True)
+async def request_channel_command(interaction: discord.Interaction):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "サーバーのテキストチャンネルで使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "このコマンドはサーバー管理者だけが使えるよ。",
+            ephemeral=True,
+        )
+        return
+
+    embed = discord.Embed(
+        title="🤝 交換リクエスト",
+        description=(
+            "交換・依頼をしたい人は下のボタンを押してね。\n"
+            "種類を選び、内容を入力すると仲介担当へ申請が送られるよ。\n\n"
+            "仲介担当は「仲介」ロールを持つメンバーだよ。"
+        ),
+        color=discord.Color.blurple(),
+    )
+    await interaction.response.send_message(
+        "このチャンネルに交換リクエストパネルを設置したよ！",
+        ephemeral=True,
+    )
+    await interaction.channel.send(embed=embed, view=ExchangePanelView())
+
+
+bot.tree.add_command(request_group)
+
+
 # ==================================================
 # 起動
 # ==================================================

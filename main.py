@@ -5334,6 +5334,349 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     view.message = msg
 
 
+
+# ==================================================
+# 交換リクエスト・仲介システム
+# ==================================================
+
+EXCHANGE_MEDIATOR_ROLE_NAME = "仲介"
+EXCHANGE_REQUESTS_FILE = Path("exchange_requests.json")
+exchange_requests = load_json(EXCHANGE_REQUESTS_FILE, {})
+if not isinstance(exchange_requests, dict):
+    exchange_requests = {}
+
+EXCHANGE_TYPES = [
+    ("ゲーム内アイテム交換", "ゲーム内アイテムの交換"),
+    ("キャラクター交換", "キャラクター・スキンなどの交換"),
+    ("コイン交換", "Bot内コインの交換"),
+    ("その他", "上記以外の交換・依頼"),
+]
+
+def save_exchange_requests():
+    save_json(EXCHANGE_REQUESTS_FILE, exchange_requests)
+
+def is_exchange_mediator(member):
+    return (
+        isinstance(member, discord.Member)
+        and any(role.name == EXCHANGE_MEDIATOR_ROLE_NAME for role in member.roles)
+    )
+
+def get_exchange_request(request_id):
+    return exchange_requests.get(str(request_id))
+
+def make_exchange_embed(request_id, data):
+    status = data.get("status", "pending")
+    status_text = {
+        "pending": "🕒 承認待ち",
+        "approved": "✅ 承認済み",
+        "rejected": "❌ 却下",
+        "error": "⚠️ チャンネル作成エラー",
+    }.get(status, status)
+    embed = discord.Embed(
+        title=f"交換リクエスト #{request_id}",
+        color=discord.Color.orange() if status == "pending" else (
+            discord.Color.green() if status == "approved" else discord.Color.red()
+        ),
+    )
+    embed.add_field(name="申請者", value=f"<@{data['requester_id']}>", inline=True)
+    embed.add_field(name="種類", value=data.get("type", "未設定"), inline=True)
+    embed.add_field(name="状態", value=status_text, inline=True)
+    embed.add_field(name="内容", value=data.get("details", "なし")[:1000], inline=False)
+    if data.get("mediator_id"):
+        embed.add_field(name="担当仲介者", value=f"<@{data['mediator_id']}>", inline=True)
+    if data.get("partner_id"):
+        embed.add_field(name="交換相手", value=f"<@{data['partner_id']}>", inline=True)
+    if data.get("channel_id"):
+        embed.add_field(name="専用チャンネル", value=f"<#{data['channel_id']}>", inline=False)
+    return embed
+
+async def update_exchange_approval_message(guild, request_id):
+    data = get_exchange_request(request_id)
+    if not data:
+        return
+    channel = guild.get_channel(int(data.get("approval_channel_id", 0)))
+    if not isinstance(channel, discord.TextChannel):
+        return
+    try:
+        message = await channel.fetch_message(int(data.get("approval_message_id", 0)))
+        view = ExchangeApprovalView(request_id) if data.get("status") == "pending" else None
+        await message.edit(embed=make_exchange_embed(request_id, data), view=view)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        print(f"[EXCHANGE] 承認メッセージ更新失敗: {request_id}")
+
+class ExchangeDetailsModal(discord.ui.Modal):
+    def __init__(self, exchange_type):
+        super().__init__(title="交換リクエスト内容を入力")
+        self.exchange_type = exchange_type
+        self.details = discord.ui.TextInput(
+            label="交換したい内容・条件",
+            placeholder="例：アイテムAとアイテムBを交換したい",
+            style=discord.TextStyle.paragraph,
+            max_length=1000,
+            required=True,
+        )
+        self.add_item(self.details)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        request_id = str(int(datetime.now(timezone.utc).timestamp() * 1000))
+        while request_id in exchange_requests:
+            request_id = str(int(request_id) + 1)
+        data = {
+            "requester_id": interaction.user.id,
+            "type": self.exchange_type,
+            "details": str(self.details.value).strip(),
+            "status": "pending",
+            "guild_id": interaction.guild.id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        exchange_requests[request_id] = data
+        save_exchange_requests()
+        try:
+            message = await interaction.channel.send(
+                content="📨 **新しい交換リクエストが届いたよ！仲介ロールの人は内容を確認してね。**",
+                embed=make_exchange_embed(request_id, data),
+                view=ExchangeApprovalView(request_id),
+            )
+            data["approval_channel_id"] = interaction.channel_id
+            data["approval_message_id"] = message.id
+            save_exchange_requests()
+            await interaction.response.send_message(
+                f"リクエストを送信したよ！受付番号：**#{request_id}**\n仲介担当の承認を待ってね。",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            data["status"] = "error"
+            save_exchange_requests()
+            await interaction.response.send_message(
+                "このチャンネルにメッセージを送る権限がないみたい。管理者に確認してね。",
+                ephemeral=True,
+            )
+
+class ExchangeTypeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=label, description=description, value=label)
+            for label, description in EXCHANGE_TYPES
+        ]
+        super().__init__(
+            placeholder="リクエストの種類を選んでね",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="exchange:type_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(ExchangeDetailsModal(self.values[0]))
+
+class ExchangeTypeView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(ExchangeTypeSelect())
+
+class ExchangePanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="交換をリクエストする",
+        style=discord.ButtonStyle.primary,
+        emoji="🤝",
+        custom_id="exchange:open_request",
+    )
+    async def open_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "リクエストの種類を選択してね。",
+            view=ExchangeTypeView(),
+            ephemeral=True,
+        )
+
+class ExchangePartnerModal(discord.ui.Modal):
+    def __init__(self, request_id):
+        super().__init__(title="交換相手を指定")
+        self.request_id = str(request_id)
+        self.partner_id_input = discord.ui.TextInput(
+            label="交換相手のDiscordユーザーID",
+            placeholder="例：123456789012345678",
+            max_length=25,
+            required=True,
+        )
+        self.add_item(self.partner_id_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = get_exchange_request(self.request_id)
+        if not data or data.get("status") != "pending":
+            await interaction.response.send_message("このリクエストは既に処理済みだよ。", ephemeral=True)
+            return
+        if interaction.guild is None or not is_exchange_mediator(interaction.user):
+            await interaction.response.send_message("仲介ロールを持つ人だけ操作できるよ。", ephemeral=True)
+            return
+        raw_id = str(self.partner_id_input.value).strip()
+        if not raw_id.isdigit():
+            await interaction.response.send_message("ユーザーIDは数字だけで入力してね。", ephemeral=True)
+            return
+        partner_id = int(raw_id)
+        requester_id = int(data["requester_id"])
+        if partner_id == requester_id or partner_id == interaction.user.id:
+            await interaction.response.send_message("申請者や自分自身は交換相手に指定できないよ。", ephemeral=True)
+            return
+        partner = interaction.guild.get_member(partner_id)
+        if partner is None:
+            try:
+                partner = await interaction.guild.fetch_member(partner_id)
+            except (discord.NotFound, discord.HTTPException):
+                partner = None
+        if partner is None or partner.bot:
+            await interaction.response.send_message("そのユーザーはサーバー内で見つからなかったよ。Botは指定できないよ。", ephemeral=True)
+            return
+        requester = interaction.guild.get_member(requester_id)
+        if requester is None:
+            try:
+                requester = await interaction.guild.fetch_member(requester_id)
+            except (discord.NotFound, discord.HTTPException):
+                requester = None
+        if requester is None:
+            await interaction.response.send_message("申請者がサーバー内にいないため、チャンネルを作れないよ。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        everyone = interaction.guild.default_role
+        bot_member = interaction.guild.me
+        overwrites = {
+            everyone: discord.PermissionOverwrite(view_channel=False),
+            requester: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True,
+            ),
+            partner: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True,
+            ),
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                manage_messages=True,
+            ),
+        }
+        if bot_member is not None:
+            overwrites[bot_member] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                manage_channels=True, manage_messages=True,
+            )
+        safe_name = f"exchange-{self.request_id[-8:]}"
+        try:
+            channel = await interaction.guild.create_text_channel(
+                name=safe_name,
+                overwrites=overwrites,
+                topic=f"交換リクエスト #{self.request_id} | 申請者:{requester_id} | 相手:{partner_id} | 仲介:{interaction.user.id}",
+                reason=f"交換リクエスト #{self.request_id} の専用チャンネル",
+            )
+            data["status"] = "approved"
+            data["mediator_id"] = interaction.user.id
+            data["partner_id"] = partner_id
+            data["channel_id"] = channel.id
+            save_exchange_requests()
+            await channel.send(
+                f"{requester.mention} {partner.mention} {interaction.user.mention}\n"
+                f"**交換専用チャンネルを作成したよ！**\n"
+                f"ここは申請者・交換相手・承認した仲介者だけが閲覧できるチャンネルだよ。\n\n"
+                f"**種類：** {data.get('type', '未設定')}\n"
+                f"**内容：** {data.get('details', 'なし')}"
+            )
+            await update_exchange_approval_message(interaction.guild, self.request_id)
+            await interaction.followup.send(
+                f"承認完了！専用チャンネル {channel.mention} を作成したよ。",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            data["status"] = "pending"
+            save_exchange_requests()
+            await interaction.followup.send(
+                "チャンネルを作れなかったよ。Botに「チャンネルの管理」権限があるか確認してね。",
+                ephemeral=True,
+            )
+        except discord.HTTPException as error:
+            data["status"] = "pending"
+            save_exchange_requests()
+            print(f"[EXCHANGE CHANNEL ERROR] {error}")
+            await interaction.followup.send("チャンネル作成中にエラーが発生したよ。", ephemeral=True)
+
+class ExchangeApprovalView(discord.ui.View):
+    def __init__(self, request_id):
+        super().__init__(timeout=None)
+        self.request_id = str(request_id)
+        self.approve_button.custom_id = f"exchange:approve:{self.request_id}"
+        self.reject_button.custom_id = f"exchange:reject:{self.request_id}"
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if not is_exchange_mediator(interaction.user):
+            await interaction.response.send_message(
+                "この操作は「仲介」ロールを持つ人だけ使えるよ。",
+                ephemeral=True,
+            )
+            return False
+        data = get_exchange_request(self.request_id)
+        if not data or data.get("status") != "pending":
+            await interaction.response.send_message("このリクエストは既に処理済みだよ。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="承認して相手を指定", style=discord.ButtonStyle.success)
+    async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ExchangePartnerModal(self.request_id))
+
+    @discord.ui.button(label="却下", style=discord.ButtonStyle.danger)
+    async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = get_exchange_request(self.request_id)
+        data["status"] = "rejected"
+        data["mediator_id"] = interaction.user.id
+        save_exchange_requests()
+        await interaction.response.edit_message(
+            content="❌ この交換リクエストは却下されたよ。",
+            embed=make_exchange_embed(self.request_id, data),
+            view=None,
+        )
+
+async def restore_exchange_views():
+    bot.add_view(ExchangePanelView())
+    for request_id, data in exchange_requests.items():
+        if data.get("status") == "pending" and data.get("approval_message_id"):
+            try:
+                bot.add_view(
+                    ExchangeApprovalView(request_id),
+                    message_id=int(data["approval_message_id"]),
+                )
+            except Exception:
+                print(f"[EXCHANGE VIEW RESTORE ERROR] {request_id}")
+
+async def exchange_views_ready():
+    if getattr(bot, "_exchange_views_registered", False):
+        return
+    bot._exchange_views_registered = True
+    await restore_exchange_views()
+
+bot.add_listener(exchange_views_ready, "on_ready")
+
+@bot.command(name="exchange_panel", aliases=["交換パネル"])
+@commands.has_permissions(administrator=True)
+async def exchange_panel_command(ctx):
+    embed = discord.Embed(
+        title="🤝 交換リクエスト",
+        description=(
+            "交換・依頼をしたい人は下のボタンを押してね。\n"
+            "種類を選び、内容を入力すると仲介担当へ申請が送られるよ。\n\n"
+            "仲介担当は「仲介」ロールを持つメンバーだよ。"
+        ),
+        color=discord.Color.blurple(),
+    )
+    await ctx.send(embed=embed, view=ExchangePanelView())
+
+
 # ==================================================
 # 起動
 # ==================================================

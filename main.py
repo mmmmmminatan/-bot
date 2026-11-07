@@ -5333,7 +5333,196 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     msg = await ctx.reply(embed=embed, files=files if files else [], view=view, mention_author=False)
     view.message = msg
 
+import discord
+from discord.ext import commands
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+
+# スラッシュコマンド（app_commands）を利用するために bot を commands.Bot から継承するか、tree を使用します
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        # 起動時にスラッシュコマンドをDiscordに同期する
+        await self.tree.sync()
+        print("スラッシュコマンドを同期しました。")
+
+bot = MyBot()
+
+# ==========================================
+# 基本設定
+# ==========================================
+MEDIATOR_ROLE_NAME = "仲介"
+CATEGORY_NAME = "仲介取引"
+
+
+# ==========================================
+# 1. 相手のIDを入力するモーダル（入力フォーム）
+# ==========================================
+class RequestModal(discord.ui.Modal, title="リクエスト詳細入力"):
+    def __init__(self, request_type: str):
+        super().__init__()
+        self.request_type = request_type
+        self.partner_id_input = discord.ui.TextInput(
+            label="交換相手のDiscord ID",
+            placeholder="例: 123456789012345678",
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.partner_id_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        requester = interaction.user
+        partner_id_str = self.partner_id_input.value.strip()
+
+        # 入力されたIDのバリデーション
+        if not partner_id_str.isdigit():
+            await interaction.response.send_message(
+                "❌ 有効なDiscord ID（数字のみ）を入力してください。", ephemeral=True
+            )
+            return
+
+        partner_id = int(partner_id_str)
+        partner = guild.get_member(partner_id)
+
+        if not partner:
+            try:
+                partner = await guild.fetch_member(partner_id)
+            except discord.NotFound:
+                await interaction.response.send_message(
+                    "❌ 指定されたIDのユーザーがこのサーバーに見つかりません。", ephemeral=True
+                )
+                return
+
+        if partner.id == requester.id:
+            await interaction.response.send_message(
+                "❌ 自分自身を交換相手に指定することはできません。", ephemeral=True
+            )
+            return
+
+        # 仲介ロールの取得
+        mediator_role = discord.utils.get(guild.roles, name=MEDIATOR_ROLE_NAME)
+        if not mediator_role:
+            await interaction.response.send_message(
+                f"⚠️ サーバー内に「{MEDIATOR_ROLE_NAME}」ロールが見つかりません。",
+                ephemeral=True
+            )
+            return
+
+        # カテゴリの取得または作成
+        category = discord.utils.get(guild.categories, name=CATEGORY_NAME)
+        if not category:
+            category = await guild.create_category(CATEGORY_NAME)
+
+        # チャンネル権限の設定
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            requester: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            partner: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            mediator_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+        }
+
+        channel_name = f"trade-{requester.name}-{partner.name}".lower()
+
+        # チャンネルの作成
+        try:
+            new_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                topic=f"リクエスト: {self.request_type} | 依頼者: {requester.display_name} | 相手: {partner.display_name}"
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ チャンネルの作成に失敗しました: {e}", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"✅ リクエストを受け付け、専用チャンネルを作成しました！\n🔗 チャンネル: {new_channel.mention}",
+            ephemeral=True
+        )
+
+        # 作成したチャンネルへ初期メッセージを送信
+        embed = discord.Embed(
+            title="🤝 取引・仲介チャンネル",
+            description="リクエスト内容に応じてお互いにやり取りを行ってください。",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="リクエスト内容", value=self.request_type, inline=False)
+        embed.add_field(name="依頼者", value=requester.mention, inline=True)
+        embed.add_field(name="交換相手", value=partner.mention, inline=True)
+        embed.add_field(name="仲介担当", value=mediator_role.mention, inline=False)
+
+        await new_channel.send(
+            content=f"{requester.mention} {partner.mention} {mediator_role.mention}",
+            embed=embed
+        )
+
+
+# ==========================================
+# 2. リクエスト種類選択用のボタンView
+# ==========================================
+class RequestSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="アイテム交換", style=discord.ButtonStyle.primary, custom_id="req_item_trade")
+    async def item_trade(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RequestModal("アイテム交換"))
+
+    @discord.ui.button(label="通貨トレード", style=discord.ButtonStyle.success, custom_id="req_currency_trade")
+    async def currency_trade(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RequestModal("通貨トレード"))
+
+    @discord.ui.button(label="その他リクエスト", style=discord.ButtonStyle.secondary, custom_id="req_other")
+    async def other_trade(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RequestModal("その他リクエスト"))
+
+
+# ==========================================
+# 3. スラッシュコマンドの定義 (/request ch)
+# ==========================================
+@bot.tree.command(name="request", description="リクエストパネルを設置するチャンネルを指定します")
+@discord.app_commands.describe(ch="パネルを設置するテキストチャンネル")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def request_command(interaction: discord.Interaction, ch: discord.TextChannel):
+    embed = discord.Embed(
+        title="📌 取引・リクエスト作成",
+        description="下のボタンを押してリクエストの種類を選択してください。\n選択後、交換相手のDiscord IDを入力すると専用チャンネルが自動作成されます。",
+        color=discord.Color.blurple()
+    )
+    view = RequestSelectView()
     
+    # 指定されたチャンネルにパネルを送信
+    await ch.send(embed=embed, view=view)
+    
+    # コマンドを実行した本人に対して成功を通知（ephemeral=True で他の人には見えない）
+    await interaction.response.send_message(f"✅ {ch.mention} にリクエストパネルを設置しました！", ephemeral=True)
+
+
+# 管理者権限がない場合のエラーハンドリング
+@request_command.error
+async def request_command_error(interaction: discord.Interaction, error):
+    if isinstance(error, discord.app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ このコマンドを実行する権限がありません（管理者のみ）。", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ エラーが発生しました: {error}", ephemeral=True)
+
+
+# ==========================================
+# 4. ボットの起動イベント
+# ==========================================
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+bot.run("YOUR_BOT_TOKEN")
+
 # ==================================================
 # 起動
 # ==================================================

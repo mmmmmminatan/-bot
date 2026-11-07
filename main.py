@@ -2302,6 +2302,9 @@ class MineGameView(discord.ui.View):
         for index, item in enumerate(self.children):
             if not isinstance(item, discord.ui.Button):
                 continue
+            if item is self.inline_cashout_button:
+                item.disabled = True
+                continue
             item.disabled = True
             if index == exploded_index:
                 item.label = "💥"

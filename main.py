@@ -5335,21 +5335,134 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
 
 
 # ==========================================
-# 基本設定（必要に応じて調整）
+# 1. ボットの基本設定
 # ==========================================
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(
+    command_prefix=".",
+    intents=intents,
+    help_command=None,
+    case_insensitive=True,
+)
+
+
+# ==========================================
+# 2. 各種設定・ファイルパス
+# ==========================================
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+OWNER_USER_ID = 1325449934236942392
+OWNER_ROLE_NAME = "owner"
+
+STARTING_BALANCE = 1000
+MAX_LOGS = 10000
+LOG_CHANNEL_ID = 1561184711571939438
+
+BALANCES_FILE = Path("balances.json")
+POSITIONS_FILE = Path("slot_positions.json")
+SLOT_LOGS_FILE = Path("slot_logs.json")
+LOG_CONFIG_FILE = Path("log_config.json")
+COIN_LOGS_FILE = Path("coin_logs.json")
+SETTINGS_FILE = Path("server_settings.json")
+DAILY_FILE = Path("daily_logs.json")
+GUESS_FILE = Path("guess_data.json")
+JACKPOT_FILE = Path("jackpot_data.json")
+
+JST = timezone(timedelta(hours=9))
+
+
+# ==========================================
+# 3. 簡易ユーティリティ（残高・JSON管理など）
+# ==========================================
+
+def load_json(path, default):
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as file:
+                return json.load(file)
+    except Exception:
+        print(f"[JSON LOAD ERROR] {path}")
+        traceback.print_exc()
+    return default
+
+def save_json(path, data):
+    try:
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+    except Exception:
+        print(f"[JSON SAVE ERROR] {path}")
+        traceback.print_exc()
+
+balances = load_json(BALANCES_FILE, {})
+slot_positions = load_json(POSITIONS_FILE, {})
+slot_logs = load_json(SLOT_LOGS_FILE, [])
+coin_logs = load_json(COIN_LOGS_FILE, [])
+server_settings = load_json(SETTINGS_FILE, {})
+daily_data = load_json(DAILY_FILE, {})
+guess_data = load_json(GUESS_FILE, {})
+jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
+
+
+def get_balance(user_id):
+    user_id = str(user_id)
+    if user_id not in balances:
+        balances[user_id] = STARTING_BALANCE
+        save_json(BALANCES_FILE, balances)
+    try:
+        return int(balances[user_id])
+    except (TypeError, ValueError):
+        balances[user_id] = STARTING_BALANCE
+        save_json(BALANCES_FILE, balances)
+        return STARTING_BALANCE
+
+def set_balance(user_id, amount):
+    balances[str(user_id)] = int(amount)
+    save_json(BALANCES_FILE, balances)
+
+def money(amount):
+    return f"${int(amount):,}"
+
+def money_change(amount):
+    amount = int(amount)
+    if amount > 0:
+        return f"+${amount:,}"
+    if amount < 0:
+        return f"-${abs(amount):,}"
+    return "±$0"
+
+
+# ==========================================
+# 4. 起動イベント
+# ==========================================
+
+@bot.event
+async def on_ready():
+    print(f"ログイン成功: {bot.user} ({bot.user.id})")
+    try:
+        synced = await bot.tree.sync()
+        print(f"スラッシュコマンド同期: {len(synced)}個")
+    except Exception:
+        print("[SLASH SYNC ERROR]")
+        traceback.print_exc()
+
+
+# ==========================================
+# 5. リクエスト・仲介チャンネル作成機能
+# ==========================================
+
 MEDIATOR_ROLE_NAME = "仲介"
 CATEGORY_NAME = "仲介取引"
 
 
-# ==========================================
-# 1. メンバー選択メニュー付きのView
-# ==========================================
 class PartnerSelectView(discord.ui.View):
     def __init__(self, request_type: str):
-        super().__init__(timeout=180) # 3分でタイムアウト
+        super().__init__(timeout=180)
         self.request_type = request_type
 
-    # Discord標準のユーザー選択メニュー（チャンネルを見る権限があるメンバー等から選べる）
     @discord.ui.user_select(
         placeholder="交換相手を選択してください...",
         min_values=1,
@@ -5358,23 +5471,20 @@ class PartnerSelectView(discord.ui.View):
     async def select_partner(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
         guild = interaction.guild
         requester = interaction.user
-        partner = select.values[0] # 選ばれたユーザー（User または Member オブジェクト）
+        partner = select.values[0]
 
-        # 自分自身を指していないか確認
         if partner.id == requester.id:
             await interaction.response.send_message(
                 "❌ 自分自身を交換相手に指定することはできません。", ephemeral=True
             )
             return
 
-        # Botを選んでいないか確認
         if partner.bot:
             await interaction.response.send_message(
                 "❌ ボットを交換相手に指定することはできません。", ephemeral=True
             )
             return
 
-        # サーバーの正式な Member オブジェクトとして取得し直す（権限確認などのため）
         member = guild.get_member(partner.id)
         if not member:
             try:
@@ -5385,7 +5495,6 @@ class PartnerSelectView(discord.ui.View):
                 )
                 return
 
-        # 仲介ロールの取得
         mediator_role = discord.utils.get(guild.roles, name=MEDIATOR_ROLE_NAME)
         if not mediator_role:
             await interaction.response.send_message(
@@ -5394,12 +5503,10 @@ class PartnerSelectView(discord.ui.View):
             )
             return
 
-        # カテゴリの取得または作成
         category = discord.utils.get(guild.categories, name=CATEGORY_NAME)
         if not category:
             category = await guild.create_category(CATEGORY_NAME)
 
-        # チャンネル権限の設定
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             requester: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -5410,7 +5517,6 @@ class PartnerSelectView(discord.ui.View):
 
         channel_name = f"trade-{requester.name}-{member.name}".lower()
 
-        # チャンネルの作成
         try:
             new_channel = await guild.create_text_channel(
                 name=channel_name,
@@ -5427,7 +5533,6 @@ class PartnerSelectView(discord.ui.View):
             ephemeral=True
         )
 
-        # 作成したチャンネルへ初期メッセージを送信
         embed = discord.Embed(
             title="🤝 取引・仲介チャンネル",
             description="リクエスト内容に応じてお互いにやり取りを行ってください。",
@@ -5444,16 +5549,12 @@ class PartnerSelectView(discord.ui.View):
         )
 
 
-# ==========================================
-# 2. リクエスト種類選択用のボタンView
-# ==========================================
 class RequestSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="アイテム交換", style=discord.ButtonStyle.primary, custom_id="req_item_trade")
     async def item_trade(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ボタンを押されたら、相手を選ぶセレクトメニューを表示する（ephemeral=Trueで本人だけに表示）
         view = PartnerSelectView("アイテム交換")
         await interaction.response.send_message(
             "👇 欄から**交換相手（ユーザー）**を選択してください。", view=view, ephemeral=True
@@ -5474,12 +5575,9 @@ class RequestSelectView(discord.ui.View):
         )
 
 
-# ==========================================
-# 3. スラッシュコマンドの定義 (/request ch)
-# ==========================================
 @bot.tree.command(name="request", description="リクエストパネルを設置するチャンネルを指定します")
-@discord.app_commands.describe(ch="パネルを設置するテキストチャンネル")
-@discord.app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(ch="パネルを設置するテキストチャンネル")
+@app_commands.checks.has_permissions(administrator=True)
 async def request_command(interaction: discord.Interaction, ch: discord.TextChannel):
     embed = discord.Embed(
         title="📌 取引・リクエスト作成",
@@ -5487,21 +5585,47 @@ async def request_command(interaction: discord.Interaction, ch: discord.TextChan
         color=discord.Color.blurple()
     )
     view = RequestSelectView()
-    
-    # 指定されたチャンネルにパネルを送信
     await ch.send(embed=embed, view=view)
-    
-    # コマンドを実行した本人に対して成功を通知
     await interaction.response.send_message(f"✅ {ch.mention} にリクエストパネルを設置しました！", ephemeral=True)
 
-
-# 管理者権限がない場合のエラーハンドリング
 @request_command.error
 async def request_command_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
+    if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ このコマンドを実行する権限がありません（管理者のみ）。", ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ エラーが発生しました: {error}", ephemeral=True)
+
+
+# ==========================================
+# 6. Flask（Render稼働確認用）
+# ==========================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+@app.route("/health")
+def health():
+    return "OK"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+
+# ==========================================
+# 7. 起動処理
+# ==========================================
+
+if __name__ == "__main__":
+    if not TOKEN:
+        raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません。")
+
+    Thread(target=run_web, daemon=True).start()
+    bot.run(TOKEN)
+
 
 # ==================================================
 # 起動

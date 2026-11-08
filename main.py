@@ -34,8 +34,8 @@ bot = commands.Bot(
 # 2. あう検知設定
 # ==========================================
 
-# 「あう」が連続している場合のみ検知
-pattern = re.compile(r"あう")
+# 「あう」「au」「㋐㋒」などを検知（記号・空白を挟んでもOK、逆順は対象外）
+pattern = re.compile(r"[あアぁァ㋐aAａＡ][\W_]*[うウぅゥ㋒uUｕＵ]", re.IGNORECASE)
 
 # 返信する文章
 REPLY_TEXT = (

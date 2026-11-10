@@ -112,6 +112,8 @@ DAILY_FILE = Path("daily_logs.json")
 GUESS_FILE = Path("guess_data.json")
 JACKPOT_FILE = Path("jackpot_data.json")
 WELCOME_LOG_FILE = Path("welcome_log_configs.json")
+# RenderのPersistent Diskを /data にマウントし、DATA_DIR=/data を設定すると再デプロイ後も保持される
+AU_WHITELIST_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_whitelist.json"
 
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
@@ -245,6 +247,7 @@ daily_data = load_json(DAILY_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
 jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
 welcome_log_configs = load_json(WELCOME_LOG_FILE, {})
+au_whitelist = set(str(user_id) for user_id in load_json(AU_WHITELIST_FILE, []))
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
@@ -620,8 +623,8 @@ async def on_message(message):
         f"content={message.content[:150]}"
     )
 
-    # あう検知
-    if pattern.search(message.content):
+    # ホワイトリスト登録者は「あう」検知の対象外
+    if str(message.author.id) not in au_whitelist and pattern.search(message.content):
         await message.channel.send(REPLY_TEXT)
         print("[AU DETECTED] あうを検知しました")
 
@@ -3781,6 +3784,103 @@ async def recover_coins_for_guild(guild):
     save_json(BALANCES_FILE, balances)
 
     return f"{len(latest_balances)}人の残高を復旧"
+
+# ==================================================
+# /whitelist あう検知ホワイトリスト（Botオーナー専用）
+# ==================================================
+
+whitelist_group = app_commands.Group(
+    name="whitelist",
+    description="あう検知ホワイトリストを管理する",
+)
+
+
+@whitelist_group.command(name="add", description="ユーザーをあう検知ホワイトリストに登録する")
+@app_commands.describe(user="ホワイトリストに登録するユーザー")
+async def whitelist_add(
+    interaction: discord.Interaction,
+    user: discord.Member,
+):
+    if not await require_owner(interaction):
+        return
+
+    user_id = str(user.id)
+    if user_id in au_whitelist:
+        await interaction.response.send_message(
+            f"{user.mention} は既にホワイトリストに登録されているよ。",
+            ephemeral=True,
+        )
+        return
+
+    au_whitelist.add(user_id)
+    save_json(AU_WHITELIST_FILE, sorted(au_whitelist, key=int))
+
+    await interaction.response.send_message(
+        f"✅ {user.mention} をあう検知ホワイトリストに登録したよ！\n"
+        "このユーザーのメッセージでは「あう」検知に反応しなくなるよ。",
+        ephemeral=True,
+    )
+
+
+@whitelist_group.command(name="remove", description="ユーザーをあう検知ホワイトリストから解除する")
+@app_commands.describe(user="ホワイトリストから解除するユーザー")
+async def whitelist_remove(
+    interaction: discord.Interaction,
+    user: discord.Member,
+):
+    if not await require_owner(interaction):
+        return
+
+    user_id = str(user.id)
+    if user_id not in au_whitelist:
+        await interaction.response.send_message(
+            f"{user.mention} はホワイトリストに登録されていないよ。",
+            ephemeral=True,
+        )
+        return
+
+    au_whitelist.remove(user_id)
+    save_json(AU_WHITELIST_FILE, sorted(au_whitelist, key=int))
+
+    await interaction.response.send_message(
+        f"✅ {user.mention} をホワイトリストから解除したよ！",
+        ephemeral=True,
+    )
+
+
+@whitelist_group.command(name="list", description="あう検知ホワイトリストの登録者一覧を表示する")
+async def whitelist_list(interaction: discord.Interaction):
+    if not await require_owner(interaction):
+        return
+
+    if not au_whitelist:
+        await interaction.response.send_message(
+            "ホワイトリストの登録者はいないよ。",
+            ephemeral=True,
+        )
+        return
+
+    user_ids = sorted(au_whitelist, key=int)
+    lines = [f"<@{user_id}>  (ID: {user_id})" for user_id in user_ids]
+
+    embed = discord.Embed(
+        title="📋 あう検知ホワイトリスト",
+        description="\n".join(lines[:80]),
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text=f"登録者数：{len(user_ids)}人")
+    if len(lines) > 80:
+        embed.add_field(
+            name="表示について",
+            value=f"先頭80人を表示中。残り {len(lines) - 80} 人は省略したよ。",
+            inline=False,
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+bot.tree.add_command(whitelist_group)
+
 
 # ==================================================
 # /setting

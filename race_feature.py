@@ -152,8 +152,8 @@ def render_track(event, positions):
     for i, entry in enumerate(event["entries"]):
         progress = max(0, min(STEPS, int(positions[i])))
         remaining = STEPS - progress
-        pellets = "🟡" * remaining
-        racer = HORSE_EMOJIS.get(entry["name"], "🐎") if event["kind"] == "horse" else "🚤"
+        pellets = "·" * remaining
+        racer = "🐎" if event["kind"] == "horse" else "🚤"
         lanes.append(f"{entry_label(event, entry)}  🏁{pellets}{racer}")
     return "\n".join(lanes)
 

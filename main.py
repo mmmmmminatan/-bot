@@ -2334,13 +2334,15 @@ class MineGameView(discord.ui.View):
             f"**Next:** `{int(self.bet * self.next_multiplier())}` `({self.next_multiplier():.3f}x)`"
             if status == "playing" else description
         )
+        # 終了画面はスマホでも縦に長くならないよう、情報を短い行にまとめる。
         if status != "playing":
-            embed.add_field(name="プレイヤー", value=self.ctx.author.mention, inline=True)
-            embed.add_field(name="賭け金", value=money(self.bet), inline=True)
-            embed.add_field(name="盤面", value=f"{self.size}×{self.size}", inline=True)
-            embed.add_field(name="爆弾", value=f"{self.bomb_count}個", inline=True)
-            embed.add_field(name="安全マス", value=f"{len(self.opened_safe)} / {self.safe_total}", inline=True)
-            embed.add_field(name="現在倍率", value=f"{self.multiplier:.2f}倍", inline=True)
+            embed.description = (
+                f"{description}\n\n"
+                f"👤 {self.ctx.author.mention}　💵 **{money(self.bet)}**\n"
+                f"🧩 **{self.size}×{self.size}**　💣 **{self.bomb_count}個**　"
+                f"💎 **{len(self.opened_safe)}/{self.safe_total}**\n"
+                f"📈 **{self.multiplier:.2f}倍**"
+            )
         return embed
 
     def reveal_board(self, exploded_index=None):
@@ -2497,9 +2499,11 @@ class MineGameView(discord.ui.View):
             result_text += f"\n損失：**{money_change(profit)}**"
 
         embed = self.make_embed(result, result_text)
-        embed.add_field(name="払い戻し", value=money(payout), inline=True)
-        embed.add_field(name="利益 / 損失", value=money_change(profit), inline=True)
-        embed.add_field(name="終了後の残高", value=money(new_balance), inline=True)
+        embed.description += (
+            f"\n💰 **払戻し：{money(payout)}**"
+            f"　📊 **収支：{money_change(profit)}**"
+            f"\n🏦 **終了後残高：{money(new_balance)}**"
+        )
         try:
             if self.message:
                 await self.message.edit(embed=embed, view=self)

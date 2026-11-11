@@ -311,4 +311,8 @@ def setup_giveaway(bot):
         )
 
     bot.tree.add_command(group)
-    bot.add_listener(lambda: restore(bot), "on_ready")
+
+    async def giveaway_on_ready():
+        await restore(bot)
+
+    bot.add_listener(giveaway_on_ready, "on_ready")

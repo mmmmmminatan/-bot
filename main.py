@@ -6592,8 +6592,10 @@ async def on_member_remove(member: discord.Member):
 # 景品配布機能
 # ==================================================
 from giveaway_feature import setup_giveaway
+from race_feature import setup_race
 
 setup_giveaway(bot)
+setup_race(bot, get_balance, set_balance, money)
 
 
 # ==================================================

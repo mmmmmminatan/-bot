@@ -6589,6 +6589,31 @@ async def on_member_remove(member: discord.Member):
 
 
 # ==================================================
+# /servers Botの参加サーバー数（オーナー専用）
+# ==================================================
+
+@bot.tree.command(
+    name="servers",
+    description="Botが現在参加しているサーバー数を表示する",
+)
+async def servers_command(interaction: discord.Interaction):
+    if not await require_owner(interaction):
+        return
+
+    embed = discord.Embed(
+        title="🤖 Bot サーバー情報",
+        description=f"現在参加しているサーバー数：\n## {len(bot.guilds):,} サーバー",
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text="コマンド実行時点の最新情報")
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True,
+    )
+
+
+# ==================================================
 # 景品配布機能
 # ==================================================
 from giveaway_feature import setup_giveaway

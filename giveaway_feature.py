@@ -58,16 +58,34 @@ def get_lock(gid):
     return locks.setdefault(gid, asyncio.Lock())
 
 
+def is_early(data):
+    return data.get("kind") in ("early", "early_coin")
+
+
+def is_coin(data):
+    return data.get("kind") in ("normal_coin", "early_coin")
+
+
 def make_embed(data):
     active = data["status"] == "active"
-    early = data["kind"] == "early"
+    early = is_early(data)
+    coin = is_coin(data)
+    labels = {"normal": "通常配布", "normal_coin": "通常通貨配布", "early": "早押し配布", "early_coin": "早押し通貨配布"}
     embed = discord.Embed(
-        title="🎉 景品配布開催中！" if active else "🎊 景品配布終了！",
+        title="🎉 配布開催中！" if active else "🎊 配布終了！",
         color=discord.Color.gold() if active else discord.Color.green(),
         timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="配布方式", value="早押し" if early else "通常", inline=True)
-    embed.add_field(name="景品", value=data["prize"][:256], inline=True)
+    embed.add_field(name="配布方式", value=labels.get(data["kind"], "配布"), inline=True)
+    if coin:
+        embed.add_field(name="配布通貨", value="$" + format(int(data["amount"]), ","), inline=True)
+        if data["kind"] == "normal_coin":
+            mode = "総額を山分け" if data["coin_mode"] == "total" else "1人あたり指定額"
+            embed.add_field(name="配布方法", value=mode, inline=True)
+        else:
+            embed.add_field(name="配布額", value="1人あたり", inline=True)
+    else:
+        embed.add_field(name="景品", value=data["prize"][:256], inline=True)
     embed.add_field(name="獲得人数" if early else "当選人数", value=str(data["winner_count"]), inline=True)
     if early:
         embed.add_field(name="獲得状況", value=f'{min(len(data["participants"]), data["winner_count"])} / {data["winner_count"]} 人', inline=True)
@@ -81,10 +99,13 @@ def make_embed(data):
         if winners:
             label = "🎉 獲得者" if early else "🏆 当選者"
             embed.add_field(name=label, value="\n".join(f"<@{uid}>" for uid in winners), inline=False)
+            if coin:
+                payouts = data.get("payouts", {})
+                lines = [f'<@{uid}>：$' + format(int(payouts.get(str(uid), 0)), ",") for uid in winners]
+                embed.add_field(name="通貨付与結果", value="\n".join(lines)[:1024], inline=False)
         else:
             embed.add_field(name="結果", value="参加者がいなかったため、当選者はいません。", inline=False)
     return embed
-
 
 async def fetch_message(bot, data):
     channel = bot.get_channel(int(data["channel_id"]))
@@ -190,33 +211,51 @@ class GiveawayTypeView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
 
-    @discord.ui.button(label="通常", style=discord.ButtonStyle.primary, emoji="👥")
+    @discord.ui.button(label="通常配布", style=discord.ButtonStyle.primary, emoji="🎁", row=0)
     async def normal(self, interaction, button):
         await interaction.response.send_modal(GiveawayModal("normal"))
 
-    @discord.ui.button(label="早押し", style=discord.ButtonStyle.success, emoji="⚡")
+    @discord.ui.button(label="通常通貨配布", style=discord.ButtonStyle.primary, emoji="💰", row=0)
+    async def normal_coin(self, interaction, button):
+        await interaction.response.send_message("通貨の配布方法を選んでね。", view=GiveawayCoinModeView(), ephemeral=True)
+
+    @discord.ui.button(label="早押し配布", style=discord.ButtonStyle.success, emoji="⚡", row=1)
     async def early(self, interaction, button):
         await interaction.response.send_modal(GiveawayModal("early"))
 
+    @discord.ui.button(label="早押し通貨配布", style=discord.ButtonStyle.success, emoji="💸", row=1)
+    async def early_coin(self, interaction, button):
+        await interaction.response.send_modal(GiveawayModal("early_coin"))
+
+
+class GiveawayCoinModeView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="総額を山分け", style=discord.ButtonStyle.primary, emoji="🪙")
+    async def total(self, interaction, button):
+        await interaction.response.send_modal(GiveawayModal("normal_coin", "total"))
+
+    @discord.ui.button(label="1人あたり指定額", style=discord.ButtonStyle.success, emoji="👤")
+    async def per_person(self, interaction, button):
+        await interaction.response.send_modal(GiveawayModal("normal_coin", "per_person"))
 
 class GiveawayModal(discord.ui.Modal):
-    def __init__(self, kind):
+    def __init__(self, kind, coin_mode=None):
         self.kind = kind
-        super().__init__(title="通常配布の設定" if kind == "normal" else "早押し配布の設定")
-        self.prize = discord.ui.TextInput(label="景品", placeholder="例：Amazonギフトカード", max_length=100)
-        self.count = discord.ui.TextInput(
-            label="当選人数" if kind == "normal" else "先着人数",
-            placeholder="例：3",
-            max_length=3,
-        )
-        self.add_item(self.prize)
+        self.coin_mode = coin_mode
+        titles = {"normal": "通常配布の設定", "early": "早押し配布の設定", "normal_coin": "通常通貨配布の設定", "early_coin": "早押し通貨配布の設定"}
+        super().__init__(title=titles[kind])
+        if kind in ("normal", "early"):
+            self.prize = discord.ui.TextInput(label="景品", placeholder="例：限定ロール", max_length=100)
+            self.add_item(self.prize)
+        else:
+            self.amount = discord.ui.TextInput(label="配布通貨額（総額 / 1人あたり）", placeholder="例：10000", max_length=12)
+            self.add_item(self.amount)
+        self.count = discord.ui.TextInput(label="当選人数" if kind in ("normal", "normal_coin") else "先着人数", placeholder="例：3", max_length=3)
         self.add_item(self.count)
-        if kind == "normal":
-            self.duration = discord.ui.TextInput(
-                label="時間（1s / 1m / 1h / 1d、最大7d）",
-                placeholder="例：30m",
-                max_length=8,
-            )
+        if kind in ("normal", "normal_coin"):
+            self.duration = discord.ui.TextInput(label="時間（1s / 1m / 1h / 1d、最大7d）", placeholder="例：30m", max_length=8)
             self.add_item(self.duration)
 
     async def on_submit(self, interaction):
@@ -230,51 +269,48 @@ class GiveawayModal(discord.ui.Modal):
         except ValueError:
             await interaction.response.send_message("人数は1〜100の整数で入力してね。", ephemeral=True)
             return
+        coin = self.kind in ("normal_coin", "early_coin")
+        amount = None
+        if coin:
+            try:
+                amount = int(str(self.amount.value).strip().replace(",", "").replace("$", ""))
+                if not 1 <= amount <= 1000000000:
+                    raise ValueError
+            except ValueError:
+                await interaction.response.send_message("通貨額は1〜1,000,000,000の整数で入力してね。", ephemeral=True)
+                return
         duration = None
-        if self.kind == "normal":
+        if self.kind in ("normal", "normal_coin"):
             duration = parse_duration(self.duration.value)
             if duration is None:
-                await interaction.response.send_message(
-                    "時間の形式が違うよ。例：10s、5m、2h、1d。最大7dだよ。",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message("時間の形式が違うよ。例：10s、5m、2h、1d。最大7dだよ。", ephemeral=True)
                 return
-        prize = str(self.prize.value).strip()
-        if not prize:
-            await interaction.response.send_message("景品名を入力してね。", ephemeral=True)
-            return
-
+        prize = None
+        if not coin:
+            prize = str(self.prize.value).strip()
+            if not prize:
+                await interaction.response.send_message("景品名を入力してね。", ephemeral=True)
+                return
         gid = secrets.token_hex(6)
         now = datetime.now(timezone.utc).timestamp()
         data = {
-            "id": gid,
-            "kind": self.kind,
-            "prize": prize,
-            "winner_count": count,
-            "host_id": str(interaction.user.id),
-            "guild_id": str(interaction.guild.id),
-            "channel_id": str(interaction.channel.id),
-            "message_id": None,
-            "participants": [],
-            "winners": [],
-            "status": "active",
+            "id": gid, "kind": self.kind, "prize": prize or "通貨", "amount": amount,
+            "coin_mode": self.coin_mode, "winner_count": count,
+            "host_id": str(interaction.user.id), "guild_id": str(interaction.guild.id),
+            "channel_id": str(interaction.channel.id), "message_id": None,
+            "participants": [], "winners": [], "payouts": {}, "status": "active",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        if self.kind == "normal":
+        if self.kind in ("normal", "normal_coin"):
             data["end_at"] = now + duration
-
         await interaction.response.defer(ephemeral=True, thinking=True)
-        message = await interaction.channel.send(
-            embed=make_embed(data),
-            view=GiveawayJoinView(interaction.client, gid),
-        )
+        message = await interaction.channel.send(embed=make_embed(data), view=GiveawayJoinView(interaction.client, gid))
         data["message_id"] = str(message.id)
         giveaways[gid] = data
         save_data()
-        if self.kind == "normal":
+        if self.kind in ("normal", "normal_coin"):
             tasks[gid] = asyncio.create_task(timer_task(interaction.client, gid))
         await interaction.followup.send("配布を開始したよ！", ephemeral=True)
-
 
 async def restore(bot):
     global restored

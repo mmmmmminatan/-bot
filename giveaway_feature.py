@@ -138,7 +138,7 @@ async def update_message(bot, gid):
 async def finish_normal(bot, gid):
     async with get_lock(gid):
         data = giveaways.get(gid)
-        if not data or data.get("status") != "active" or data.get("kind") != "normal":
+        if not data or data.get("status") != "active" or data.get("kind") not in ("normal", "normal_coin"):
             return
         people = list(dict.fromkeys(data.get("participants", [])))
         count = min(int(data["winner_count"]), len(people))
@@ -165,7 +165,7 @@ async def finish_normal(bot, gid):
 
 async def timer_task(bot, gid):
     data = giveaways.get(gid)
-    if not data or data.get("status") != "active":
+    if not data or data.get("status") != "active" or data.get("kind") not in ("normal", "normal_coin"):
         return
     wait = max(0, float(data["end_at"]) - datetime.now(timezone.utc).timestamp())
     await asyncio.sleep(wait)
@@ -178,7 +178,7 @@ class GiveawayJoinView(discord.ui.View):
         self.bot = bot
         self.gid = gid
         button = discord.ui.Button(
-            label="参加する" if not disabled else "受付終了",
+            label="先着で獲得する" if self.gid in giveaways and is_early(giveaways[self.gid]) and not disabled else ("参加する" if not disabled else "受付終了"),
             style=discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary,
             emoji="🎉",
             custom_id=f"giveaway:join:{gid}",
@@ -342,9 +342,9 @@ async def restore(bot):
         try:
             bot.add_view(GiveawayJoinView(bot, gid))
             message = await fetch_message(bot, data)
-            if data.get("kind") == "normal":
+            if data.get("kind") in ("normal", "normal_coin"):
                 tasks[gid] = asyncio.create_task(timer_task(bot, gid))
-            elif data.get("kind") == "early" and len(data.get("participants", [])) >= int(data["winner_count"]):
+            elif is_early(data) and len(data.get("participants", [])) >= int(data["winner_count"]):
                 data["winners"] = list(data["participants"])
                 data["status"] = "finished"
                 save_data()

@@ -11,7 +11,7 @@ ACTIVE_USERS = set()
 
 
 def render_board(path, current_row):
-    lines = ["\`\`\`"]
+    lines = ["```"]
     for row in range(ROWS + 1):
         cells = []
         for col in range(row + 1):
@@ -20,16 +20,16 @@ def render_board(path, current_row):
             else:
                 cells.append("·")
         lines.append((" " * (ROWS - row)) + "   ".join(cells))
-    lines.append("\`\`\`")
+    lines.append("```")
     return "\n".join(lines)
 
 
 def render_final_board(slot):
-    lines = ["\`\`\`"]
+    lines = ["```"]
     for row in range(ROWS + 1):
         cells = ["●" if row == ROWS and col == slot else "·" for col in range(row + 1)]
         lines.append((" " * (ROWS - row)) + "   ".join(cells))
-    lines.append("\`\`\`")
+    lines.append("```")
     labels = []
     for index, multiplier in enumerate(MULTIPLIERS):
         mark = "▼" if index == slot else " "
@@ -45,7 +45,7 @@ def setup_plinko(bot, get_balance, set_balance, money, money_change):
             return
 
         if bet_text is None:
-            await ctx.reply("使い方：\`.plinko 賭け金\`\n例：\`.plinko 100\` または \`.plinko all\`", mention_author=False)
+            await ctx.reply("使い方：`.plinko 賭け金`\n例：`.plinko 100` または `.plinko all`", mention_author=False)
             return
 
         user_id = str(ctx.author.id)
@@ -59,7 +59,7 @@ def setup_plinko(bot, get_balance, set_balance, money, money_change):
             try:
                 bet = int(bet_text.replace(",", "").replace("$", ""))
             except ValueError:
-                await ctx.reply("賭け金は数字か \`all\` で入力してね。", mention_author=False)
+                await ctx.reply("賭け金は数字か `all` で入力してね。", mention_author=False)
                 return
 
         balance = int(get_balance(user_id))

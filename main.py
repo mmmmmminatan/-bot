@@ -2586,12 +2586,20 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
         await ctx.reply(f"爆弾の数は1〜{total_cells - 1}個で指定してね。", mention_author=False)
         return
 
-    bet = resolve_bet(ctx.author.id, bet_text)
+    current_balance = get_balance(ctx.author.id)
+    # MINESの最大賭け金は250,000。all指定でも上限を超えない。
+    if str(bet_text).strip().casefold() == "all":
+        bet = min(current_balance, 250000)
+    else:
+        bet = resolve_bet(ctx.author.id, bet_text)
+
     if bet is None or bet <= 0:
         await ctx.reply("賭け金は1以上の数字か all で指定してね。", mention_author=False)
         return
+    if bet > 250000:
+        await ctx.reply("MINESの最大賭け金は **250,000** だよ。", mention_author=False)
+        return
 
-    current_balance = get_balance(ctx.author.id)
     if bet > current_balance:
         await ctx.reply(f"残高が足りないよ！\n残高：**{money(current_balance)}**", mention_author=False)
         return

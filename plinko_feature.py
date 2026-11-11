@@ -13,7 +13,7 @@ ACTIVE_USERS = set()
 def render_board(path, current_row, frame=3):
     # 固定幅の盤面にピンとボールを描き、行ごとのズレを防ぐ
     width = ROWS * 8 + 1
-    lines = ["```"]
+    lines = ["\`\`\`"]
 
     def put_symbol(x, symbol):
         x = max(0, min(width - 1, int(round(x))))
@@ -22,33 +22,32 @@ def render_board(path, current_row, frame=3):
         return "".join(line).rstrip()
 
     for row in range(ROWS + 1):
+        if row == current_row and row > 0 and frame < 3:
+            previous_position = path[row - 1]
+            target_position = path[row]
+            previous_x = (ROWS - row + 1) * 4 + previous_position * 8
+            target_x = (ROWS - row) * 4 + target_position * 8
+
+            for subframe in range(1, 4):
+                if subframe == frame:
+                    x = previous_x + (target_x - previous_x) * (subframe / 3)
+                    lines.append(put_symbol(x, "●"))
+                else:
+                    lines.append("")
+
         peg_line = [" "] * width
         for col in range(row + 1):
             x = (ROWS - row) * 4 + col * 8
             peg_line[x] = "○"
+
+        if row == current_row and row < len(path) and (row == 0 or frame >= 3):
+            ball_x = (ROWS - row) * 4 + path[row] * 8
+            peg_line[ball_x] = "●"
+
         lines.append("".join(peg_line).rstrip())
 
-        if row == current_row and row < len(path) - 0:
-            previous_position = path[row - 1] if row > 0 else path[0]
-            target_position = path[row]
-            previous_x = (ROWS - max(0, row - 1)) * 4 + previous_position * 8
-            target_x = (ROWS - row) * 4 + target_position * 8
-
-            if row == 0:
-                lines[-1] = put_symbol(target_x, "●")
-            elif frame >= 3:
-                lines[-1] = put_symbol(target_x, "●")
-            else:
-                for subframe in range(1, 4):
-                    if subframe == frame:
-                        x = previous_x + (target_x - previous_x) * (subframe / 3)
-                        lines.append(put_symbol(x, "●"))
-                    else:
-                        lines.append("")
-
-    lines.append("```")
+    lines.append("\`\`\`")
     return "\n".join(lines)
-
 
 def render_final_board(slot):
     lines = ["```"]

@@ -143,6 +143,20 @@ async def finish_normal(bot, gid):
         people = list(dict.fromkeys(data.get("participants", [])))
         count = min(int(data["winner_count"]), len(people))
         data["winners"] = random.sample(people, count) if count else []
+        if data.get("kind") == "normal_coin" and count:
+            payouts = {}
+            amount = int(data["amount"])
+            if data["coin_mode"] == "total":
+                base, remainder = divmod(amount, count)
+                for index, uid in enumerate(data["winners"]):
+                    payout = base + (1 if index < remainder else 0)
+                    set_balance(uid, get_balance(uid) + payout)
+                    payouts[str(uid)] = payout
+            else:
+                for uid in data["winners"]:
+                    set_balance(uid, get_balance(uid) + amount)
+                    payouts[str(uid)] = amount
+            data["payouts"] = payouts
         data["status"] = "finished"
         data["finished_at"] = datetime.now(timezone.utc).isoformat()
         save_data()
@@ -190,18 +204,23 @@ class GiveawayJoinView(discord.ui.View):
             if uid in data["participants"]:
                 await interaction.response.send_message("既に参加済みだよ！", ephemeral=True)
                 return
-            if data["kind"] == "early" and len(data["participants"]) >= int(data["winner_count"]):
+            if is_early(data) and len(data["participants"]) >= int(data["winner_count"]):
                 await interaction.response.send_message("先着人数に達したため受付終了だよ。", ephemeral=True)
                 return
             data["participants"].append(uid)
-            if data["kind"] == "early":
+            if is_early(data):
                 data["winners"] = list(data["participants"])
+                if data["kind"] == "early_coin":
+                    payout = int(data["amount"])
+                    set_balance(uid, get_balance(uid) + payout)
+                    data.setdefault("payouts", {})[uid] = payout
                 if len(data["participants"]) >= int(data["winner_count"]):
                     data["status"] = "finished"
                     data["finished_at"] = datetime.now(timezone.utc).isoformat()
             save_data()
         await interaction.response.send_message(
-            "🎉 景品を獲得したよ！" if data["kind"] == "early" else "参加を受け付けたよ！",
+            ("🎉 通貨を受け取ったよ！" if data["kind"] == "early_coin" else "🎉 景品を獲得したよ！")
+            if is_early(data) else "参加を受け付けたよ！",
             ephemeral=True,
         )
         await update_message(self.bot, self.gid)
@@ -335,7 +354,9 @@ async def restore(bot):
             traceback.print_exc()
 
 
-def setup_giveaway(bot):
+def setup_giveaway(bot, get_balance, set_balance):
+    globals()["get_balance"] = get_balance
+    globals()["set_balance"] = set_balance
     group = app_commands.Group(name="giveaway", description="景品配布")
 
     @group.command(name="start", description="通常配布または早押し配布を開始する")

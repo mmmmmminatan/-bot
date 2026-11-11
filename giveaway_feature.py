@@ -133,7 +133,12 @@ async def send_giveaway_log(bot, data, event):
         embed.add_field(name="獲得者・当選者", value="\n".join(f'<@{uid}>' for uid in winners)[:1024] or "なし", inline=False)
         if is_coin(data):
             payouts = data.get("payouts", {})
-            rows = [f'<@{uid}>：
+            rows = [f'<@{uid}>：${format(int(payouts.get(str(uid), 0)), ",")}' for uid in winners]
+            embed.add_field(name="通貨付与", value="\\n".join(rows)[:1024] or "付与なし", inline=False)
+    await logger(guild, embed)
+
+
+async def fetch_message(bot, data):
     channel = bot.get_channel(int(data["channel_id"]))
     if channel is None:
         try:

@@ -6592,10 +6592,8 @@ async def on_member_remove(member: discord.Member):
 # 景品配布機能
 # ==================================================
 from giveaway_feature import setup_giveaway
-from plinko_feature import setup_plinko
 
 setup_giveaway(bot)
-setup_plinko(bot, get_balance, set_balance, money, money_change)
 
 
 # ==================================================

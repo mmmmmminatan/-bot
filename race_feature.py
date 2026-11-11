@@ -147,21 +147,41 @@ def make_embed(event):
 
 
 def render_track(event, positions):
-    icon = "🐎" if event["kind"] == "horse" else "🚤"
-    return "\n".join(
-        f"{entry_label(event, entry)}  " + ("·" * positions[i]) + icon
-        for i, entry in enumerate(event["entries"])
-    )
+    # ゴールは左、スタートは右。進むほど黄色い玉を食べて左へ進む。
+    lanes = []
+    for i, entry in enumerate(event["entries"]):
+        progress = max(0, min(STEPS, int(positions[i])))
+        remaining = STEPS - progress
+        pellets = "🟡" * remaining
+        racer = HORSE_EMOJIS.get(entry["name"], "🐎") if event["kind"] == "horse" else "🚤"
+        lanes.append(f"{entry_label(event, entry)}  🏁{pellets}{racer}")
+    return "\n".join(lanes)
 
 
 def make_track_embed(event, positions, finished=False):
-    title = "🏁 レース終了！" if finished else "🏁 レース進行中！"
+    title = "🏁 レース結果！" if finished else "🏁 レース進行中！"
     embed = discord.Embed(
         title=title,
         description="\u0060\u0060\u0060\n" + render_track(event, positions) + "\n\u0060\u0060\u0060",
         color=discord.Color.green() if finished else discord.Color.blue(),
         timestamp=datetime.now(timezone.utc),
     )
+    if finished and event.get("winner_index") is not None:
+        winner = event["entries"][event["winner_index"]]
+        embed.add_field(
+            name="🏆 1着",
+            value=f"**{entry_label(event, winner)}**（{winner['odds']}倍）",
+            inline=False,
+        )
+        winners = event.get("winners", [])
+        if winners:
+            payout_lines = [
+                f"<@{w['user_id']}>：{money_fn(w['payout'])}（利益 {money_fn(w['payout'] - w['amount'])}）"
+                for w in winners[:10]
+            ]
+            embed.add_field(name="🎉 的中・配当", value="\n".join(payout_lines)[:1024], inline=False)
+        else:
+            embed.add_field(name="🎉 的中・配当", value="的中者なし", inline=False)
     embed.set_footer(text="レース実況")
     return embed
 
@@ -308,17 +328,22 @@ async def run_race(bot, guild_id):
 
     positions = [0] * len(event["entries"])
     track_message = await channel.send(embed=make_track_embed(event, positions))
-    for step in range(STEPS):
+    winner_index = None
+    for step in range(STEPS * 2):
         for i in range(len(positions)):
-            positions[i] = min(STEPS, positions[i] + random.choice([0, 1, 1, 1, 2]))
-        if step < STEPS - 1:
-            await track_message.edit(embed=make_track_embed(event, positions))
-            await asyncio.sleep(0.65)
+            if positions[i] < STEPS:
+                positions[i] = min(STEPS, positions[i] + random.choice([0, 1, 1, 1, 2]))
+        finishers = [i for i, value in enumerate(positions) if value >= STEPS]
+        if finishers:
+            winner_index = random.choice(finishers)
+            break
+        await track_message.edit(embed=make_track_embed(event, positions))
+        await asyncio.sleep(0.45)
 
-    odds = [float(entry["odds"]) for entry in event["entries"]]
-    winner_index = random.choices(
-        range(len(event["entries"])), weights=[1.0 / value for value in odds], k=1
-    )[0]
+    if winner_index is None:
+        best = max(positions)
+        leaders = [i for i, value in enumerate(positions) if value == best]
+        winner_index = random.choice(leaders)
     positions[winner_index] = STEPS
     event["status"] = "finished"
     event["winner_index"] = winner_index
@@ -331,6 +356,7 @@ async def run_race(bot, guild_id):
             event["winners"].append({"user_id": uid, "amount": amount, "payout": payout})
     event["finished_at"] = datetime.now(timezone.utc).isoformat()
     save_data()
+    # 着順・的中配当はレース進行中の埋め込みにまとめて表示
     await track_message.edit(embed=make_track_embed(event, positions, finished=True))
     await message.edit(
         embed=make_embed(event),

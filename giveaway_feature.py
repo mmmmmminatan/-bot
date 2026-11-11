@@ -411,15 +411,3 @@ def setup_giveaway(bot, get_balance, set_balance, giveaway_logger):
         await restore(bot)
 
     bot.add_listener(giveaway_on_ready, "on_ready")
-async def fetch_message(bot, data):
-    channel = bot.get_channel(int(data["channel_id"]))
-    if channel is None:
-        try:
-            channel = await bot.fetch_channel(int(data["channel_id"]))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
-    try:
-        return await channel.fetch_message(int(data["message_id"]))
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-        return None
-

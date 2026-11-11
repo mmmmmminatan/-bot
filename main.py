@@ -2308,7 +2308,7 @@ class MineGameView(discord.ui.View):
             return 1.0
         denominator = math.comb(self.total_cells, opened)
         numerator = math.comb(self.safe_total, opened)
-        return round(0.95 * denominator / numerator, 2)
+        return round(0.85 * denominator / numerator, 2)
 
     def current_multiplier(self):
         opened = len(self.opened_safe)
@@ -2414,13 +2414,13 @@ class MineGameView(discord.ui.View):
             )
             return
 
-        # 安全マスを開いたときの出目。💵=変化なし、💍=±0.1倍、💎=+0.2倍
+        # 安全マスを開いたときの出目。💵=変化なし、💍=±0.05倍、💎=+0.1倍
         symbol = random.choice(["💵", "💍", "💎"])
         adjustment = 0.0
         if symbol == "💍":
-            adjustment = random.choice([-0.1, 0.1])
+            adjustment = random.choice([-0.05, 0.05])
         elif symbol == "💎":
-            adjustment = 0.2
+            adjustment = 0.1
 
         self.opened_safe.add(index)
         self.cell_symbols[index] = symbol

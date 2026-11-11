@@ -103,11 +103,11 @@ def make_embed(event):
             entry = event["entries"][winner]
             embed.description = f"優勝：**{entry['name']}**（{entry['odds']}倍）"
 
+    entry_lines = []
     for i, entry in enumerate(event["entries"]):
-        value = f"倍率：**{entry['odds']}倍**"
-        if status == "finished" and event.get("winner_index") == i:
-            value += "\n優勝！"
-        embed.add_field(name=f"{i + 1}. {entry['name']}", value=value, inline=True)
+        marker = " 🏆" if status == "finished" and event.get("winner_index") == i else ""
+        entry_lines.append(f"**{i + 1}. {entry['name']}** — {entry['odds']}倍{marker}")
+    embed.add_field(name="出走一覧", value="\n".join(entry_lines), inline=False)
 
     bets = event.get("bets", {})
     total = sum(int(b.get("amount", 0)) for b in bets.values())
@@ -135,6 +135,18 @@ def render_track(event, positions):
         f"{i + 1}. {entry['name']}  " + ("·" * positions[i]) + icon
         for i, entry in enumerate(event["entries"])
     )
+
+
+def make_track_embed(event, positions, finished=False):
+    title = "🏁 レース終了！" if finished else "🏁 レース進行中！"
+    embed = discord.Embed(
+        title=title,
+        description="\u0060\u0060\u0060\n" + render_track(event, positions) + "\n\u0060\u0060\u0060",
+        color=discord.Color.green() if finished else discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(text="レース実況")
+    return embed
 
 
 class BetModal(discord.ui.Modal):
@@ -265,11 +277,12 @@ async def run_race(bot, guild_id):
     await message.edit(embed=make_embed(event), view=RaceBetView(gid, event, disabled=True))
 
     positions = [0] * len(event["entries"])
+    track_message = await channel.send(embed=make_track_embed(event, positions))
     for step in range(STEPS):
         for i in range(len(positions)):
             positions[i] = min(STEPS, positions[i] + random.choice([0, 1, 1, 1, 2]))
         if step < STEPS - 1:
-            await message.edit(content=render_track(event, positions))
+            await track_message.edit(embed=make_track_embed(event, positions))
             await asyncio.sleep(0.65)
 
     odds = [float(entry["odds"]) for entry in event["entries"]]
@@ -288,8 +301,8 @@ async def run_race(bot, guild_id):
             event["winners"].append({"user_id": uid, "amount": amount, "payout": payout})
     event["finished_at"] = datetime.now(timezone.utc).isoformat()
     save_data()
+    await track_message.edit(embed=make_track_embed(event, positions, finished=True))
     await message.edit(
-        content=render_track(event, positions),
         embed=make_embed(event),
         view=RaceBetView(gid, event, disabled=True),
     )

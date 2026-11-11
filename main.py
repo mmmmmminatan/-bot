@@ -111,7 +111,7 @@ SETTINGS_FILE = Path("server_settings.json")
 DAILY_FILE = Path("daily_logs.json")
 GUESS_FILE = Path("guess_data.json")
 JACKPOT_FILE = Path("jackpot_data.json")
-WELCOME_LOG_FILE = Path("welcome_log_configs.json")
+WELCOME_LOG_FILE = Path(os.getenv("DATA_DIR", ".")) / "welcome_log_configs.json"
 # RenderのPersistent Diskを /data にマウントし、DATA_DIR=/data を設定すると再デプロイ後も保持される
 AU_WHITELIST_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_whitelist.json"
 
@@ -231,6 +231,7 @@ def load_json(path, default):
 
 def save_json(path, data):
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=2)
     except Exception:

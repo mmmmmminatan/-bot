@@ -187,7 +187,8 @@ async def finish_normal(bot, gid):
         data["finished_at"] = datetime.now(timezone.utc).isoformat()
         save_data()
     await update_message(bot, gid)
-    await send_giveaway_log(bot, data, "finish")
+    if is_coin(data):
+        await send_giveaway_log(bot, data, "finish")
 
 
 async def timer_task(bot, gid):
@@ -251,7 +252,7 @@ class GiveawayJoinView(discord.ui.View):
             ephemeral=True,
         )
         await update_message(self.bot, self.gid)
-        if is_early(data) and data["status"] == "finished":
+        if is_early(data) and data["status"] == "finished" and is_coin(data):
             await send_giveaway_log(self.bot, data, "finish")
 
 
@@ -358,7 +359,8 @@ class GiveawayModal(discord.ui.Modal):
         save_data()
         if self.kind in ("normal", "normal_coin"):
             tasks[gid] = asyncio.create_task(timer_task(interaction.client, gid))
-        await send_giveaway_log(interaction.client, data, "start")
+        if is_coin(data):
+            await send_giveaway_log(interaction.client, data, "start")
         await interaction.followup.send("配布を開始したよ！", ephemeral=True)
 
 async def restore(bot):

@@ -287,9 +287,9 @@ async def restore(bot):
         try:
             bot.add_view(GiveawayJoinView(bot, gid))
             message = await fetch_message(bot, data)
-            if message and data.get("kind") == "normal":
+            if data.get("kind") == "normal":
                 tasks[gid] = asyncio.create_task(timer_task(bot, gid))
-            elif message and data.get("kind") == "early" and len(data.get("participants", [])) >= int(data["winner_count"]):
+            elif data.get("kind") == "early" and len(data.get("participants", [])) >= int(data["winner_count"]):
                 data["winners"] = list(data["participants"])
                 data["status"] = "finished"
                 save_data()

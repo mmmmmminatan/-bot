@@ -385,7 +385,7 @@ def setup_race(bot, get_balance, set_balance, money):
         config["enabled"] = True
         config.setdefault("next_kind", "horse")
         config["next_at"] = time.time()
-        config["active"] = None
+        config.setdefault("active", None)
         save_data()
         await start_scheduler(bot, gid)
         await interaction.response.send_message(

@@ -10,16 +10,42 @@ MULTIPLIERS = [10, 5, 2, 1, 0.5, 1, 2, 5, 10]
 ACTIVE_USERS = set()
 
 
-def render_board(path, current_row):
+def render_board(path, current_row, frame=3):
+    # 固定幅の盤面にピンとボールを描き、行ごとのズレを防ぐ
+    width = ROWS * 8 + 1
     lines = ["```"]
+
+    def put_symbol(x, symbol):
+        x = max(0, min(width - 1, int(round(x))))
+        line = [" "] * width
+        line[x] = symbol
+        return "".join(line).rstrip()
+
     for row in range(ROWS + 1):
-        cells = []
+        peg_line = [" "] * width
         for col in range(row + 1):
-            if row == current_row and row < len(path) and col == path[row]:
-                cells.append("●")
+            x = (ROWS - row) * 4 + col * 8
+            peg_line[x] = "○"
+        lines.append("".join(peg_line).rstrip())
+
+        if row == current_row and row < len(path) - 0:
+            previous_position = path[row - 1] if row > 0 else path[0]
+            target_position = path[row]
+            previous_x = (ROWS - max(0, row - 1)) * 4 + previous_position * 8
+            target_x = (ROWS - row) * 4 + target_position * 8
+
+            if row == 0:
+                lines[-1] = put_symbol(target_x, "●")
+            elif frame >= 3:
+                lines[-1] = put_symbol(target_x, "●")
             else:
-                cells.append("·")
-        lines.append((" " * (ROWS - row)) + "   ".join(cells))
+                for subframe in range(1, 4):
+                    if subframe == frame:
+                        x = previous_x + (target_x - previous_x) * (subframe / 3)
+                        lines.append(put_symbol(x, "●"))
+                    else:
+                        lines.append("")
+
     lines.append("```")
     return "\n".join(lines)
 
@@ -87,12 +113,16 @@ def setup_plinko(bot, get_balance, set_balance, money, money_change):
             for row in range(1, ROWS + 1):
                 position += random.choice((0, 1))
                 path.append(position)
-                embed.description = (
-                    f"**{ctx.author.display_name}**\n賭け金：{money(bet)}\n\n"
-                    f"ボール落下中… ({row}/{ROWS})\n{render_board(path, row)}"
-                )
-                await message.edit(embed=embed)
-                await asyncio.sleep(0.45)
+
+                # 1段ごとに3フレームへ分けて、ボールが斜めに滑らかに落ちるようにする
+                for frame in range(1, 4):
+                    embed.description = (
+                        f"**{ctx.author.display_name}**\n賭け金：{money(bet)}\n\n"
+                        f"ボール落下中… ({row}/{ROWS})\n"
+                        f"{render_board(path, row, frame)}"
+                    )
+                    await message.edit(embed=embed)
+                    await asyncio.sleep(0.22)
 
             multiplier = MULTIPLIERS[position]
             payout = int(round(bet * multiplier))

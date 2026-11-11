@@ -102,7 +102,10 @@ def make_embed(event):
     )
     embed = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
     if status == "betting":
+        remaining = max(0, int(float(event["open_until"]) - time.time() + 0.999))
+        minutes, seconds = divmod(remaining, 60)
         embed.description = (
+            f"**残り投票時間：{minutes}分{seconds:02d}秒**\n"
             f"投票締切：<t:{int(event['open_until'])}:R>\n"
             "出走者のボタンを押して、賭ける仮想コイン数を入力してね。\n"
             "1人1回まで・Bot内の仮想コイン専用"
@@ -283,7 +286,20 @@ async def run_race(bot, guild_id):
     event["message_id"] = str(message.id)
     save_data()
 
-    await asyncio.sleep(BETTING_SECONDS)
+    # 投票受付中は約3秒ごとに残り時間・人数・総額を更新
+    while event.get("status") == "betting":
+        remaining = float(event["open_until"]) - time.time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(3, remaining))
+        if event.get("status") != "betting":
+            return
+        try:
+            await message.edit(embed=make_embed(event), view=RaceBetView(gid, event))
+        except discord.HTTPException:
+            print(f"[RACE LIVE UPDATE ERROR] guild={gid}")
+            traceback.print_exc()
+
     if event.get("status") != "betting":
         return
     event["status"] = "running"

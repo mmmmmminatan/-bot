@@ -326,6 +326,17 @@ async def guild_scheduler(bot, guild_id):
         print(f"[RACE SCHEDULER ERROR] guild={gid}")
         traceback.print_exc()
         config = configs.get(gid)
+        event = config.get("active") if config else None
+        if event:
+            if event.get("status") != "finished":
+                for uid, bet in event.get("bets", {}).items():
+                    try:
+                        set_balance_fn(uid, int(get_balance_fn(uid)) + int(bet["amount"]))
+                    except Exception:
+                        print(f"[RACE ERROR REFUND] user={uid}")
+                        traceback.print_exc()
+            config["active"] = None
+            save_data()
         if config and config.get("enabled"):
             config["next_at"] = time.time() + INTERVAL_SECONDS
             save_data()
@@ -352,12 +363,13 @@ async def restore(bot):
     for gid, config in list(configs.items()):
         event = config.get("active")
         if event:
-            for uid, bet in event.get("bets", {}).items():
-                try:
-                    set_balance_fn(uid, int(get_balance_fn(uid)) + int(bet["amount"]))
-                except Exception:
-                    print(f"[RACE REFUND ERROR] user={uid}")
-                    traceback.print_exc()
+            if event.get("status") != "finished":
+                for uid, bet in event.get("bets", {}).items():
+                    try:
+                        set_balance_fn(uid, int(get_balance_fn(uid)) + int(bet["amount"]))
+                    except Exception:
+                        print(f"[RACE REFUND ERROR] user={uid}")
+                        traceback.print_exc()
             config["active"] = None
             save_data()
     for gid, config in list(configs.items()):

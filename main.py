@@ -2251,6 +2251,8 @@ class MineGameView(discord.ui.View):
         self.safe_total = self.total_cells - bomb_count
         self.bombs = set(random.sample(range(self.total_cells), bomb_count))
         self.opened_safe = set()
+        self.cell_symbols = {}
+        self.multiplier_adjustment = 0.0
         self.finished = False
         self.message = None
         self.cashout_message = None
@@ -2292,21 +2294,22 @@ class MineGameView(discord.ui.View):
     async def inline_cashout_callback(self, interaction):
         await self.cashout(interaction)
 
-    def current_multiplier(self):
-        opened = len(self.opened_safe)
+    def base_multiplier(self, opened):
         if opened <= 0:
             return 1.0
         denominator = math.comb(self.total_cells, opened)
         numerator = math.comb(self.safe_total, opened)
         return round(0.95 * denominator / numerator, 2)
 
+    def current_multiplier(self):
+        opened = len(self.opened_safe)
+        return max(0.01, round(self.base_multiplier(opened) + self.multiplier_adjustment, 2))
+
     def next_multiplier(self):
         opened = len(self.opened_safe) + 1
         if opened > self.safe_total:
             return self.multiplier
-        denominator = math.comb(self.total_cells, opened)
-        numerator = math.comb(self.safe_total, opened)
-        return round(0.95 * denominator / numerator, 2)
+        return max(0.01, round(self.base_multiplier(opened) + self.multiplier_adjustment, 2))
 
     def make_embed(self, status="playing", result_text=None):
         if status == "playing":
@@ -2341,7 +2344,10 @@ class MineGameView(discord.ui.View):
                 f"👤 {self.ctx.author.mention}　💵 **{money(self.bet)}**\n"
                 f"🧩 **{self.size}×{self.size}**　💣 **{self.bomb_count}個**　"
                 f"💎 **{len(self.opened_safe)}/{self.safe_total}**\n"
-                f"📈 **{self.multiplier:.2f}倍**"
+                f"📈 **{self.multiplier:.2f}倍**　"
+                f"💵 **{sum(1 for v in self.cell_symbols.values() if v == '💵')}** "
+                f"💍 **{sum(1 for v in self.cell_symbols.values() if v == '💍')}** "
+                f"💎 **{sum(1 for v in self.cell_symbols.values() if v == '💎')}**"
             )
         return embed
 
@@ -2355,7 +2361,7 @@ class MineGameView(discord.ui.View):
                 item.label = "💣"
                 item.style = discord.ButtonStyle.danger
             elif index in self.opened_safe:
-                item.label = "💎"
+                item.label = self.cell_symbols.get(index, "💵")
                 item.style = discord.ButtonStyle.success
             else:
                 item.label = "・"
@@ -2371,7 +2377,8 @@ class MineGameView(discord.ui.View):
                 elif index in self.bombs:
                     label, emoji = f"💣 {row_col}", "💣"
                 elif index in self.opened_safe:
-                    label, emoji = f"💎 {row_col}", "💎"
+                    symbol = self.cell_symbols.get(index, "💵")
+                    label, emoji = f"{symbol} {row_col}", symbol
                 else:
                     label, emoji = f"・ {row_col}", "▫️"
                 options.append(discord.SelectOption(label=label, value=str(index), emoji=emoji))
@@ -2398,12 +2405,22 @@ class MineGameView(discord.ui.View):
             )
             return
 
+        # 安全マスを開いたときの出目。💵=変化なし、💍=±0.1倍、💎=+0.2倍
+        symbol = random.choice(["💵", "💍", "💎"])
+        adjustment = 0.0
+        if symbol == "💍":
+            adjustment = random.choice([-0.1, 0.1])
+        elif symbol == "💎":
+            adjustment = 0.2
+
         self.opened_safe.add(index)
+        self.cell_symbols[index] = symbol
+        self.multiplier_adjustment = round(self.multiplier_adjustment + adjustment, 2)
         self.multiplier = self.current_multiplier()
 
         if index in self.cell_buttons:
             button = self.cell_buttons[index]
-            button.label = "💎"
+            button.label = symbol
             button.style = discord.ButtonStyle.success
             button.disabled = True
         if self.cell_select:
@@ -2411,10 +2428,11 @@ class MineGameView(discord.ui.View):
             for option in self.cell_select.options:
                 cell_index = int(option.value)
                 if cell_index == index:
+                    opened_symbol = self.cell_symbols.get(cell_index, "💵")
                     options.append(discord.SelectOption(
-                        label=f"💎 {cell_index // self.size + 1}行{cell_index % self.size + 1}列",
+                        label=f"{opened_symbol} {cell_index // self.size + 1}行{cell_index % self.size + 1}列",
                         value=str(cell_index),
-                        emoji="💎",
+                        emoji=opened_symbol,
                     ))
                 else:
                     options.append(option)
@@ -2437,6 +2455,12 @@ class MineGameView(discord.ui.View):
 
         payout = int(self.bet * self.multiplier)
         embed = self.make_embed()
+        symbol_change = f"{adjustment:+.1f}" if adjustment else "±0.0"
+        embed.add_field(
+            name="今回の出目",
+            value=f"{symbol}（倍率 {symbol_change}倍）",
+            inline=True,
+        )
         embed.add_field(name="現在の精算額", value=money(payout), inline=False)
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -2524,6 +2548,15 @@ class MineGameView(discord.ui.View):
         log_embed.add_field(name="爆弾の数", value=f"{self.bomb_count}個", inline=True)
         log_embed.add_field(name="開いた安全マス", value=f"{len(self.opened_safe)} / {self.safe_total}", inline=True)
         log_embed.add_field(name="最終倍率", value=f"{self.multiplier:.2f}倍", inline=True)
+        log_embed.add_field(
+            name="出目内訳",
+            value=(
+                f"💵 {sum(1 for v in self.cell_symbols.values() if v == '💵')}個 / "
+                f"💍 {sum(1 for v in self.cell_symbols.values() if v == '💍')}個 / "
+                f"💎 {sum(1 for v in self.cell_symbols.values() if v == '💎')}個"
+            ),
+            inline=True,
+        )
         log_embed.add_field(name="払い戻し", value=money(payout), inline=True)
         log_embed.add_field(name="利益 / 損失", value=money_change(profit), inline=True)
         log_embed.add_field(name="終了後の残高", value=money(new_balance), inline=False)

@@ -26,6 +26,20 @@ INTERVAL_SECONDS = 600
 STEPS = 10
 HORSES = ["サンダースター", "ミラクルラン", "ブルーファルコン", "ゴールドリーフ", "ナイトブレイズ", "スカイロード"]
 HORSE_ODDS = [1.8, 2.2, 3.0, 3.8, 5.0, 7.0]
+HORSE_EMOJIS = {
+    "スカイロード": "🚀🐎",
+    "ミラクルラン": "♾️🎠",
+    "ゴールドリーフ": "👑🐎",
+    "ナイトブレイズ": "🌃🎠",
+    "ブルーファルコン": "🩵🐎",
+    "サンダースター": "⚡️🎠",
+}
+
+
+def entry_label(event, entry):
+    if event["kind"] == "horse":
+        return f"{HORSE_EMOJIS.get(entry['name'], '🐎')} {entry['name']}"
+    return f"🚤 {entry['name']}"
 BOATS = ["1号艇", "2号艇", "3号艇", "4号艇", "5号艇", "6号艇"]
 BOAT_ODDS = [1.8, 2.2, 3.0, 4.0, 5.0, 6.0]
 
@@ -101,12 +115,12 @@ def make_embed(event):
             embed.description = "レース中止"
         else:
             entry = event["entries"][winner]
-            embed.description = f"優勝：**{entry['name']}**（{entry['odds']}倍）"
+            embed.description = f"優勝：**{entry_label(event, entry)}**（{entry['odds']}倍）"
 
     entry_lines = []
     for i, entry in enumerate(event["entries"]):
         marker = " 🏆" if status == "finished" and event.get("winner_index") == i else ""
-        entry_lines.append(f"**{i + 1}. {entry['name']}** — {entry['odds']}倍{marker}")
+        entry_lines.append(f"{entry_label(event, entry)}｜{entry['odds']}倍{marker}")
     embed.add_field(name="出走一覧", value="\n".join(entry_lines), inline=False)
 
     bets = event.get("bets", {})
@@ -132,7 +146,7 @@ def make_embed(event):
 def render_track(event, positions):
     icon = "🐎" if event["kind"] == "horse" else "🚤"
     return "\n".join(
-        f"{i + 1}. {entry['name']}  " + ("·" * positions[i]) + icon
+        f"{entry_label(event, entry)}  " + ("·" * positions[i]) + icon
         for i, entry in enumerate(event["entries"])
     )
 
@@ -202,7 +216,7 @@ class BetModal(discord.ui.Modal):
             event["bets"][uid] = {"entry_index": self.entry_index, "amount": amount}
             save_data()
 
-        chosen = event["entries"][self.entry_index]["name"]
+        chosen = entry_label(event, event["entries"][self.entry_index])
         await interaction.response.send_message(
             f"{chosen} に {money_fn(amount)} 投票したよ！残高：{money_fn(balance - amount)}",
             ephemeral=True,
@@ -216,7 +230,7 @@ class RaceBetView(discord.ui.View):
         self.event_id = str(event["id"])
         for index, entry in enumerate(event["entries"]):
             button = discord.ui.Button(
-                label=f"{index + 1}. {entry['name']}",
+                label=f"{index + 1}. {entry_label(event, entry)}",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"race:{self.event_id}:{index}",
                 disabled=disabled,

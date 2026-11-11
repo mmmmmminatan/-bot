@@ -86,8 +86,17 @@ async def on_message(message):
             print("[REPLY ERROR]")
             traceback.print_exc()
 
-    # ほかのコマンドも動かす
-    await bot.process_commands(message)
+    # MINESだけは先頭の . を省略しても起動できるようにする
+    # 例: mine all 3 1 / mine 250000 3 1
+    original_content = message.content
+    if re.match(r"^mine(?:\\s|$)", original_content, re.IGNORECASE):
+        message.content = "." + original_content
+
+    try:
+        # ほかのコマンドも動かす
+        await bot.process_commands(message)
+    finally:
+        message.content = original_content
 
 
 # ==================================================

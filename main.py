@@ -89,7 +89,7 @@ async def on_message(message):
     # MINESだけは先頭の . を省略しても起動できるようにする
     # 例: mine all 3 1 / mine 250000 3 1
     original_content = message.content
-    if re.match(r"^mine(?:\\s|$)", original_content, re.IGNORECASE):
+    if re.match(r"^mine(?:\s|$)", original_content, re.IGNORECASE):
         message.content = "." + original_content
 
     try:

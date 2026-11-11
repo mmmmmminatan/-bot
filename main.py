@@ -6673,7 +6673,7 @@ async def servers_command(interaction: discord.Interaction):
 from giveaway_feature import setup_giveaway
 from race_feature import setup_race
 
-setup_giveaway(bot, get_balance, set_balance)
+setup_giveaway(bot, get_balance, set_balance, send_coin_log)
 setup_race(bot, get_balance, set_balance, money)
 
 

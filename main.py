@@ -2814,6 +2814,13 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             await ctx.reply(msg, mention_author=False)
         return
 
+    spin_message = None
+    if interaction is None:
+        spin_message = await ctx.reply(
+            content="<a:emoji_34:1570925093058781264> **スロット回転中...**",
+            mention_author=False,
+        )
+
     jp_contribution = max(1, int(total_bet * 0.1))
     add_jackpot_pool(jp_contribution)
 
@@ -2933,7 +2940,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     if interaction:
         await interaction.response.edit_message(embed=embed, view=view)
     else:
-        await ctx.reply(embed=embed, view=view, mention_author=False)
+        await asyncio.sleep(3)
+        if spin_message is not None:
+            await spin_message.edit(content=None, embed=embed, view=view)
 
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)
 

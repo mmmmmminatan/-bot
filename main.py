@@ -2970,11 +2970,11 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             embed=make_reel_animation_embed(0),
             mention_author=False,
         )
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.3)
         await spin_message.edit(embed=make_reel_animation_embed(1))
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.3)
         await spin_message.edit(embed=make_reel_animation_embed(2))
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.3)
         await spin_message.edit(embed=embed, view=view)
 
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)

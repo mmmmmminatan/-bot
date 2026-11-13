@@ -2933,21 +2933,48 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     if interaction:
         await interaction.response.edit_message(embed=embed, view=view)
     else:
-        # 最終結果は先に確定済み。3秒間はリール部分だけGIF演出に差し替える
-        spin_rows = slot_display.split("\n")
+        # 3レーン同時に1秒回転 → 左 → 中央 → 右の順で停止
         spin_emoji = "<a:emoji_34:1570925093058781264>"
-        # 3列それぞれに回転GIFを配置（各リールを個別に回しているように見せる）
-        spin_rows[1] = f"{left_top} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_top} {gray_emoji}"
-        spin_rows[2] = f"{left_mid} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_mid} {jp_display_parts}{gray_emoji}"
-        spin_rows[3] = f"{left_bot} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_bot} {gray_emoji}"
-        spin_embed = discord.Embed(description="\n".join(spin_rows), color=color)
-        if hit_jackpot:
-            spin_embed.set_author(
-                name="🎉 JACKPOT WINNER!! 🎉",
-                icon_url=ctx.author.display_avatar.url if hasattr(ctx.author, "display_avatar") else None,
+
+        def make_reel_animation_embed(revealed_columns):
+            reel_rows = []
+            for row_index in range(3):
+                cells = [
+                    displayed_rows[row_index][column_index]
+                    if column_index < revealed_columns
+                    else spin_emoji
+                    for column_index in range(3)
+                ]
+                reel_rows.append("|".join(cells))
+
+            animation_display = (
+                f"{top_bottom_gray}\\n"
+                f"{left_top} {reel_rows[0]} {right_top} {gray_emoji}\\n"
+                f"{left_mid} {reel_rows[1]} {right_mid} {jp_display_parts}{gray_emoji}\\n"
+                f"{left_bot} {reel_rows[2]} {right_bot} {gray_emoji}\\n"
+                f"{top_bottom_gray}\\n"
+                f"{bet_label_emoji}{b[0]}{b[1]}{b[2]}{gray_emoji}{won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}{gray_emoji}\\n"
+                f"{divider_gray}\\n"
+                f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\\n"
+                f"{top_bottom_gray}"
             )
-        spin_message = await ctx.reply(embed=spin_embed, mention_author=False)
-        await asyncio.sleep(3)
+            animation_embed = discord.Embed(description=animation_display, color=color)
+            if hit_jackpot:
+                animation_embed.set_author(
+                    name="🎉 JACKPOT WINNER!! 🎉",
+                    icon_url=ctx.author.display_avatar.url if hasattr(ctx.author, "display_avatar") else None,
+                )
+            return animation_embed
+
+        spin_message = await ctx.reply(
+            embed=make_reel_animation_embed(0),
+            mention_author=False,
+        )
+        await asyncio.sleep(1)
+        await spin_message.edit(embed=make_reel_animation_embed(1))
+        await asyncio.sleep(1)
+        await spin_message.edit(embed=make_reel_animation_embed(2))
+        await asyncio.sleep(1)
         await spin_message.edit(embed=embed, view=view)
 
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)

@@ -2945,14 +2945,14 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             reel_rows.append("|".join(cells))
 
         animation_display = (
-            f"{top_bottom_gray}\\n"
-            f"{left_top} {reel_rows[0]} {right_top} {gray_emoji}\\n"
-            f"{left_mid} {reel_rows[1]} {right_mid} {jp_display_parts}{gray_emoji}\\n"
-            f"{left_bot} {reel_rows[2]} {right_bot} {gray_emoji}\\n"
-            f"{top_bottom_gray}\\n"
-            f"{bet_label_emoji}{b[0]}{b[1]}{b[2]}{gray_emoji}{won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}{gray_emoji}\\n"
-            f"{divider_gray}\\n"
-            f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\\n"
+            f"{top_bottom_gray}\n"
+            f"{left_top} {reel_rows[0]} {right_top} {gray_emoji}\n"
+            f"{left_mid} {reel_rows[1]} {right_mid} {jp_display_parts}{gray_emoji}\n"
+            f"{left_bot} {reel_rows[2]} {right_bot} {gray_emoji}\n"
+            f"{top_bottom_gray}\n"
+            f"{bet_label_emoji}{b[0]}{b[1]}{b[2]}{gray_emoji}{won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}{gray_emoji}\n"
+            f"{divider_gray}\n"
+            f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\n"
             f"{top_bottom_gray}"
         )
         animation_embed = discord.Embed(description=animation_display, color=color)

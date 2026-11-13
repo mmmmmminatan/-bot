@@ -2955,12 +2955,11 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
             f"{credit_label_emoji}{c[0]}{c[1]}{c[2]}{c[3]}{c[4]}{c[5]}{c[6]}{c[7]}{c[8]}{c[9]}{c[10]}{gray_emoji}\n"
             f"{top_bottom_gray}"
         )
-        animation_embed = discord.Embed(description=animation_display, color=color)
-        if hit_jackpot:
-            animation_embed.set_author(
-                name="🎉 JACKPOT WINNER!! 🎉",
-                icon_url=ctx.author.display_avatar.url if hasattr(ctx.author, "display_avatar") else None,
-            )
+        # 回転中は結果を予想できないよう、右レーン停止まですべて灰色
+        animation_embed = discord.Embed(
+            description=animation_display,
+            color=discord.Color.dark_grey(),
+        )
         return animation_embed
 
     if interaction:

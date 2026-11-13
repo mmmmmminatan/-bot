@@ -2866,9 +2866,35 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     )
 
     profit_text = money_change(profit)
+
+    # 表示専用のニアミス演出。抽選結果 grid と配当計算には一切触れない
+    visual_grid = [row[:] for row in grid]
+    payline_rows = []
+    if line_choice >= 1:
+        payline_rows.append((1, 1, 1))
+    if line_choice >= 2:
+        payline_rows.extend([(0, 0, 0), (2, 2, 2)])
+    if line_choice >= 3:
+        payline_rows.extend([(0, 1, 2), (2, 1, 0)])
+
+    for row_positions in payline_rows:
+        left_symbol = grid[row_positions[0]][0]
+        middle_symbol = grid[row_positions[1]][1]
+        right_symbol = grid[row_positions[2]][2]
+
+        # 777 / JP の2つがリーチして外れた場合だけ、右レーンの隣の段に表示
+        if (
+            left_symbol == middle_symbol
+            and left_symbol in ("7️⃣", "JP")
+            and right_symbol != left_symbol
+        ):
+            right_payline_row = row_positions[2]
+            near_row = right_payline_row - 1 if right_payline_row == 2 else right_payline_row + 1
+            visual_grid[near_row][2] = left_symbol
+
     displayed_rows = [
         [display_symbol(symbol, ctx.guild, settings) for symbol in row]
-        for row in grid
+        for row in visual_grid
     ]
 
     # ジャックポットのプール金額を数字絵文字に変換

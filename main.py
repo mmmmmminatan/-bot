@@ -2936,9 +2936,10 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         # 最終結果は先に確定済み。3秒間はリール部分だけGIF演出に差し替える
         spin_rows = slot_display.split("\n")
         spin_emoji = "<a:emoji_34:1570925093058781264>"
-        spin_rows[1] = f"{left_top} {spin_emoji} {right_top} {gray_emoji}"
-        spin_rows[2] = f"{left_mid} {spin_emoji} {right_mid} {jp_display_parts}{gray_emoji}"
-        spin_rows[3] = f"{left_bot} {spin_emoji} {right_bot} {gray_emoji}"
+        # 3列それぞれに回転GIFを配置（各リールを個別に回しているように見せる）
+        spin_rows[1] = f"{left_top} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_top} {gray_emoji}"
+        spin_rows[2] = f"{left_mid} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_mid} {jp_display_parts}{gray_emoji}"
+        spin_rows[3] = f"{left_bot} {spin_emoji}|{spin_emoji}|{spin_emoji} {right_bot} {gray_emoji}"
         spin_embed = discord.Embed(description="\n".join(spin_rows), color=color)
         if hit_jackpot:
             spin_embed.set_author(

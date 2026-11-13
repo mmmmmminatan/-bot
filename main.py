@@ -2826,6 +2826,12 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     
     paylines = get_paylines(grid, line_choice)
 
+    # 777 / JACKPOT のリーチなら、右レーン停止前に少し間を作る
+    special_reach = any(
+        line[0] == line[1] and line[0] in ("7️⃣", "JP")
+        for line in paylines
+    )
+
     winning_symbol = None
     total_payout = 0
     hit_jackpot = False
@@ -2974,6 +2980,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         await interaction.message.edit(embed=make_reel_animation_embed(1), view=view)
         await asyncio.sleep(0.3)
         await interaction.message.edit(embed=make_reel_animation_embed(2), view=view)
+        if special_reach:
+            await asyncio.sleep(0.8)
         await asyncio.sleep(0.3)
         view.spin_again.disabled = False
         await interaction.message.edit(embed=embed, view=view)
@@ -2986,6 +2994,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         await spin_message.edit(embed=make_reel_animation_embed(1))
         await asyncio.sleep(0.3)
         await spin_message.edit(embed=make_reel_animation_embed(2))
+        if special_reach:
+            await asyncio.sleep(0.8)
         await asyncio.sleep(0.3)
         view.spin_again.disabled = False
         await spin_message.edit(embed=embed, view=view)

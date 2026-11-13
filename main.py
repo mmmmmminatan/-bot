@@ -2929,6 +2929,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         embed.set_author(name="🎉 JACKPOT WINNER!! 🎉", icon_url=ctx.author.display_avatar.url if hasattr(ctx.author, "display_avatar") else None)
 
     view = SlotView(ctx.author.id, base_bet, line_choice)
+    # 回転演出中は再スピンボタンを無効化
+    view.spin_again.disabled = True
 
     # 通常起動・「もう一度回す」の両方で共通のリール演出を使う
     spin_emoji = "<a:emoji_34:1570925093058781264>"
@@ -2973,6 +2975,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         await asyncio.sleep(0.3)
         await interaction.message.edit(embed=make_reel_animation_embed(2), view=view)
         await asyncio.sleep(0.3)
+        view.spin_again.disabled = False
         await interaction.message.edit(embed=embed, view=view)
     else:
         spin_message = await ctx.reply(
@@ -2984,6 +2987,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         await asyncio.sleep(0.3)
         await spin_message.edit(embed=make_reel_animation_embed(2))
         await asyncio.sleep(0.3)
+        view.spin_again.disabled = False
         await spin_message.edit(embed=embed, view=view)
 
     displayed_grid = grid_text(grid, guild=ctx.guild, settings=settings)

@@ -112,7 +112,7 @@ async def on_message(message):
 
         try:
             amount = random.randint(1, 1000)
-        await message.channel.send(make_au_message(message.author, amount), view=AuPaymentView(message.author.id, amount))
+            await message.channel.send(make_au_message(message.author, amount), view=AuPaymentView(message.author.id, amount))
 
             print("あうを検知して返信しました！")
 

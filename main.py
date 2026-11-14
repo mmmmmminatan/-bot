@@ -6826,8 +6826,29 @@ def update_user_balance(user_id: int, amount: int):
   USER_BALANCES[user_id] = current + amount
 
 
+import asyncio
+import os
+import random
+import discord
+from discord.ext import commands
+
 # ==================================================
-# .hl ハイ＆ロー（既存のカード画像を使用）
+# 所持金管理システム
+# ==================================================
+USER_BALANCES = {}
+
+
+def get_user_balance(user_id: int) -> int:
+  return USER_BALANCES.get(user_id, 1000)
+
+
+def update_user_balance(user_id: int, amount: int):
+  current = get_user_balance(user_id)
+  USER_BALANCES[user_id] = current + amount
+
+
+# ==================================================
+# ハイ＆ロー 設定
 # ==================================================
 
 HL_SUITS = ["spade", "club", "diamond", "heart"]
@@ -6876,6 +6897,38 @@ def hl_card_image_path(card):
   return get_card_image_path(card["suit"], card["val"])
 
 
+def calculate_odds(deck: list, current_card: dict, high: bool) -> float:
+  """残りデッキと現在のカードから、HIGH/LOWのオッズ（倍率）を確率に基づいて計算する"""
+  if current_card["suit"] == "joker":
+    return 2.0
+
+  old_val = current_card["val"]
+  total_remaining = len(deck)
+  if total_remaining == 0:
+    return 1.0
+
+  # 該当するカードの枚数を数える
+  count_target = 0
+  for card in deck:
+    if card["suit"] == "joker":
+      continue
+    if high and card["val"] > old_val:
+      count_target += 1
+    elif not high and card["val"] < old_val:
+      count_target += 1
+
+  if count_target == 0:
+    return 0.0  # 選択肢が存在しない場合
+
+  # 確率の逆数からオッズを算出（カジノのハウスエッジ約5%を考慮）
+  probability = count_target / total_remaining
+  raw_odds = 1.0 / probability
+  odds = round(raw_odds * 0.95, 2)
+
+  # 最低倍率は 1.05倍保証
+  return max(odds, 1.05)
+
+
 class HighLowView(discord.ui.View):
 
   def __init__(self, owner_id: int, deck: list, current: dict, bet: int):
@@ -6884,36 +6937,11 @@ class HighLowView(discord.ui.View):
     self.deck = deck
     self.current = current
     self.bet = bet
+    self.current_prize = bet  # 現在の獲得賞金（連勝するごとに倍率が乗算されていく）
     self.streak = 0
     self.finished = False
     self.image_path = f"cards/hl_{id(self)}.png"
     self.lock = asyncio.Lock()
-    self.refresh_choice_buttons()
-
-  def refresh_choice_buttons(self):
-    # A（1）ではLOW、K（13）ではHIGHを選べないようにする
-    for child in self.children:
-      if isinstance(child, discord.ui.Button):
-        if child.label.startswith("HIGH"):
-          child.disabled = self.current["suit"] != "joker" and self.current["val"] == 13
-        elif child.label.startswith("LOW"):
-          child.disabled = self.current["suit"] != "joker" and self.current["val"] == 1
-
-  def difficulty_hint(self):
-    if self.current["suit"] == "joker":
-      return "🃏 ジョーカー：引き分け扱い"
-    rank = self.current["val"]
-    if rank == 1:
-      return "A（1）：LOWは選択不可。HIGHのみ"
-    if rank == 2:
-      return "2：HIGH寄り。LOWはかなり難しい"
-    if rank <= 5:
-      return "小さい数字：HIGH寄り"
-    if rank <= 9:
-      return "中間の数字：HIGH／LOWを慎重に予想"
-    if rank <= 12:
-      return "大きい数字：LOW寄り"
-    return "K（13）：HIGHは選択不可。LOWのみ"
 
   async def interaction_check(self, interaction: discord.Interaction) -> bool:
     if interaction.user.id != self.owner_id:
@@ -6941,15 +6969,12 @@ class HighLowView(discord.ui.View):
     return True
 
   def make_embed(self, description="次のカードは HIGH？ LOW？", show_back=True):
-    # 現在の連続正解数に応じた獲得予定賞金を計算（例: 1勝ごとに50%アップ、0勝なら賭け金）
-    potential_prize = (
-        int(self.bet * (1.0 + 0.5 * self.streak))
-        if self.streak > 0
-        else self.bet
-    )
+    # 現在のカードに基づくHIGH/LOWそれぞれの予測オッズを計算
+    high_odds = calculate_odds(self.deck, self.current, True)
+    low_odds = calculate_odds(self.deck, self.current, False)
 
     embed = discord.Embed(
-        title="🃏 ハイ＆ロー",
+        title="🃏 確率連動ハイ＆ロー",
         description=description,
         color=discord.Color.blurple(),
     )
@@ -6959,10 +6984,14 @@ class HighLowView(discord.ui.View):
         inline=True,
     )
     embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
-    embed.add_field(name="予想の目安", value=self.difficulty_hint(), inline=False)
     embed.add_field(
-        name="賭け金 / 獲得予定",
-        value=f"ベット: **{self.bet}** コイン\n獲得予定: **{potential_prize}** コイン",
+        name="賭け金 / 現在の賞金",
+        value=f"ベット: **{self.bet}** コイン\n賞金プール: **{int(self.current_prize)}** コイン",
+        inline=False,
+    )
+    embed.add_field(
+        name="予想オッズ（倍率）",
+        value=f"📈 HIGH: **{high_odds}倍**\n📉 LOW: **{low_odds}倍**",
         inline=False,
     )
     embed.set_footer(text=f"残りカード：{len(self.deck)}枚")
@@ -6976,8 +7005,6 @@ class HighLowView(discord.ui.View):
     if disable:
       for child in self.children:
         child.disabled = True
-    if not disable:
-      self.refresh_choice_buttons()
     embed = self.make_embed(description, show_back=show_back)
     file = discord.File(self.image_path, filename="highlow.png")
     await interaction.response.edit_message(
@@ -6992,17 +7019,10 @@ class HighLowView(discord.ui.View):
     self.finished = True
 
     if won:
-      # 勝って終了（キャッシュアウト、または山札切れ）
-      if self.streak > 0:
-        prize = int(self.bet * (1.0 + 0.5 * self.streak))
-        update_user_balance(self.owner_id, prize)
-        message += f"\n\n💰 **+{prize} コイン** を獲得しました！（所持金: {get_user_balance(self.owner_id)} コイン）"
-      else:
-        # 0勝のまま終了した場合は賭け金をそのまま返却
-        update_user_balance(self.owner_id, self.bet)
-        message += f"\n\n🔄 賭け金（{self.bet} コイン）が返却されました。"
+      final_payout = int(self.current_prize)
+      update_user_balance(self.owner_id, final_payout)
+      message += f"\n\n💰 **+{final_payout} コイン** を獲得しました！（所持金: {get_user_balance(self.owner_id)} コイン）"
     else:
-      # 不正解（すでに開始時にベットは引かれているので追加減算は不要）
       message += f"\n\n💸 賭け金 **{self.bet} コイン** を失いました…（所持金: {get_user_balance(self.owner_id)} コイン）"
 
     await self.update_message(
@@ -7026,6 +7046,15 @@ class HighLowView(discord.ui.View):
         )
         return
 
+      # 選択した時点のオッズを計算
+      odds = calculate_odds(self.deck, self.current, high)
+      if odds <= 0.0:
+        await interaction.response.send_message(
+            "その選択肢に該当するカードが残っていません！別のほうを選んでね。",
+            ephemeral=True,
+        )
+        return
+
       next_card = self.deck.pop()
       old_rank = self.current["val"]
       next_rank = next_card["val"]
@@ -7034,7 +7063,7 @@ class HighLowView(discord.ui.View):
         self.current = next_card
         await self.update_message(
             interaction,
-            f"🃏 ジョーカー！引き分けだよ。連続正解数はそのまま。\n次のカードは HIGH？ LOW？",
+            f"🃏 ジョーカー！引き分けだよ。連続正解数と賞金はそのまま。\n次のカードは HIGH？ LOW？",
         )
         return
 
@@ -7042,7 +7071,7 @@ class HighLowView(discord.ui.View):
         self.current = next_card
         await self.update_message(
             interaction,
-            f"同じ数字なので引き分け！連続正解数はそのまま。\n次のカードは HIGH？ LOW？",
+            f"同じ数字なので引き分け！連続正解数と賞金はそのまま。\n次のカードは HIGH？ LOW？",
         )
         return
 
@@ -7051,9 +7080,11 @@ class HighLowView(discord.ui.View):
 
       if correct:
         self.streak += 1
+        # 賞金に今回のオッズを掛け合わせて累積していく
+        self.current_prize = int(self.current_prize * odds)
         await self.update_message(
             interaction,
-            f"✅ 正解！次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
+            f"✅ 正解！({odds}倍) 次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
         )
       else:
         await self.finish(
@@ -7087,8 +7118,6 @@ class HighLowView(discord.ui.View):
   async def on_timeout(self):
     if not self.finished:
       self.finished = True
-      # タイムアウト時はペナルティとして賭け金没収とする場合
-      # update_user_balance(self.owner_id, -self.bet) などお好みで調整可能
     for child in self.children:
       child.disabled = True
     try:
@@ -7100,7 +7129,7 @@ class HighLowView(discord.ui.View):
 
 @bot.command(name="hl", aliases=["highlow"])
 async def highlow_command(ctx: commands.Context, bet: int = 100):
-  """既存のカード画像54枚を使ってハイ＆ローを開始（例: !hl 500）"""
+  """確率連動オッズのハイ＆ローを開始（例: !hl 500）"""
   if bet <= 0:
     await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
     return
@@ -7113,7 +7142,7 @@ async def highlow_command(ctx: commands.Context, bet: int = 100):
     )
     return
 
-  # ゲーム開始時に賭け金を一度差し引く
+  # ゲーム開始時に賭け金を引く
   update_user_balance(ctx.author.id, -bet)
 
   deck = hl_make_deck()

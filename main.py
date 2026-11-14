@@ -6888,6 +6888,32 @@ class HighLowView(discord.ui.View):
     self.finished = False
     self.image_path = f"cards/hl_{id(self)}.png"
     self.lock = asyncio.Lock()
+    self.refresh_choice_buttons()
+
+  def refresh_choice_buttons(self):
+    # A（1）ではLOW、K（13）ではHIGHを選べないようにする
+    for child in self.children:
+      if isinstance(child, discord.ui.Button):
+        if child.label.startswith("HIGH"):
+          child.disabled = self.current["suit"] != "joker" and self.current["val"] == 13
+        elif child.label.startswith("LOW"):
+          child.disabled = self.current["suit"] != "joker" and self.current["val"] == 1
+
+  def difficulty_hint(self):
+    if self.current["suit"] == "joker":
+      return "🃏 ジョーカー：引き分け扱い"
+    rank = self.current["val"]
+    if rank == 1:
+      return "A（1）：LOWは選択不可。HIGHのみ"
+    if rank == 2:
+      return "2：HIGH寄り。LOWはかなり難しい"
+    if rank <= 5:
+      return "小さい数字：HIGH寄り"
+    if rank <= 9:
+      return "中間の数字：HIGH／LOWを慎重に予想"
+    if rank <= 12:
+      return "大きい数字：LOW寄り"
+    return "K（13）：HIGHは選択不可。LOWのみ"
 
   async def interaction_check(self, interaction: discord.Interaction) -> bool:
     if interaction.user.id != self.owner_id:
@@ -6933,6 +6959,7 @@ class HighLowView(discord.ui.View):
         inline=True,
     )
     embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
+    embed.add_field(name="予想の目安", value=self.difficulty_hint(), inline=False)
     embed.add_field(
         name="賭け金 / 獲得予定",
         value=f"ベット: **{self.bet}** コイン\n獲得予定: **{potential_prize}** コイン",
@@ -6949,6 +6976,8 @@ class HighLowView(discord.ui.View):
     if disable:
       for child in self.children:
         child.disabled = True
+    if not disable:
+      self.refresh_choice_buttons()
     embed = self.make_embed(description, show_back=show_back)
     file = discord.File(self.image_path, filename="highlow.png")
     await interaction.response.edit_message(

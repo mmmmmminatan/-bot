@@ -6968,16 +6968,19 @@ class HighLowView(discord.ui.View):
     if image is None:
       return False
 
-    # 2枚表示のときだけ左右に緑の余白を追加。
-    # Discord上で画像全体が横長に表示されるため、カード自体も小さく見える。
-    if show_back and len(paths) == 2:
-      margin = image.width // 4
-      canvas = Image.new("RGB", (image.width + margin * 2, image.height), (0, 128, 0))
-      if image.mode == "RGBA":
-        canvas.paste(image, (margin, 0), image)
-      else:
-        canvas.paste(image, (margin, 0))
-      image = canvas
+    # 1枚表示・2枚表示のどちらも、左右に同じ幅の緑の余白を追加して
+    # Discord上でカードの見た目の大きさを揃える。
+    margin = image.width // 4
+    canvas = Image.new(
+        "RGB",
+        (image.width + margin * 2, image.height),
+        (0, 128, 0),
+    )
+    if image.mode == "RGBA":
+      canvas.paste(image, (margin, 0), image)
+    else:
+      canvas.paste(image, (margin, 0))
+    image = canvas
 
     image.save(self.image_path, format="PNG")
     return True

@@ -7002,11 +7002,14 @@ class HighLowView(discord.ui.View):
       embed.description = (
           f"{result_line}\n"
           f"**Bet** : **{self.bet:,}$**\n"
-          f"**Won** : **{won_value}**\n"
-          f"**Odds**\n"
-          f"HIGH : **{high_odds}x**\n"
-          f"LOW : **{low_odds}x**"
+          f"**Won** : **{won_value}**"
       )
+      if self.end_status != "Cash out":
+        embed.description += (
+            f"\n**Odds**\n"
+            f"HIGH : **{high_odds}x**\n"
+            f"LOW : **{low_odds}x**"
+        )
     else:
       embed.description = (
           f"**Combo** : **{self.streak}**\n"

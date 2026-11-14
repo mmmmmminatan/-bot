@@ -6933,9 +6933,10 @@ def calculate_odds(deck: list, current_card: dict, high: bool) -> float:
 
 class HighLowView(discord.ui.View):
 
-  def __init__(self, owner_id: int, deck: list, current: dict, bet: int):
+  def __init__(self, owner_id: int, deck: list, current: dict, bet: int, guild):
     super().__init__(timeout=180)
     self.owner_id = owner_id
+    self.guild = guild
     self.deck = deck
     self.current = current
     self.bet = bet
@@ -7035,12 +7036,33 @@ class HighLowView(discord.ui.View):
       return
     self.finished = True
 
-    if won:
-      final_payout = int(self.current_prize)
+    final_payout = int(self.current_prize) if won else 0
+    if final_payout > 0:
       update_user_balance(self.owner_id, final_payout)
-      message += f"\n\n💰 **+{final_payout:,} コイン** を獲得しました！（所持金: {get_balance(self.owner_id):,} コイン）"
+
+    final_balance = get_balance(self.owner_id)
+    profit = final_payout - self.bet
+    if won:
+      message += f"\n\n💰 **+{final_payout:,} コイン** を獲得しました！（所持金: {final_balance:,} コイン）"
     else:
-      message += f"\n\n💸 賭け金 **{self.bet:,} コイン** を失いました…（所持金: {get_balance(self.owner_id):,} コイン）"
+      message += f"\n\n💸 賭け金 **{self.bet:,} コイン** を失いました…（所持金: {final_balance:,} コイン）"
+
+    if self.guild is not None:
+      await send_coin_log(
+          self.guild,
+          discord.Embed(
+              title="🃏 HIGH&LOW 精算ログ",
+              description=(
+                  f"ユーザー：<@{self.owner_id}> (`{self.owner_id}`)\n"
+                  f"賭け金：**{money(self.bet)}**\n"
+                  f"配当：**{money(final_payout)}**\n"
+                  f"収支：**{money_change(profit)}**\n"
+                  f"残高：**{money(final_balance)}**\n"
+                  f"Combo：**{self.streak}**"
+              ),
+              color=discord.Color.green() if won else discord.Color.red(),
+          ),
+      )
 
     await self.update_message(
         interaction, message, show_back=False, disable=True
@@ -7180,10 +7202,25 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
 
   # 本来の残高から賭け金を差し引く
   update_user_balance(ctx.author.id, -bet_amount)
+  balance_after_bet = get_balance(ctx.author.id)
+
+  if ctx.guild is not None:
+    await send_coin_log(
+        ctx.guild,
+        discord.Embed(
+            title="🃏 HIGH&LOW ベットログ",
+            description=(
+                f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                f"賭け金：**{money(bet_amount)}**\n"
+                f"ベット後残高：**{money(balance_after_bet)}**"
+            ),
+            color=discord.Color.orange(),
+        ),
+    )
 
   deck = hl_make_deck()
   current = deck.pop()
-  view = HighLowView(ctx.author.id, deck, current, bet_amount)
+  view = HighLowView(ctx.author.id, deck, current, bet_amount, ctx.guild)
   embed = view.make_embed()
 
   if os.path.exists(view.image_path):

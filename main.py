@@ -35,26 +35,28 @@ bot = commands.Bot(
 # 2. あう検知設定
 # ==========================================
 
-# 「あう」「au」「㋐㋒」などを検知（記号・空白を挟んでもOK、逆順は対象外）
-pattern = re.compile(r"[あアぁァ㋐aAａＡ][\W_]*[うウぅゥ㋒uUｕＵ]", re.IGNORECASE)
+# 「あう」を検知（空白や記号を挟んでもOK）
+pattern = re.compile(r"あう")
 
-# あう検知の黄色い埋め込み
-def make_au_embed(user):
-    return discord.Embed(
-        title="⚠️あうを検知しました⚠️",
-        description=f"{user.mention}に500万円の請求が届いてます。",
-        color=discord.Color.yellow(),
+# あう検知メッセージ
+def make_au_message(user, amount):
+    return (
+        f"⚠️あうを検知しました⚠️\n\n"
+        f"当サーバーの利用規約に違反しているため、{user.mention}に"
+        f"**{amount}万円**の請求が届いてます。\n"
+        "直ちに下のボタンからお支払いください。"
     )
 
 
 class AuPaymentView(discord.ui.View):
-    def __init__(self, target_user_id):
+    def __init__(self, target_user_id, amount):
         super().__init__(timeout=300)
         self.target_user_id = int(target_user_id)
+        self.amount = int(amount)
 
     @discord.ui.button(
-        label="支払う",
-        style=discord.ButtonStyle.success,
+        label="お支払い",
+        style=discord.ButtonStyle.danger,
         emoji="💳",
     )
     async def pay_button(
@@ -62,18 +64,17 @@ class AuPaymentView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-        # 請求された本人以外は支払えない
         if interaction.user.id != self.target_user_id:
             await interaction.response.send_message(
-                "❌ これは請求された本人だけが支払えるよ。",
+                "❌ このボタンは請求対象の本人だけが押せます。",
                 ephemeral=True,
             )
             return
 
-        button.disabled = True
-        await interaction.response.edit_message(
-            content="✅ 500万円の支払いが完了しました！",
-            view=self,
+        # 実際の決済や残高の変更は行わない
+        await interaction.response.send_message(
+            "これはBot内の演出です。実際の請求・支払いは発生していません。",
+            ephemeral=True,
         )
 
 # ==========================================
@@ -110,7 +111,8 @@ async def on_message(message):
     if pattern.search(message.content):
 
         try:
-            await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView(message.author.id))
+            amount = random.randint(1, 1000)
+        await message.channel.send(make_au_message(message.author, amount), view=AuPaymentView(message.author.id, amount))
 
             print("あうを検知して返信しました！")
 
@@ -667,7 +669,8 @@ async def on_message(message):
 
     # ホワイトリスト登録者は「あう」検知の対象外
     if str(message.author.id) not in au_whitelist and pattern.search(message.content):
-        await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView(message.author.id))
+        amount = random.randint(1, 1000)
+        await message.channel.send(make_au_message(message.author, amount), view=AuPaymentView(message.author.id, amount))
         print("[AU DETECTED] あうを検知しました")
 
     # 既存機能

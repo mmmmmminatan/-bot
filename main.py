@@ -4517,11 +4517,17 @@ def create_bj_table_image(
 
         os.makedirs("cards", exist_ok=True)
 
-        # Blackjack cards: shrink the card rows to 75% without changing other games.
-        scale = 0.75
-        new_size = (max(1, int(table_img.width * scale)), max(1, int(table_img.height * scale)))
-        table_img = table_img.resize(new_size, Image.Resampling.LANCZOS)
-\n        table_img.save(output_path)
+        # Add transparent side margins so Discord displays the cards smaller.
+        margin = table_img.width // 3
+        padded_img = Image.new(
+            "RGBA",
+            (table_img.width + margin * 2, table_img.height),
+            (0, 0, 0, 0)
+        )
+        padded_img.paste(table_img, (margin, 0), table_img)
+        table_img = padded_img
+
+        table_img.save(output_path)
 
         return output_path
 

@@ -6968,10 +6968,10 @@ class HighLowView(discord.ui.View):
     if image is None:
       return False
 
-    # ハイ＆ローのカード表示だけ70%に縮小（元画像や他ゲームには影響しない）
+    # ハイ＆ローのカード表示だけ50%に縮小（1枚表示・2枚表示の両方に適用）
     new_size = (
-        max(1, int(image.width * 0.7)),
-        max(1, int(image.height * 0.7)),
+        max(1, int(image.width * 0.5)),
+        max(1, int(image.height * 0.5)),
     )
     image = image.resize(new_size, Image.Resampling.LANCZOS)
 

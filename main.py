@@ -6811,35 +6811,43 @@ async def servers_command(interaction: discord.Interaction):
 
 
 # ==================================================
-# .hl ハイ＆ロー（賭け金・通貨増減なし）
+# .hl ハイ＆ロー（既存のカード画像を使用）
 # ==================================================
 
-HL_SUITS = ["♠", "♥", "♦", "♣"]
+HL_SUITS = ["spade", "club", "diamond", "heart"]
 HL_RANKS = {
-    2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7",
-    8: "8", 9: "9", 10: "10", 11: "J", 12: "Q",
-    13: "K", 14: "A",
+    1: "A", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6",
+    7: "7", 8: "8", 9: "9", 10: "10", 11: "J",
+    12: "Q", 13: "K",
 }
 
 
 def hl_make_deck():
     deck = [
-        {"rank": rank, "label": f"{HL_RANKS[rank]}{suit}"}
+        {"suit": suit, "val": value}
         for suit in HL_SUITS
-        for rank in HL_RANKS
+        for value in HL_RANKS
     ]
     deck.extend([
-        {"rank": None, "label": "🃏 JOKER"},
-        {"rank": None, "label": "🃏 JOKER"},
+        {"suit": "joker", "val": "JOKER"},
+        {"suit": "joker", "val": "JOKER"},
     ])
     random.shuffle(deck)
     return deck
 
 
-def hl_card_color(card):
-    if "♥" in card["label"] or "♦" in card["label"]:
-        return discord.Color.red()
-    return discord.Color.blurple()
+def hl_card_label(card):
+    if card["suit"] == "joker":
+        return "🃏 JOKER"
+    suit_symbols = {
+        "spade": "♠", "club": "♣",
+        "diamond": "♦", "heart": "♥",
+    }
+    return f"{suit_symbols[card['suit']]} {HL_RANKS[card['val']]}"
+
+
+def hl_card_image_path(card):
+    return get_card_image_path(card["suit"], card["val"])
 
 
 class HighLowView(discord.ui.View):
@@ -6850,6 +6858,8 @@ class HighLowView(discord.ui.View):
         self.current = current
         self.streak = 0
         self.finished = False
+        self.image_path = f"cards/hl_{id(self)}.png"
+        self.lock = asyncio.Lock()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -6866,58 +6876,92 @@ class HighLowView(discord.ui.View):
             return False
         return True
 
-    def make_embed(self, description: str = "次のカードは HIGH？ LOW？"):
+    def render_cards(self, show_back=True):
+        paths = [hl_card_image_path(self.current)]
+        if show_back:
+            paths.append(get_card_image_path("back", 0))
+        image = merge_horizontal(paths)
+        if image is None:
+            return False
+        image.save(self.image_path, format="PNG")
+        return True
+
+    def make_embed(self, description="次のカードは HIGH？ LOW？", show_back=True):
         embed = discord.Embed(
             title="🃏 ハイ＆ロー",
             description=description,
             color=discord.Color.blurple(),
         )
-        embed.add_field(name="現在のカード", value=f"## {self.current['label']}", inline=True)
-        embed.add_field(name="連続正解", value=f"## {self.streak} 回", inline=True)
-        embed.set_footer(text=f"残りカード：{len(self.deck)}枚 • 賭け金なし")
+        embed.add_field(
+            name="現在のカード",
+            value=f"**{hl_card_label(self.current)}**",
+            inline=True,
+        )
+        embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
+        embed.set_footer(text=f"残りカード：{len(self.deck)}枚")
+        if self.render_cards(show_back=show_back):
+            embed.set_image(url="attachment://highlow.png")
         return embed
 
-    async def finish(self, interaction: discord.Interaction, message: str):
-        self.finished = True
-        for child in self.children:
-            child.disabled = True
+    async def update_message(self, interaction, description, show_back=True, disable=False):
+        if disable:
+            for child in self.children:
+                child.disabled = True
+        embed = self.make_embed(description, show_back=show_back)
+        file = discord.File(self.image_path, filename="highlow.png")
         await interaction.response.edit_message(
-            embed=self.make_embed(message),
+            embed=embed,
+            attachments=[file],
             view=self,
         )
 
-    async def choose(self, interaction: discord.Interaction, high: bool):
-        if not self.deck:
-            await self.finish(interaction, "山札がなくなったよ！ゲーム終了！")
-            return
+    async def finish(self, interaction, message):
+        self.finished = True
+        await self.update_message(interaction, message, show_back=False, disable=True)
 
-        next_card = self.deck.pop()
-        old_card = self.current
-        old_rank = old_card["rank"]
-        next_rank = next_card["rank"]
+    async def choose(self, interaction, high):
+        async with self.lock:
+            if self.finished:
+                await interaction.response.send_message("このゲームは終了しています。", ephemeral=True)
+                return
+            if not self.deck:
+                await self.finish(interaction, f"山札がなくなったよ！連続正解：**{self.streak}回**")
+                return
 
-        if old_rank is None or next_rank is None:
-            result = "🃏 ジョーカーが出たので引き分け！連続正解数はそのまま。"
-        elif old_rank == next_rank:
-            result = "引き分け！連続正解数はそのまま。"
-        else:
-            correct = (next_rank > old_rank) if high else (next_rank < old_rank)
-            if correct:
-                self.streak += 1
-                result = f"✅ 正解！次のカードは **{next_card['label']}**！"
-            else:
+            next_card = self.deck.pop()
+            old_rank = self.current["val"]
+            next_rank = next_card["val"]
+
+            if self.current["suit"] == "joker" or next_card["suit"] == "joker":
                 self.current = next_card
-                await self.finish(
+                await self.update_message(
                     interaction,
-                    f"❌ 不正解！次のカードは **{next_card['label']}** でした。\n連続正解：**{self.streak}回**",
+                    f"🃏 ジョーカー！引き分けだよ。連続正解数はそのまま。\n次のカードは HIGH？ LOW？",
                 )
                 return
 
-        self.current = next_card
-        await interaction.response.edit_message(
-            embed=self.make_embed(f"{result}\n\n次のカードは HIGH？ LOW？"),
-            view=self,
-        )
+            if old_rank == next_rank:
+                self.current = next_card
+                await self.update_message(
+                    interaction,
+                    f"同じ数字なので引き分け！連続正解数はそのまま。\n次のカードは HIGH？ LOW？",
+                )
+                return
+
+            correct = (next_rank > old_rank) if high else (next_rank < old_rank)
+            self.current = next_card
+
+            if correct:
+                self.streak += 1
+                await self.update_message(
+                    interaction,
+                    f"✅ 正解！次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
+                )
+            else:
+                await self.finish(
+                    interaction,
+                    f"❌ 不正解！次のカードは **{hl_card_label(next_card)}** でした。\n連続正解：**{self.streak}回**",
+                )
 
     @discord.ui.button(label="HIGH（高い）", style=discord.ButtonStyle.success)
     async def high_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -6935,15 +6979,24 @@ class HighLowView(discord.ui.View):
         self.finished = True
         for child in self.children:
             child.disabled = True
+        try:
+            if os.path.exists(self.image_path):
+                os.remove(self.image_path)
+        except OSError:
+            pass
 
 
 @bot.command(name="hl", aliases=["highlow"])
 async def highlow_command(ctx: commands.Context):
-    """トランプ54枚でハイ＆ローを開始（賭け金なし）"""
+    """既存のカード画像54枚を使ってハイ＆ローを開始"""
     deck = hl_make_deck()
     current = deck.pop()
     view = HighLowView(ctx.author.id, deck, current)
-    await ctx.send(embed=view.make_embed(), view=view)
+    embed = view.make_embed()
+    if os.path.exists(view.image_path):
+        await ctx.send(embed=embed, file=discord.File(view.image_path, filename="highlow.png"), view=view)
+    else:
+        await ctx.send(embed=embed, view=view)
 
 
 # ==================================================

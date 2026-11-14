@@ -6969,9 +6969,9 @@ class HighLowView(discord.ui.View):
     if image is None:
       return False
 
-    # 1枚表示・2枚表示のどちらも、左右に同じ幅の緑の余白を追加して
-    # Discord上でカードの見た目の大きさを揃える。
-    margin = image.width // 4
+    # 1枚表示は左右の緑の余白を広めにして、カードを少し小さく見せる。
+    # 2枚表示の余白は今までどおり。
+    margin = image.width // 2 if not show_back else image.width // 4
     canvas = Image.new(
         "RGB",
         (image.width + margin * 2, image.height),

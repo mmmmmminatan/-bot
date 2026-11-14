@@ -37,12 +37,35 @@ bot = commands.Bot(
 # 「あう」「au」「㋐㋒」などを検知（記号・空白を挟んでもOK、逆順は対象外）
 pattern = re.compile(r"[あアぁァ㋐aAａＡ][\W_]*[うウぅゥ㋒uUｕＵ]", re.IGNORECASE)
 
-# 返信する文章
-REPLY_TEXT = (
-    "😅😅😅😅😅😅😅😅😅😅😅😅😅\n"
-    "😅✋⚠️あうを検知しました⚠️✋😅\n"
-    "😅😅😅😅😅😅😅😅😅😅😅😅😅"
-)
+# あう検知の黄色い埋め込み
+def make_au_embed(user):
+    return discord.Embed(
+        title="⚠️あうを検知しました⚠️",
+        description=f"{user.mention}に500万円の請求が届いてます。",
+        color=discord.Color.yellow(),
+    )
+
+
+class AuPaymentView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(
+        label="支払う",
+        style=discord.ButtonStyle.success,
+        emoji="💳",
+    )
+    async def pay_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(
+            "✅ 500万円の支払いが完了しました！\n※これは演出です。Botの残高・通貨は変わりません。",
+            ephemeral=True,
+        )
 
 # ==========================================
 # 3. 起動イベント
@@ -78,7 +101,7 @@ async def on_message(message):
     if pattern.search(message.content):
 
         try:
-            await message.channel.send(REPLY_TEXT)
+            await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView())
 
             print("あうを検知して返信しました！")
 
@@ -635,7 +658,7 @@ async def on_message(message):
 
     # ホワイトリスト登録者は「あう」検知の対象外
     if str(message.author.id) not in au_whitelist and pattern.search(message.content):
-        await message.channel.send(REPLY_TEXT)
+        await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView())
         print("[AU DETECTED] あうを検知しました")
 
     # 既存機能

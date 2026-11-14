@@ -6994,28 +6994,13 @@ class HighLowView(discord.ui.View):
         title="HIGH&LOW",
         color=discord.Color.blurple(),
     )
-    embed.add_field(
-        name="Combo",
-        value=f"**{self.streak}**",
-        inline=True,
-    )
-    embed.add_field(
-        name="Bet",
-        value=f"**{self.bet:,}$**",
-        inline=True,
-    )
-    embed.add_field(
-        name="Won",
-        value=f"**{int(self.current_prize):,}$**",
-        inline=True,
-    )
-    embed.add_field(
-        name="Odds",
-        value=(
-            f"**{high_odds}x** HIGH\n"
-            f"**{low_odds}x** LOW"
-        ),
-        inline=False,
+    embed.description = (
+        f"**Combo** : **{self.streak}**\n"
+        f"**Bet** : **{self.bet:,}$**\n"
+        f"**Won** : **{int(self.current_prize):,}$**\n"
+        f"**Odds**\n"
+        f"HIGH : **{high_odds}x**\n"
+        f"LOW : **{low_odds}x**"
     )
     embed.set_footer(text=f"{len(self.deck)} cards")
     if self.render_cards(show_back=show_back):

@@ -4517,7 +4517,11 @@ def create_bj_table_image(
 
         os.makedirs("cards", exist_ok=True)
 
-        # Blackjack cards: shrink the card rows to 75% without changing other games.\n        scale = 0.75\n        new_size = (max(1, int(table_img.width * scale)), max(1, int(table_img.height * scale)))\n        table_img = table_img.resize(new_size, Image.Resampling.LANCZOS)\n\n        table_img.save(output_path)
+        # Blackjack cards: shrink the card rows to 75% without changing other games.
+        scale = 0.75
+        new_size = (max(1, int(table_img.width * scale)), max(1, int(table_img.height * scale)))
+        table_img = table_img.resize(new_size, Image.Resampling.LANCZOS)
+\n        table_img.save(output_path)
 
         return output_path
 
@@ -5543,7 +5547,9 @@ async def blackjack(ctx, bet: int = None):
 
     except Exception as e:
 
-        print(f"[BJ START ERROR] {e}")
+        print(f"[BJ START ERROR] {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
         # 開始失敗時の返金
         if 'view' not in locals() or not view.settled:

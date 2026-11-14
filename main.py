@@ -6990,27 +6990,34 @@ class HighLowView(discord.ui.View):
     low_odds = calculate_odds(self.deck, self.current, False)
 
     embed = discord.Embed(
-        title="🃏 確率連動 ＆ 賞金加算ハイ＆ロー",
+        title="HIGH&LOW",
         description=description,
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="現在のカード",
-        value=f"**{hl_card_label(self.current)}**",
+        name="Combo",
+        value=f"連続正解：**{self.streak}回**",
         inline=True,
     )
-    embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
     embed.add_field(
-        name="賭け金 / 現在の賞金プール",
-        value=f"ベット: **{self.bet:,}** コイン\n獲得賞金: **{int(self.current_prize):,}** コイン",
+        name="Bet",
+        value=(
+            f"賭け金：**{self.bet:,} コイン**\n"
+            f"獲得賞金：**{int(self.current_prize):,} コイン**"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="Odds",
+        value=f"HIGH：**{high_odds}倍**\nLOW：**{low_odds}倍**",
         inline=False,
     )
     embed.add_field(
-        name="予想オッズ（倍率）",
-        value=f"📈 HIGH: **{high_odds}倍**\n📉 LOW: **{low_odds}倍**",
+        name="カード",
+        value=f"**{hl_card_label(self.current)}**",
         inline=False,
     )
-    embed.set_footer(text=f"残りカード：{len(self.deck)}枚")
+    embed.set_footer(text=f"残りのカード数：{len(self.deck)} cards")
     if self.render_cards(show_back=show_back):
       embed.set_image(url="attachment://highlow.png")
     return embed

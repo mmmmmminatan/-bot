@@ -6996,23 +6996,34 @@ class HighLowView(discord.ui.View):
     )
     embed.add_field(
         name="Combo",
-        value=f"**{self.streak}**",
+        value=f"コンボ数：**{self.streak}**",
         inline=True,
     )
     embed.add_field(
         name="Bet",
-        value=(
-            f"賭け金：**{self.bet:,} コイン**\n"
-            f"獲得賞金：**{int(self.current_prize):,} コイン**"
-        ),
+        value=f"ベット数：**{self.bet:,}$**",
+        inline=True,
+    )
+    embed.add_field(
+        name="Won",
+        value=f"獲得賞金：**{int(self.current_prize):,}$**",
         inline=True,
     )
     embed.add_field(
         name="Odds",
-        value=f"HIGH：**{high_odds}**\nLOW：**{low_odds}**",
+        value=(
+            f"倍率\n"
+            f"HIGH：**{high_odds}x**\n"
+            f"LOW：**{low_odds}x**"
+        ),
         inline=False,
     )
-    embed.set_footer(text=f"{len(self.deck)} cards")
+    embed.add_field(
+        name="カード",
+        value="\u200b",
+        inline=False,
+    )
+    embed.set_footer(text=f"残りのカード数 {len(self.deck)} cards")
     if self.render_cards(show_back=show_back):
       embed.set_image(url="attachment://highlow.png")
     return embed

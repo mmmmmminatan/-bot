@@ -43,7 +43,7 @@ def make_au_message(user, amount, completed=False):
     if completed:
         embed = discord.Embed(
             title="✅ お支払い完了",
-            description="お支払いが完了いたしました。",
+            description="お支払いが完了いたしました。\n※実際の請求・決済は発生していません。",
             color=discord.Color.green(),
         )
     else:
@@ -57,8 +57,6 @@ def make_au_message(user, amount, completed=False):
             color=discord.Color.gold(),
         )
 
-    # 実際の請求・決済が発生しないことを明記
-    embed.set_footer(text="この表示による実際の請求・決済は発生しません")
     return embed
 
 

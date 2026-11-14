@@ -6985,18 +6985,17 @@ class HighLowView(discord.ui.View):
     image.save(self.image_path, format="PNG")
     return True
 
-  def make_embed(self, description="次のカードは HIGH？ LOW？", show_back=True):
+  def make_embed(self, description=None, show_back=True):
     high_odds = calculate_odds(self.deck, self.current, True)
     low_odds = calculate_odds(self.deck, self.current, False)
 
     embed = discord.Embed(
         title="HIGH&LOW",
-        description=description,
         color=discord.Color.blurple(),
     )
     embed.add_field(
         name="Combo",
-        value=f"連続正解：**{self.streak}回**",
+        value=f"**{self.streak}**",
         inline=True,
     )
     embed.add_field(
@@ -7009,15 +7008,10 @@ class HighLowView(discord.ui.View):
     )
     embed.add_field(
         name="Odds",
-        value=f"HIGH：**{high_odds}倍**\nLOW：**{low_odds}倍**",
+        value=f"HIGH：**{high_odds}**\nLOW：**{low_odds}**",
         inline=False,
     )
-    embed.add_field(
-        name="カード",
-        value=f"**{hl_card_label(self.current)}**",
-        inline=False,
-    )
-    embed.set_footer(text=f"残りのカード数：{len(self.deck)} cards")
+    embed.set_footer(text=f"{len(self.deck)} cards")
     if self.render_cards(show_back=show_back):
       embed.set_image(url="attachment://highlow.png")
     return embed

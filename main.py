@@ -6943,6 +6943,8 @@ class HighLowView(discord.ui.View):
     self.current_prize = bet  # スタート時の賞金ベース
     self.streak = 0
     self.finished = False
+    self.end_status = None
+    self.final_profit = 0
     self.image_path = f"cards/hl_{id(self)}.png"
     self.lock = asyncio.Lock()
 
@@ -6994,14 +6996,26 @@ class HighLowView(discord.ui.View):
         title="HIGH&LOW",
         color=discord.Color.blurple(),
     )
-    embed.description = (
-        f"**Combo** : **{self.streak}**\n"
-        f"**Bet** : **{self.bet:,}$**\n"
-        f"**Won** : **{int(self.current_prize):,}$**\n"
-        f"**Odds**\n"
-        f"HIGH : **{high_odds}x**\n"
-        f"LOW : **{low_odds}x**"
-    )
+    if self.finished:
+      result_line = f"**{self.end_status}**"
+      won_value = f"+{self.final_profit:,}$" if self.final_profit > 0 else "0$"
+      embed.description = (
+          f"{result_line}\n"
+          f"**Bet** : **{self.bet:,}$**\n"
+          f"**Won** : **{won_value}**\n"
+          f"**Odds**\n"
+          f"HIGH : **{high_odds}x**\n"
+          f"LOW : **{low_odds}x**"
+      )
+    else:
+      embed.description = (
+          f"**Combo** : **{self.streak}**\n"
+          f"**Bet** : **{self.bet:,}$**\n"
+          f"**Won** : **{int(self.current_prize):,}$**\n"
+          f"**Odds**\n"
+          f"HIGH : **{high_odds}x**\n"
+          f"LOW : **{low_odds}x**"
+      )
     embed.set_footer(text=f"{len(self.deck)} cards")
     if self.render_cards(show_back=show_back):
       embed.set_image(url="attachment://highlow.png")
@@ -7027,6 +7041,8 @@ class HighLowView(discord.ui.View):
     self.finished = True
 
     final_payout = int(self.current_prize) if won else 0
+    self.end_status = "Cash out" if won else "Lose"
+    self.final_profit = final_payout - self.bet if won else 0
     if final_payout > 0:
       update_user_balance(self.owner_id, final_payout)
 

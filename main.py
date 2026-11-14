@@ -4726,13 +4726,13 @@ class BlackjackView(discord.ui.View):
 
             # プレイヤーの手札
             player_cards = ", ".join(
-                f"{card['suit']}の{card['val']}"
+                f"{card['suit'].upper()} {card['val']}"
                 for card in self.player_hand
             )
 
             # ディーラーの手札
             dealer_cards = ", ".join(
-                f"{card['suit']}の{card['val']}"
+                f"{card['suit'].upper()} {card['val']}"
                 for card in self.dealer_hand
             )
 
@@ -4813,7 +4813,7 @@ class BlackjackView(discord.ui.View):
             return True
 
         await interaction.response.send_message(
-            "他の人のゲームには干渉できません！",
+            "You cannot control another player's game.",
             ephemeral=True
         )
 
@@ -4935,7 +4935,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "このゲームは終了しています。"
+                    "This game has ended."
                 )
                 return
 
@@ -4985,7 +4985,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "処理中にエラーが発生しました。"
+                    "An error occurred."
                 )
 
     # ======================================
@@ -5010,7 +5010,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "このゲームは終了しています。"
+                    "This game has ended."
                 )
                 return
 
@@ -5043,7 +5043,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "処理中にエラーが発生しました。"
+                    "An error occurred."
                 )
 
     # ======================================
@@ -5068,7 +5068,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "このゲームは終了しています。"
+                    "This game has ended."
                 )
                 return
 
@@ -5079,7 +5079,7 @@ class BlackjackView(discord.ui.View):
 
                 await self.send_error(
                     interaction,
-                    "ダブルダウンは使用できません。"
+                    "Double is not available."
                 )
                 return
 
@@ -5095,9 +5095,9 @@ class BlackjackView(discord.ui.View):
 
                     await self.send_error(
                         interaction,
-                        f"残高不足です！\n"
-                        f"追加で必要な金額：{bj_money(additional_bet)}\n"
-                        f"現在の残高：{bj_money(current_balance)}"
+                        f"Insufficient balance.\n"
+                        f"Additional amount required: {bj_money(additional_bet)}\n"
+                        f"Current balance: {bj_money(current_balance)}"
                     )
                     return
 
@@ -5218,7 +5218,7 @@ class BlackjackView(discord.ui.View):
 
             d_cards_str = ", ".join(
                 [
-                    f"{c['suit']}の{c['val']}"
+                    f"{c['suit'].upper()} {c['val']}"
                     for c in self.dealer_hand
                 ]
             )
@@ -5236,8 +5236,8 @@ class BlackjackView(discord.ui.View):
             ]
 
             d_cards_str = (
-                f"{self.dealer_hand[0]['suit']}の"
-                f"{self.dealer_hand[0]['val']}, 裏面"
+                f"{self.dealer_hand[0]['suit'].upper()} "
+                f"{self.dealer_hand[0]['val']}, HIDDEN"
             )
 
         # ----------------------------------
@@ -5254,7 +5254,7 @@ class BlackjackView(discord.ui.View):
 
         p_cards_str = ", ".join(
             [
-                f"{c['suit']}の{c['val']}"
+                f"{c['suit'].upper()} {c['val']}"
                 for c in self.player_hand
             ]
         )
@@ -5349,11 +5349,11 @@ class BlackjackView(discord.ui.View):
         else:
 
             embed.add_field(
-                name="🎮 操作",
+                name="🎮 ACTIONS",
                 value=(
-                    "ヒット：カードを引く\n"
-                    "スタンド：現在の手札で勝負\n"
-                    "ダブルダウン：賭け金を2倍にして1枚だけ引く"
+                    "HIT: Draw a card\n"
+                    "STAND: Keep your hand\n"
+                    "DOUBLE: Double your bet and draw one card"
                 ),
                 inline=False
             )
@@ -5415,7 +5415,7 @@ async def blackjack(ctx, bet: int = None):
     if balance < bet:
 
         await ctx.send(
-            f"残高不足です！\n"
+            f"Insufficient balance.\n"
             f"必要額：{bj_money(bet)}\n"
             f"現在の残高：{bj_money(balance)}"
         )
@@ -6957,7 +6957,7 @@ class HighLowView(discord.ui.View):
       return False
     if self.finished:
       await interaction.response.send_message(
-          "このゲームは終了しています。",
+          "This game has ended.",
           ephemeral=True,
       )
       return False
@@ -7081,7 +7081,7 @@ class HighLowView(discord.ui.View):
     async with self.lock:
       if self.finished:
         await interaction.response.send_message(
-            "このゲームは終了しています。",
+            "This game has ended.",
             ephemeral=True,
         )
         return

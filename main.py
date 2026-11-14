@@ -4517,7 +4517,7 @@ def create_bj_table_image(
 
         os.makedirs("cards", exist_ok=True)
 
-        table_img.save(output_path)
+        # Blackjack cards: shrink the card rows to 75% without changing other games.\n        scale = 0.75\n        new_size = (max(1, int(table_img.width * scale)), max(1, int(table_img.height * scale)))\n        table_img = table_img.resize(new_size, Image.Resampling.LANCZOS)\n\n        table_img.save(output_path)
 
         return output_path
 
@@ -4838,22 +4838,22 @@ class BlackjackView(discord.ui.View):
 
         if d_score > 21:
 
-            result = "ディーラーがバースト！あなたの勝ちです！ 🎉"
+            result = "DEALER BUSTS — YOU WIN! 🎉"
             outcome = "win"
 
         elif p_score > d_score:
 
-            result = "あなたの勝ちです！ 🏆"
+            result = "YOU WIN! 🏆"
             outcome = "win"
 
         elif p_score < d_score:
 
-            result = "あなたの負けです… 😢"
+            result = "YOU LOSE 😢"
             outcome = "lose"
 
         else:
 
-            result = "引き分け (Push) です！ 🤝"
+            result = "PUSH 🤝"
             outcome = "push"
 
         self.finish_game(result, outcome)
@@ -4886,7 +4886,7 @@ class BlackjackView(discord.ui.View):
                 return
 
             self.finish_game(
-                "操作時間切れ！賭け金は没収されました。",
+                "TIMEOUT — BET FORFEITED",
                 "lose"
             )
 
@@ -4918,7 +4918,7 @@ class BlackjackView(discord.ui.View):
     # ======================================
 
     @discord.ui.button(
-        label="ヒット (Hit)",
+        label="HIT",
         style=discord.ButtonStyle.green
     )
     async def hit(
@@ -4958,7 +4958,7 @@ class BlackjackView(discord.ui.View):
                 if p_score > 21:
 
                     self.finish_game(
-                        "バースト！あなたの負けです… 😭",
+                        "BUST — YOU LOSE 😭",
                         "lose"
                     )
 
@@ -4993,7 +4993,7 @@ class BlackjackView(discord.ui.View):
     # ======================================
 
     @discord.ui.button(
-        label="スタンド (Stand)",
+        label="STAND",
         style=discord.ButtonStyle.blurple
     )
     async def stand(
@@ -5051,7 +5051,7 @@ class BlackjackView(discord.ui.View):
     # ======================================
 
     @discord.ui.button(
-        label="ダブルダウン (×2)",
+        label="DOUBLE",
         style=discord.ButtonStyle.red
     )
     async def double_down(
@@ -5148,7 +5148,7 @@ class BlackjackView(discord.ui.View):
                 if p_score > 21:
 
                     self.finish_game(
-                        "ダブルダウン後にバースト！あなたの負けです… 😭",
+                        "DOUBLE BUST — YOU LOSE 😭",
                         "lose"
                     )
 
@@ -5193,7 +5193,7 @@ class BlackjackView(discord.ui.View):
         )
 
         embed = discord.Embed(
-            title="🃏 ブラックジャック",
+            title="🃏 BLACKJACK",
             color=color
         )
 
@@ -5206,7 +5206,7 @@ class BlackjackView(discord.ui.View):
 
         if game_over:
 
-            dealer_text = f"手札（合計: {d_score}）"
+            dealer_text = f"HAND (TOTAL: {d_score})"
 
             dealer_paths = [
                 get_card_image_path(
@@ -5225,7 +5225,7 @@ class BlackjackView(discord.ui.View):
 
         else:
 
-            dealer_text = "手札（2枚目は裏面）"
+            dealer_text = "HAND (2ND CARD HIDDEN)"
 
             dealer_paths = [
                 get_card_image_path(
@@ -5289,13 +5289,13 @@ class BlackjackView(discord.ui.View):
         # ----------------------------------
 
         embed.add_field(
-            name=f"ディーラーの{dealer_text}",
+            name=f"DEALER {dealer_text}",
             value=d_cards_str,
             inline=False
         )
 
         embed.add_field(
-            name=f"プレイヤーの手札（合計: {p_score}）",
+            name=f"PLAYER HAND (TOTAL: {p_score})",
             value=p_cards_str,
             inline=False
         )
@@ -5305,7 +5305,7 @@ class BlackjackView(discord.ui.View):
         # ----------------------------------
 
         embed.add_field(
-            name="💰 合計賭け金",
+            name="💰 BET",
             value=bj_money(self.bet),
             inline=True
         )
@@ -5313,7 +5313,7 @@ class BlackjackView(discord.ui.View):
         if self.doubled_down:
 
             embed.add_field(
-                name="追加賭け金",
+                name="EXTRA BET",
                 value=bj_money(self.original_bet),
                 inline=True
             )
@@ -5325,25 +5325,25 @@ class BlackjackView(discord.ui.View):
         if game_over:
 
             embed.add_field(
-                name="【試合結果】",
+                name="RESULT",
                 value=self.final_result,
                 inline=False
             )
 
             embed.add_field(
-                name="📊 今回の利益",
+                name="📊 PROFIT",
                 value=f"**{bj_money_change(self.final_profit)}**",
                 inline=True
             )
 
             embed.add_field(
-                name="💵 返却額",
+                name="💵 RETURN",
                 value=f"**{bj_money(self.final_returned)}**",
                 inline=True
             )
 
             embed.set_footer(
-                text="ブラックジャック • GAME OVER"
+                text="BLACKJACK • GAME OVER"
             )
 
         else:
@@ -5495,21 +5495,21 @@ async def blackjack(ctx, bet: int = None):
         if player_bj and dealer_bj:
 
             view.finish_game(
-                "両者ブラックジャック！引き分けです！ 🤝",
+                "BOTH BLACKJACK — PUSH 🤝",
                 "push"
             )
 
         elif player_bj:
 
             view.finish_game(
-                "ナチュラルブラックジャック！あなたの勝ちです！ 🎉",
+                "NATURAL BLACKJACK — YOU WIN! 🎉",
                 "bj"
             )
 
         elif dealer_bj:
 
             view.finish_game(
-                "ディーラーがブラックジャック！あなたの負けです。",
+                "DEALER BLACKJACK — YOU LOSE",
                 "lose"
             )
 

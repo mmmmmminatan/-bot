@@ -7123,7 +7123,7 @@ class HighLowView(discord.ui.View):
   ):
     await self.choose(interaction, False)
 
-  @discord.ui.button(label="終了", style=discord.ButtonStyle.secondary)
+  @discord.ui.button(label="FIN", style=discord.ButtonStyle.secondary)
   async def stop_button(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):

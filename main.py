@@ -6833,33 +6833,23 @@ import discord
 from discord.ext import commands
 
 # ==================================================
-# 所持金管理システム
+# 共通の所持金管理（本来の残高と完全共有）
 # ==================================================
-USER_BALANCES = {}
+balances = load_json(BALANCES_FILE, {})
 
 
-def get_user_balance(user_id: int) -> int:
-  return USER_BALANCES.get(user_id, 1000)
+def get_balance(user_id):
+  return balances.get(str(user_id), STARTING_BALANCE)
+
+
+def set_balance(user_id, amount):
+  balances[str(user_id)] = amount
+  save_json(BALANCES_FILE, balances)
 
 
 def update_user_balance(user_id: int, amount: int):
-  current = get_user_balance(user_id)
-  USER_BALANCES[user_id] = current + amount
-
-
-# ==================================================
-# 所持金管理システム
-# ==================================================
-USER_BALANCES = {}
-
-
-def get_user_balance(user_id: int) -> int:
-  return USER_BALANCES.get(user_id, 1000)
-
-
-def update_user_balance(user_id: int, amount: int):
-  current = get_user_balance(user_id)
-  USER_BALANCES[user_id] = current + amount
+  current = get_balance(user_id)
+  set_balance(user_id, current + amount)
 
 
 # ==================================================
@@ -6949,7 +6939,7 @@ class HighLowView(discord.ui.View):
     self.deck = deck
     self.current = current
     self.bet = bet
-    self.current_prize = bet  # スタート時の賞金（降りたときに返る最低ライン、または追加していくプール）
+    self.current_prize = bet  # スタート時の賞金ベース
     self.streak = 0
     self.finished = False
     self.image_path = f"cards/hl_{id(self)}.png"
@@ -6997,7 +6987,7 @@ class HighLowView(discord.ui.View):
     embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
     embed.add_field(
         name="賭け金 / 現在の賞金プール",
-        value=f"ベット: **{self.bet}** コイン\n獲得賞金: **{int(self.current_prize)}** コイン",
+        value=f"ベット: **{self.bet:,}** コイン\n獲得賞金: **{int(self.current_prize):,}** コイン",
         inline=False,
     )
     embed.add_field(
@@ -7032,9 +7022,9 @@ class HighLowView(discord.ui.View):
     if won:
       final_payout = int(self.current_prize)
       update_user_balance(self.owner_id, final_payout)
-      message += f"\n\n💰 **+{final_payout} コイン** を獲得しました！（所持金: {get_user_balance(self.owner_id)} コイン）"
+      message += f"\n\n💰 **+{final_payout:,} コイン** を獲得しました！（所持金: {get_balance(self.owner_id):,} コイン）"
     else:
-      message += f"\n\n💸 賭け金 **{self.bet} コイン** を失いました…（所持金: {get_user_balance(self.owner_id)} コイン）"
+      message += f"\n\n💸 賭け金 **{self.bet:,} コイン** を失いました…（所持金: {get_balance(self.owner_id):,} コイン）"
 
     await self.update_message(
         interaction, message, show_back=False, disable=True
@@ -7090,15 +7080,14 @@ class HighLowView(discord.ui.View):
 
       if correct:
         self.streak += 1
-        # ★ ここを変更：掛け算ではなく「今回のオッズに応じた賞金をどんどん加算（プラス）」していく
-        earned_bonus = int(self.bet * (odds - 1.0))  # 例: 1.5倍なら差分の0.5倍分をプラス、等
+        earned_bonus = int(self.bet * (odds - 1.0))
         if earned_bonus < 1:
-          earned_bonus = 1  # 最低でも1コインは加算
+          earned_bonus = 1
         self.current_prize += earned_bonus
 
         await self.update_message(
             interaction,
-            f"✅ 正解！(+{earned_bonus}コイン / オッズ{odds}倍) 次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
+            f"✅ 正解！(+{earned_bonus:,}コイン / オッズ{odds}倍) 次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
         )
       else:
         await self.finish(
@@ -7142,25 +7131,43 @@ class HighLowView(discord.ui.View):
 
 
 @bot.command(name="hl", aliases=["highlow"])
-async def highlow_command(ctx: commands.Context, bet: int = 100):
-  """確率連動オッズ＆賞金加算のハイ＆ローを開始（例: !hl 500）"""
-  if bet <= 0:
+async def highlow_command(ctx: commands.Context, bet: str = "100"):
+  """ハイ＆ローを開始（例: !hl 500, !hl all）"""
+  balance = get_balance(ctx.author.id)
+
+  # 「all」が指定された場合の判定
+  if bet.lower() == "all":
+    if balance <= 250000:
+      bet_amount = balance
+    else:
+      bet_amount = 250000
+  else:
+    try:
+      bet_amount = int(bet)
+    except ValueError:
+      await ctx.send(
+          "賭け金には数値を指定するか、`all` を指定してください。",
+          ephemeral=True,
+      )
+      return
+
+  if bet_amount <= 0:
     await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
     return
 
-  balance = get_user_balance(ctx.author.id)
-  if balance < bet:
+  if balance < bet_amount:
     await ctx.send(
-        f"所持金が足りません！ 現在の所持金: **{balance} コイン**",
+        f"所持金が足りません！ 現在の所持金: **{balance:,} コイン**",
         ephemeral=True,
     )
     return
 
-  update_user_balance(ctx.author.id, -bet)
+  # 本来の残高から賭け金を差し引く
+  update_user_balance(ctx.author.id, -bet_amount)
 
   deck = hl_make_deck()
   current = deck.pop()
-  view = HighLowView(ctx.author.id, deck, current, bet)
+  view = HighLowView(ctx.author.id, deck, current, bet_amount)
   embed = view.make_embed()
 
   if os.path.exists(view.image_path):

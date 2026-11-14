@@ -5,6 +5,7 @@ import os
 import random
 import re
 import traceback
+import inspect
 from pathlib import Path
 from threading import Thread
 from datetime import datetime, timezone, timedelta
@@ -6797,6 +6798,45 @@ from race_feature import setup_race
 
 setup_giveaway(bot, get_balance, set_balance, send_coin_log)
 setup_race(bot, get_balance, set_balance, money)
+
+
+# ==================================================
+# スラッシュコマンド共通制限
+# ==================================================
+
+async def server_owner_slash_check(interaction: discord.Interaction):
+    # 既存のBot所有者専用コマンドは、従来の require_owner 判定に任せる
+    command = interaction.command
+    if command is not None:
+        try:
+            callback_source = inspect.getsource(command.callback)
+        except (OSError, TypeError):
+            callback_source = ""
+
+        if "require_owner(" in callback_source:
+            return True
+
+    # サーバー内の通常スラッシュコマンドは、そのサーバーのオーナーのみ
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "このコマンドはサーバー内のオーナーだけが使えます。",
+            ephemeral=True,
+        )
+        return False
+
+    if interaction.user.id != interaction.guild.owner_id:
+        message = "❌ このスラッシュコマンドを使えるのは、このサーバーのオーナーだけです。"
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+        return False
+
+    return True
+
+
+# CommandTreeの共通チェックとして登録
+bot.tree.interaction_check = server_owner_slash_check
 
 
 # ==================================================

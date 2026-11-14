@@ -6967,6 +6967,14 @@ class HighLowView(discord.ui.View):
     image = merge_horizontal(paths)
     if image is None:
       return False
+
+    # ハイ＆ローのカード表示だけ70%に縮小（元画像や他ゲームには影響しない）
+    new_size = (
+        max(1, int(image.width * 0.7)),
+        max(1, int(image.height * 0.7)),
+    )
+    image = image.resize(new_size, Image.Resampling.LANCZOS)
+
     image.save(self.image_path, format="PNG")
     return True
 

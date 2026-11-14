@@ -107,6 +107,42 @@ def make_embed(data):
             embed.add_field(name="結果", value="参加者がいなかったため、当選者はいません。", inline=False)
     return embed
 
+async def send_currency_receive_log(bot, data, user_id, amount):
+    """通貨を受け取ったユーザーごとに個別の付与ログを出す"""
+    logger = globals().get("giveaway_logger")
+    if logger is None:
+        print("[GIVEAWAY RECEIVE LOG] logger is not configured")
+        return
+    guild = bot.get_guild(int(data["guild_id"]))
+    if guild is None:
+        try:
+            guild = await bot.fetch_guild(int(data["guild_id"]))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            guild = None
+    if guild is None:
+        print(f"[GIVEAWAY RECEIVE LOG] guild not found: {data['guild_id']}")
+        return
+
+    balance = get_balance(int(user_id))
+    labels = {"normal_coin": "通常通貨配布", "early_coin": "早押し通貨配布"}
+    embed = discord.Embed(
+        title="💰 通貨配布・受取ログ",
+        description=(
+            f"受取ユーザー：<@{user_id}> (`{user_id}`)\n"
+            f"配布方式：**{labels.get(data['kind'], '通貨配布')}**\n"
+            f"受取額：**${int(amount):,}**\n"
+            f"受取後残高：**${int(balance):,}**\n"
+            f"配布ID：`{data['id']}`"
+        ),
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    try:
+        await logger(guild, embed)
+    except Exception:
+        print("[GIVEAWAY RECEIVE LOG ERROR]")
+        traceback.print_exc()
+
 async def send_giveaway_log(bot, data, event):
     logger = globals().get("giveaway_logger")
     if logger is None:
@@ -193,6 +229,10 @@ async def finish_normal(bot, gid):
         save_data()
     await update_message(bot, gid)
     if is_coin(data):
+        for uid in data.get("winners", []):
+            payout = int(data.get("payouts", {}).get(str(uid), 0))
+            if payout > 0:
+                await send_currency_receive_log(bot, data, uid, payout)
         await send_giveaway_log(bot, data, "finish")
 
 
@@ -256,6 +296,12 @@ class GiveawayJoinView(discord.ui.View):
             if is_early(data) else "参加を受け付けたよ！",
             ephemeral=True,
         )
+        if data["kind"] == "early_coin":
+            payout = int(data.get("payouts", {}).get(str(interaction.user.id), 0))
+            if payout > 0:
+                await send_currency_receive_log(
+                    self.bot, data, interaction.user.id, payout
+                )
         await update_message(self.bot, self.gid)
         if is_early(data) and data["status"] == "finished" and is_coin(data):
             await send_giveaway_log(self.bot, data, "finish")

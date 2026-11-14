@@ -47,8 +47,9 @@ def make_au_embed(user):
 
 
 class AuPaymentView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, target_user_id):
         super().__init__(timeout=300)
+        self.target_user_id = int(target_user_id)
 
     @discord.ui.button(
         label="支払う",
@@ -60,6 +61,14 @@ class AuPaymentView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+        # 請求された本人以外は支払えない
+        if interaction.user.id != self.target_user_id:
+            await interaction.response.send_message(
+                "❌ これは請求された本人だけが支払えるよ。",
+                ephemeral=True,
+            )
+            return
+
         button.disabled = True
         await interaction.response.edit_message(
             content="✅ 500万円の支払いが完了しました！",
@@ -100,7 +109,7 @@ async def on_message(message):
     if pattern.search(message.content):
 
         try:
-            await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView())
+            await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView(message.author.id))
 
             print("あうを検知して返信しました！")
 
@@ -657,7 +666,7 @@ async def on_message(message):
 
     # ホワイトリスト登録者は「あう」検知の対象外
     if str(message.author.id) not in au_whitelist and pattern.search(message.content):
-        await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView())
+        await message.channel.send(embed=make_au_embed(message.author), view=AuPaymentView(message.author.id))
         print("[AU DETECTED] あうを検知しました")
 
     # 既存機能

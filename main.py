@@ -61,10 +61,9 @@ class AuPaymentView(discord.ui.View):
         button: discord.ui.Button,
     ):
         button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(
-            "✅ 500万円の支払いが完了しました！\n※これは演出です。Botの残高・通貨は変わりません。",
-            ephemeral=True,
+        await interaction.response.edit_message(
+            content="✅ 500万円の支払いが完了しました！",
+            view=self,
         )
 
 # ==========================================

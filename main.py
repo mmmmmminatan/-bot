@@ -6811,6 +6811,142 @@ async def servers_command(interaction: discord.Interaction):
 
 
 # ==================================================
+# .hl ハイ＆ロー（賭け金・通貨増減なし）
+# ==================================================
+
+HL_SUITS = ["♠", "♥", "♦", "♣"]
+HL_RANKS = {
+    2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7",
+    8: "8", 9: "9", 10: "10", 11: "J", 12: "Q",
+    13: "K", 14: "A",
+}
+
+
+def hl_make_deck():
+    deck = [
+        {"rank": rank, "label": f"{HL_RANKS[rank]}{suit}"}
+        for suit in HL_SUITS
+        for rank in HL_RANKS
+    ]
+    deck.extend([
+        {"rank": None, "label": "🃏 JOKER"},
+        {"rank": None, "label": "🃏 JOKER"},
+    ])
+    random.shuffle(deck)
+    return deck
+
+
+def hl_card_color(card):
+    if "♥" in card["label"] or "♦" in card["label"]:
+        return discord.Color.red()
+    return discord.Color.blurple()
+
+
+class HighLowView(discord.ui.View):
+    def __init__(self, owner_id: int, deck: list, current: dict):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.deck = deck
+        self.current = current
+        self.streak = 0
+        self.finished = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "このハイ＆ローを開始した人だけ操作できます。",
+                ephemeral=True,
+            )
+            return False
+        if self.finished:
+            await interaction.response.send_message(
+                "このゲームは終了しています。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    def make_embed(self, description: str = "次のカードは HIGH？ LOW？"):
+        embed = discord.Embed(
+            title="🃏 ハイ＆ロー",
+            description=description,
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="現在のカード", value=f"## {self.current['label']}", inline=True)
+        embed.add_field(name="連続正解", value=f"## {self.streak} 回", inline=True)
+        embed.set_footer(text=f"残りカード：{len(self.deck)}枚 • 賭け金なし")
+        return embed
+
+    async def finish(self, interaction: discord.Interaction, message: str):
+        self.finished = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            embed=self.make_embed(message),
+            view=self,
+        )
+
+    async def choose(self, interaction: discord.Interaction, high: bool):
+        if not self.deck:
+            await self.finish(interaction, "山札がなくなったよ！ゲーム終了！")
+            return
+
+        next_card = self.deck.pop()
+        old_card = self.current
+        old_rank = old_card["rank"]
+        next_rank = next_card["rank"]
+
+        if old_rank is None or next_rank is None:
+            result = "🃏 ジョーカーが出たので引き分け！連続正解数はそのまま。"
+        elif old_rank == next_rank:
+            result = "引き分け！連続正解数はそのまま。"
+        else:
+            correct = (next_rank > old_rank) if high else (next_rank < old_rank)
+            if correct:
+                self.streak += 1
+                result = f"✅ 正解！次のカードは **{next_card['label']}**！"
+            else:
+                self.current = next_card
+                await self.finish(
+                    interaction,
+                    f"❌ 不正解！次のカードは **{next_card['label']}** でした。\n連続正解：**{self.streak}回**",
+                )
+                return
+
+        self.current = next_card
+        await interaction.response.edit_message(
+            embed=self.make_embed(f"{result}\n\n次のカードは HIGH？ LOW？"),
+            view=self,
+        )
+
+    @discord.ui.button(label="HIGH（高い）", style=discord.ButtonStyle.success)
+    async def high_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.choose(interaction, True)
+
+    @discord.ui.button(label="LOW（低い）", style=discord.ButtonStyle.danger)
+    async def low_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.choose(interaction, False)
+
+    @discord.ui.button(label="終了", style=discord.ButtonStyle.secondary)
+    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.finish(interaction, f"ゲームを終了したよ！連続正解：**{self.streak}回**")
+
+    async def on_timeout(self):
+        self.finished = True
+        for child in self.children:
+            child.disabled = True
+
+
+@bot.command(name="hl", aliases=["highlow"])
+async def highlow_command(ctx: commands.Context):
+    """トランプ54枚でハイ＆ローを開始（賭け金なし）"""
+    deck = hl_make_deck()
+    current = deck.pop()
+    view = HighLowView(ctx.author.id, deck, current)
+    await ctx.send(embed=view.make_embed(), view=view)
+
+
+# ==================================================
 # 景品配布機能
 # ==================================================
 from giveaway_feature import setup_giveaway

@@ -6967,26 +6967,8 @@ class HighLowView(discord.ui.View):
     image = merge_horizontal(paths)
     if image is None:
       return False
-    def render_cards(self, show_back=True):
-      paths = [hl_card_image_path(self.current)]
-      if show_back:
-        paths.append(get_card_image_path("back", 0))
-
-      image = merge_horizontal(paths)
-      if image is None:
-        return False
-
-      # ==========================================
-      # ▼ ここにリサイズ処理を追加する（例：50%のサイズにする場合）
-      # ==========================================
-      width, height = image.size
-      image = image.resize(
-          (int(width * 0.5), int(height * 0.5)), Image.Resampling.LANCZOS
-      )
-      # ==========================================
-
-      image.save(self.image_path, format="PNG")
-      return True
+    image.save(self.image_path, format="PNG")
+    return True
 
   def make_embed(self, description="次のカードは HIGH？ LOW？", show_back=True):
     high_odds = calculate_odds(self.deck, self.current, True)

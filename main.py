@@ -7159,6 +7159,23 @@ class HighLowView(discord.ui.View):
   async def on_timeout(self):
     if not self.finished:
       self.finished = True
+      final_balance = get_balance(self.owner_id)
+      if self.guild is not None:
+        await send_coin_log(
+            self.guild,
+            discord.Embed(
+                title="🃏 HIGH&LOW タイムアウトログ",
+                description=(
+                    f"ユーザー：<@{self.owner_id}> (`{self.owner_id}`)\n"
+                    f"賭け金：**{money(self.bet)}**\n"
+                    f"配当：**{money(0)}**\n"
+                    f"収支：**{money_change(-self.bet)}**\n"
+                    f"残高：**{money(final_balance)}**\n"
+                    f"Combo：**{self.streak}**"
+                ),
+                color=discord.Color.red(),
+            ),
+        )
     for child in self.children:
       child.disabled = True
     try:

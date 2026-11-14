@@ -7111,19 +7111,19 @@ class HighLowView(discord.ui.View):
             won=False,
         )
 
-  @discord.ui.button(label="HIGH（高い）", style=discord.ButtonStyle.success)
+  @discord.ui.button(label="HIGH", style=discord.ButtonStyle.success)
   async def high_button(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):
     await self.choose(interaction, True)
 
-  @discord.ui.button(label="LOW（低い）", style=discord.ButtonStyle.danger)
+  @discord.ui.button(label="LOW", style=discord.ButtonStyle.danger)
   async def low_button(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):
     await self.choose(interaction, False)
 
-  @discord.ui.button(label="終了（精算）", style=discord.ButtonStyle.secondary)
+  @discord.ui.button(label="終了", style=discord.ButtonStyle.secondary)
   async def stop_button(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):

@@ -6848,6 +6848,21 @@ def update_user_balance(user_id: int, amount: int):
 
 
 # ==================================================
+# 所持金管理システム
+# ==================================================
+USER_BALANCES = {}
+
+
+def get_user_balance(user_id: int) -> int:
+  return USER_BALANCES.get(user_id, 1000)
+
+
+def update_user_balance(user_id: int, amount: int):
+  current = get_user_balance(user_id)
+  USER_BALANCES[user_id] = current + amount
+
+
+# ==================================================
 # ハイ＆ロー 設定
 # ==================================================
 
@@ -6907,7 +6922,6 @@ def calculate_odds(deck: list, current_card: dict, high: bool) -> float:
   if total_remaining == 0:
     return 1.0
 
-  # 該当するカードの枚数を数える
   count_target = 0
   for card in deck:
     if card["suit"] == "joker":
@@ -6918,14 +6932,12 @@ def calculate_odds(deck: list, current_card: dict, high: bool) -> float:
       count_target += 1
 
   if count_target == 0:
-    return 0.0  # 選択肢が存在しない場合
+    return 0.0
 
-  # 確率の逆数からオッズを算出（カジノのハウスエッジ約5%を考慮）
   probability = count_target / total_remaining
   raw_odds = 1.0 / probability
   odds = round(raw_odds * 0.95, 2)
 
-  # 最低倍率は 1.05倍保証
   return max(odds, 1.05)
 
 
@@ -6937,7 +6949,7 @@ class HighLowView(discord.ui.View):
     self.deck = deck
     self.current = current
     self.bet = bet
-    self.current_prize = bet  # 現在の獲得賞金（連勝するごとに倍率が乗算されていく）
+    self.current_prize = bet  # スタート時の賞金（降りたときに返る最低ライン、または追加していくプール）
     self.streak = 0
     self.finished = False
     self.image_path = f"cards/hl_{id(self)}.png"
@@ -6969,12 +6981,11 @@ class HighLowView(discord.ui.View):
     return True
 
   def make_embed(self, description="次のカードは HIGH？ LOW？", show_back=True):
-    # 現在のカードに基づくHIGH/LOWそれぞれの予測オッズを計算
     high_odds = calculate_odds(self.deck, self.current, True)
     low_odds = calculate_odds(self.deck, self.current, False)
 
     embed = discord.Embed(
-        title="🃏 確率連動ハイ＆ロー",
+        title="🃏 確率連動 ＆ 賞金加算ハイ＆ロー",
         description=description,
         color=discord.Color.blurple(),
     )
@@ -6985,8 +6996,8 @@ class HighLowView(discord.ui.View):
     )
     embed.add_field(name="連続正解", value=f"**{self.streak} 回**", inline=True)
     embed.add_field(
-        name="賭け金 / 現在の賞金",
-        value=f"ベット: **{self.bet}** コイン\n賞金プール: **{int(self.current_prize)}** コイン",
+        name="賭け金 / 現在の賞金プール",
+        value=f"ベット: **{self.bet}** コイン\n獲得賞金: **{int(self.current_prize)}** コイン",
         inline=False,
     )
     embed.add_field(
@@ -7046,7 +7057,6 @@ class HighLowView(discord.ui.View):
         )
         return
 
-      # 選択した時点のオッズを計算
       odds = calculate_odds(self.deck, self.current, high)
       if odds <= 0.0:
         await interaction.response.send_message(
@@ -7080,11 +7090,15 @@ class HighLowView(discord.ui.View):
 
       if correct:
         self.streak += 1
-        # 賞金に今回のオッズを掛け合わせて累積していく
-        self.current_prize = int(self.current_prize * odds)
+        # ★ ここを変更：掛け算ではなく「今回のオッズに応じた賞金をどんどん加算（プラス）」していく
+        earned_bonus = int(self.bet * (odds - 1.0))  # 例: 1.5倍なら差分の0.5倍分をプラス、等
+        if earned_bonus < 1:
+          earned_bonus = 1  # 最低でも1コインは加算
+        self.current_prize += earned_bonus
+
         await self.update_message(
             interaction,
-            f"✅ 正解！({odds}倍) 次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
+            f"✅ 正解！(+{earned_bonus}コイン / オッズ{odds}倍) 次のカードは **{hl_card_label(next_card)}**！\n次のカードは HIGH？ LOW？",
         )
       else:
         await self.finish(
@@ -7129,7 +7143,7 @@ class HighLowView(discord.ui.View):
 
 @bot.command(name="hl", aliases=["highlow"])
 async def highlow_command(ctx: commands.Context, bet: int = 100):
-  """確率連動オッズのハイ＆ローを開始（例: !hl 500）"""
+  """確率連動オッズ＆賞金加算のハイ＆ローを開始（例: !hl 500）"""
   if bet <= 0:
     await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
     return
@@ -7142,7 +7156,6 @@ async def highlow_command(ctx: commands.Context, bet: int = 100):
     )
     return
 
-  # ゲーム開始時に賭け金を引く
   update_user_balance(ctx.author.id, -bet)
 
   deck = hl_make_deck()

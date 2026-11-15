@@ -7370,7 +7370,7 @@ class TreasureHuntView(discord.ui.View):
                     cell = "🟩" if depth < TH_GREEN_DEPTH else "🟫"
                 row.append(cell)
             lines.append(" ".join(row))
-        return "`\`\`\n" + "\n".join(lines) + "\n`\`\`"
+        return chr(96) * 3 + "\n" + "\n".join(lines) + "\n" + chr(96) * 3
 
     def make_embed(self, status=None, reveal_all=False):
         embed = discord.Embed(

@@ -7303,9 +7303,9 @@ class TreasureHuntView(discord.ui.View):
             random.randrange(TH_GREEN_DEPTH),
         )
 
-        # 茶色6段の各レーンに💎を1個ずつ配置（高さはランダム）
+        # 各レーンは30%の確率で💎なし、70%の確率で💎を1個配置
         self.diamonds = {
-            lane: random.randrange(TH_BROWN_DEPTH)
+            lane: (None if random.random() < 0.30 else random.randrange(TH_BROWN_DEPTH))
             for lane in range(TH_LANES)
         }
 

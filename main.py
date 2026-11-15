@@ -7283,7 +7283,7 @@ active_treasure_hunt_users = set()
 
 
 class TreasureHuntView(discord.ui.View):
-    def __init__(self, ctx, bet_amount):
+    def __init__(self, ctx, bet_amount, lane):
         super().__init__(timeout=600)
         self.ctx = ctx
         self.owner_id = ctx.author.id
@@ -7292,7 +7292,7 @@ class TreasureHuntView(discord.ui.View):
         self.lock = asyncio.Lock()
         self.finished = False
         self.message = None
-        self.selected_lane = None
+        self.selected_lane = int(lane) - 1
         self.total_digs = 0
         self.profit = 0
         self.found = []
@@ -7339,8 +7339,6 @@ class TreasureHuntView(discord.ui.View):
             for _ in range(TH_LANES)
         ]
 
-        for lane in range(TH_LANES):
-            self.add_item(TreasureHuntLaneButton(lane))
         self.add_item(TreasureHuntDigButton())
         self.add_item(TreasureHuntFinButton())
 
@@ -7420,10 +7418,6 @@ class TreasureHuntView(discord.ui.View):
             if self.finished:
                 await interaction.response.send_message("This game has ended.", ephemeral=True)
                 return
-            if self.selected_lane is None:
-                await interaction.response.send_message("先に①〜⑨からレーンを選んでね。", ephemeral=True)
-                return
-
             lane = self.selected_lane
             depth = self.depths[lane]
             total_depth = TH_GREEN_DEPTH + TH_BROWN_DEPTH
@@ -7641,6 +7635,41 @@ async def treasure_hunt_command(ctx: commands.Context, bet: str):
     active_treasure_hunt_users.add(ctx.author.id)
     try:
         view.message = await ctx.send(embed=view.make_embed(), view=view)
+    except Exception:
+        active_treasure_hunt_users.discard(ctx.author.id)
+        raise
+
+
+@bot.command(name="th")
+async def treasure_hunt_command(ctx: commands.Context, bet: str, lane: str):
+    """宝探しゲームを開始（例：.th 100 1）"""
+    if ctx.guild is None:
+        await ctx.send("サーバー内で使ってね。")
+        return
+    try:
+        bet_amount = int(str(bet).replace(",", "").strip())
+        lane_number = int(str(lane).strip())
+    except (TypeError, ValueError):
+        await ctx.send("使い方：`.th 賭け金 1〜9`（例：`.th 100 3`）")
+        return
+    if bet_amount <= 0:
+        await ctx.send("賭け金は1以上を指定してください。")
+        return
+    if lane_number < 1 or lane_number > TH_LANES:
+        await ctx.send("レーンは1〜9から選んでね。")
+        return
+    if ctx.author.id in active_treasure_hunt_users:
+        await ctx.send("すでにTREASURE HUNTをプレイ中だよ。")
+        return
+
+    # レーンはコマンドで指定。開始時には残高を引かず、DIG時に徴収する。
+    view = TreasureHuntView(ctx, bet_amount, lane_number)
+    active_treasure_hunt_users.add(ctx.author.id)
+    try:
+        view.message = await ctx.send(
+            embed=view.make_embed(f"レーン {TH_LANE_LABELS[lane_number - 1]} を選択。DIGで掘ってね。"),
+            view=view,
+        )
     except Exception:
         active_treasure_hunt_users.discard(ctx.author.id)
         raise

@@ -7346,7 +7346,7 @@ class TreasureHuntView(discord.ui.View):
 
     def render_map(self, reveal_all=False):
         # Discord上で数字と9列をそろえるため、等幅コードブロックで表示
-        lines = ["".join(TH_LANE_LABELS)]
+        lines = [" ".join(TH_LANE_LABELS)]
         for depth in range(TH_GREEN_DEPTH + TH_BROWN_DEPTH):
             row = []
             for lane in range(TH_LANES):
@@ -7461,7 +7461,7 @@ class TreasureHuntView(discord.ui.View):
                     self.found.append(result)
                     self.revealed[lane][depth] = "💰"
                 else:
-                    self.revealed[lane][depth] = "🟩"
+                    self.revealed[lane][depth] = "⬛"
             else:
                 if is_rock:
                     self.revealed[lane][depth] = "🪨"
@@ -7491,7 +7491,7 @@ class TreasureHuntView(discord.ui.View):
                     self.found.append(result)
                     self.revealed[lane][depth] = "🪎"
                 else:
-                    self.revealed[lane][depth] = "🟫"
+                    self.revealed[lane][depth] = "⬛"
 
             self.depths[lane] += 1
             current_balance = get_balance(self.owner_id)

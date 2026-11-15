@@ -6858,21 +6858,13 @@ from discord.ext import commands
 # ==================================================
 # 共通の所持金管理（本来の残高と完全共有）
 # ==================================================
-balances = load_json(BALANCES_FILE, {})
-
-
-def get_balance(user_id):
-  return balances.get(str(user_id), STARTING_BALANCE)
-
-
-def set_balance(user_id, amount):
-  balances[str(user_id)] = amount
-  save_json(BALANCES_FILE, balances)
-
+# balances / get_balance / set_balance は上部の共通残高システムを使用する。
+# ここでJSONを再読み込みすると、メモリ上の最新残高を古い内容で上書きする
+# 原因になるため、再読み込みや関数の再定義はしない。
 
 def update_user_balance(user_id: int, amount: int):
   current = get_balance(user_id)
-  set_balance(user_id, current + amount)
+  set_balance(user_id, current + int(amount))
 
 
 # ==================================================

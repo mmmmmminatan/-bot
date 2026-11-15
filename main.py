@@ -7223,6 +7223,45 @@ class HighLowView(discord.ui.View):
       pass
 
 
+@bot.command(name="th")
+async def treasure_hunt_command(ctx: commands.Context, bet: str):
+    """宝探しゲームのマップを表示する（例: .th 1000）"""
+    try:
+        bet_amount = int(str(bet).replace(",", "").strip())
+    except (TypeError, ValueError):
+        await ctx.send("賭け金は数字で指定してください。例：`.th 1000`")
+        return
+
+    if bet_amount <= 0:
+        await ctx.send("賭け金は1以上を指定してください。")
+        return
+
+    balance = get_balance(ctx.author.id)
+    if balance < bet_amount:
+        await ctx.send(
+            f"所持金が足りません。現在の残高：**{money(balance)}**"
+        )
+        return
+
+    map_text = (
+        "🟩🟩🟩🟩🟩🟩🟩🟩🟩\n"
+        "🟫🟫🟫🟫🟫🟫🟫🪨🟫\n"
+        "🟫🟫🟫🟫🟫🟫🟫🟫🟫\n"
+        "🟫🪨🟫🟫🟫🟫🟫🟫🟫\n"
+        "🟫🟫🟫🟫🟫🪨🟫🟫🟫\n"
+        "🟫🟫🟫🟫🟫🟫🟫🟫🟫\n"
+        "🟫🟫🪨🟫🟫🟫🟫🟫🪨"
+    )
+
+    embed = discord.Embed(
+        title="⛏️ TREASURE HUNT",
+        description=map_text,
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="BET", value=money(bet_amount), inline=False)
+    await ctx.send(embed=embed)
+
+
 @bot.command(name="hl", aliases=["highlow"])
 async def highlow_command(ctx: commands.Context, bet: str = "100"):
   """ハイ＆ローを開始（例: !hl 500, !hl all）"""

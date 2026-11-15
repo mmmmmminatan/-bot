@@ -7483,7 +7483,7 @@ class TreasureHuntView(discord.ui.View):
                         )[0]
                         multiplier = {
                             "Small Dia": 5,
-                            "Medium Dia": 10,
+                            "Medium Dia": 15,
                             "BIG Dia": 75,
                         }[diamond_type]
                         payout = self.bet * multiplier

@@ -7378,21 +7378,20 @@ class TreasureHuntView(discord.ui.View):
             description=self.render_map(reveal_all=reveal_all),
             color=discord.Color.gold() if self.finished else discord.Color.green(),
         )
-        embed.add_field(name="BET / DIG", value=money(self.bet), inline=True)
-        embed.add_field(name="Digs", value=str(self.total_digs), inline=True)
-        embed.add_field(name="Won", value=money_change(self.profit), inline=True)
-        embed.add_field(name="Balance", value=money(get_balance(self.owner_id)), inline=True)
-        if self.selected_lane is not None:
-            embed.add_field(
-                name="LANE",
-                value=TH_LANE_LABELS[self.selected_lane],
-                inline=True,
-            )
-        if status:
-            embed.add_field(name="Result", value=status, inline=False)
-        elif self.found:
-            embed.add_field(name="Found", value="\n".join(self.found[-5:]), inline=False)
-        embed.set_footer(text="①〜⑨でレーン選択 → DIGで1マス掘る / FINで終了")
+        lane_text = TH_LANE_LABELS[self.selected_lane] if self.selected_lane is not None else "-"
+        result_text = status or ("\n".join(self.found[-3:]) if self.found else "-")
+        embed.add_field(
+            name="STATUS",
+            value=(
+                f"Bet : {money(self.bet)}\n"
+                f"Digs : {self.total_digs}\n"
+                f"Won : {money_change(self.profit)}\n"
+                f"Balance : {money(get_balance(self.owner_id))}\n"
+                f"LANE : {lane_text}\n"
+                f"Result : {result_text}"
+            ),
+            inline=False,
+        )
         return embed
 
     async def select_lane(self, interaction, lane):

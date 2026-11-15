@@ -7528,7 +7528,7 @@ class TreasureHuntView(discord.ui.View):
                     item.disabled = True
                 results.append("このレーンを最後まで掘ったよ。")
                 await interaction.response.edit_message(
-                    embed=self.make_embed("\\n".join(results) or "ALL DIG 完了。", reveal_all=True),
+                    embed=self.make_embed("\n".join(results) or "ALL DIG 完了。", reveal_all=True),
                     view=self,
                 )
                 await self.send_final_log("レーン完掘")
@@ -7539,7 +7539,7 @@ class TreasureHuntView(discord.ui.View):
             else:
                 status = f"レーン {TH_LANE_LABELS[lane]} を1マス掘ったよ。"
             if results:
-                status += "\\n" + "\\n".join(results)
+                status += "\n" + "\n".join(results)
             await interaction.response.edit_message(embed=self.make_embed(status), view=self)
 
     async def finish_game(self, interaction):

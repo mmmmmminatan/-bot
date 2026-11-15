@@ -7613,34 +7613,6 @@ class TreasureHuntFinButton(discord.ui.Button):
 
 
 @bot.command(name="th")
-async def treasure_hunt_command(ctx: commands.Context, bet: str):
-    """宝探しゲームを開始（例：.th 100）"""
-    if ctx.guild is None:
-        await ctx.send("サーバー内で使ってね。")
-        return
-    try:
-        bet_amount = int(str(bet).replace(",", "").strip())
-    except (TypeError, ValueError):
-        await ctx.send("賭け金は数字で指定してください。例：`.th 100`")
-        return
-    if bet_amount <= 0:
-        await ctx.send("賭け金は1以上を指定してください。")
-        return
-    if ctx.author.id in active_treasure_hunt_users:
-        await ctx.send("すでにTREASURE HUNTをプレイ中だよ。")
-        return
-
-    # 開始時には残高を引かず、掘る時点で必要な金額を確認する
-    view = TreasureHuntView(ctx, bet_amount)
-    active_treasure_hunt_users.add(ctx.author.id)
-    try:
-        view.message = await ctx.send(embed=view.make_embed(), view=view)
-    except Exception:
-        active_treasure_hunt_users.discard(ctx.author.id)
-        raise
-
-
-@bot.command(name="th")
 async def treasure_hunt_command(ctx: commands.Context, bet: str, lane: str):
     """宝探しゲームを開始（例：.th 100 1）"""
     if ctx.guild is None:

@@ -1686,7 +1686,7 @@ class ColorBetView(discord.ui.View):
                 ),
             )
 
-@bot.command(name="color", aliases=["色当て", "redblue"])
+@bot.command(name="color", aliases=["色当て", "redblue", "cl"])
 async def color_command(ctx, bet_text: str):
     if ctx.guild is None:
         await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
@@ -2630,7 +2630,7 @@ class MineGameView(discord.ui.View):
             await self.finish_game("timeout", "時間切れになったため賭け金を返金したよ。")
 
 
-@bot.command(name="mine", aliases=["マイン"])
+@bot.command(name="mine", aliases=["マイン", "m"])
 async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     if ctx.guild is None:
         await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
@@ -3137,7 +3137,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
 # ==================================================
 # 3. .slot コマンド本体
 # ==================================================
-@bot.command(name="slot")
+@bot.command(name="slot", aliases=["s"])
 async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     if ctx.guild is None:
         await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)

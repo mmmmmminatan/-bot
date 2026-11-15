@@ -7474,7 +7474,7 @@ class TreasureHuntView(discord.ui.View):
                     multiplier = {
                         "Small Dia": 5,
                         "Medium Dia": 20,
-                        "BIG Dia": 100,
+                        "BIG Dia": 75,
                     }[diamond_type]
                     payout = self.bet * multiplier
                     set_balance(self.owner_id, get_balance(self.owner_id) + payout)
@@ -7483,10 +7483,10 @@ class TreasureHuntView(discord.ui.View):
                     self.found.append(result)
                     self.revealed[lane][depth] = "💎"
                 elif self.chest == (lane, brown_depth):
-                    payout = self.bet * 300
+                    payout = self.bet * 150
                     set_balance(self.owner_id, get_balance(self.owner_id) + payout)
                     self.profit += payout
-                    result = f"🪎 **TREASURE CHEST** / **300x** / **+{money(payout)}**"
+                    result = f"🪎 **TREASURE CHEST** / **150x** / **+{money(payout)}**"
                     self.found.append(result)
                     self.revealed[lane][depth] = "🪎"
                 else:

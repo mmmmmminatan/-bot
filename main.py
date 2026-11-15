@@ -7584,7 +7584,7 @@ class TreasureHuntLaneButton(discord.ui.Button):
         super().__init__(
             label=TH_LANE_LABELS[lane],
             style=discord.ButtonStyle.success,
-            row=0,
+            row=lane // 5,
         )
         self.lane = lane
 
@@ -7598,7 +7598,7 @@ class TreasureHuntLaneButton(discord.ui.Button):
 
 class TreasureHuntDigButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="DIG", style=discord.ButtonStyle.primary, row=1)
+        super().__init__(label="DIG", style=discord.ButtonStyle.primary, row=2)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.view.owner_id:
@@ -7609,7 +7609,7 @@ class TreasureHuntDigButton(discord.ui.Button):
 
 class TreasureHuntFinButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="FIN", style=discord.ButtonStyle.danger, row=1)
+        super().__init__(label="FIN", style=discord.ButtonStyle.danger, row=2)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.view.owner_id:

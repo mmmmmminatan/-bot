@@ -6786,6 +6786,8 @@ async def send_welcome_log(member: discord.Member, joined: bool):
     )
     embed.add_field(name="名前", value=discord.utils.escape_markdown(str(member)), inline=False)
     embed.add_field(name="作成日", value=created_at, inline=False)
+    embed.add_field(name="現在のメンバー数", value=str(member.guild.member_count or 0), inline=False)
+    embed.set_thumbnail(url=member.display_avatar.url)
 
     try:
         await channel.send(embed=embed)

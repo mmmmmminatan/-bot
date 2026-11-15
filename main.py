@@ -7270,43 +7270,309 @@ class HighLowView(discord.ui.View):
       pass
 
 
+# ==================================================
+# TREASURE HUNT
+# ==================================================
+
+TH_LANES = 9
+TH_DEPTH = 6
+TH_LANE_LABELS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
+active_treasure_hunt_users = set()
+
+
+class TreasureHuntView(discord.ui.View):
+    def __init__(self, ctx, bet_amount):
+        super().__init__(timeout=600)
+        self.ctx = ctx
+        self.owner_id = ctx.author.id
+        self.guild = ctx.guild
+        self.bet = int(bet_amount)
+        self.lock = asyncio.Lock()
+        self.finished = False
+        self.message = None
+        self.profit = 0
+        self.total_digs = 0
+        self.found = []
+
+        # 各レーンの地下にダイヤを1個ずつ配置（高さはランダム）
+        self.diamonds = {
+            lane: random.randrange(TH_DEPTH) for lane in range(TH_LANES)
+        }
+
+        # 地上の緑マスに💰を1個配置
+        self.money_lane = random.randrange(TH_LANES)
+        self.money_found = False
+
+        # 宝箱は25%の確率で1個だけ配置。ダイヤとは別のマスにする
+        self.chest = None
+        if random.random() < 0.25:
+            possible_cells = [
+                (lane, depth)
+                for lane in range(TH_LANES)
+                for depth in range(TH_DEPTH)
+                if self.diamonds[lane] != depth
+            ]
+            self.chest = random.choice(possible_cells)
+
+        # -1 は地上の緑マス、0〜5 は地下の深さ
+        self.depths = [-1] * TH_LANES
+        self.revealed = [
+            [False for _ in range(TH_DEPTH)] for _ in range(TH_LANES)
+        ]
+        self.results = [
+            [None for _ in range(TH_DEPTH)] for _ in range(TH_LANES)
+        ]
+
+        for lane in range(TH_LANES):
+            self.add_item(TreasureHuntLaneButton(lane))
+
+    def render_map(self):
+        lines = [" ".join(TH_LANE_LABELS)]
+        green = []
+        for lane in range(TH_LANES):
+            if self.money_found and lane == self.money_lane:
+                green.append("💰")
+            else:
+                green.append("🟩")
+        lines.append(" ".join(green))
+
+        for depth in range(TH_DEPTH):
+            row = []
+            for lane in range(TH_LANES):
+                if self.revealed[lane][depth]:
+                    row.append(self.results[lane][depth] or "⬛")
+                else:
+                    row.append("🟫")
+            lines.append(" ".join(row))
+        return "\n".join(lines)
+
+    def make_embed(self, status=None):
+        embed = discord.Embed(
+            title="⛏️ TREASURE HUNT",
+            description=self.render_map(),
+            color=discord.Color.green() if not self.finished else discord.Color.gold(),
+        )
+        embed.add_field(name="BET / DIG", value=money(self.bet), inline=True)
+        embed.add_field(name="Digs", value=str(self.total_digs), inline=True)
+        embed.add_field(name="Won", value=money_change(self.profit), inline=True)
+        embed.add_field(name="Balance", value=money(get_balance(self.owner_id)), inline=True)
+        if status:
+            embed.add_field(name="Result", value=status, inline=False)
+        elif self.found:
+            embed.add_field(name="Found", value="\n".join(self.found[-5:]), inline=False)
+        embed.set_footer(text="①〜⑨を押すと、そのレーンを上から1マス掘るよ")
+        return embed
+
+    async def dig(self, interaction, lane):
+        async with self.lock:
+            if self.finished:
+                await interaction.response.send_message(
+                    "This game has ended.", ephemeral=True
+                )
+                return
+
+            balance = get_balance(self.owner_id)
+            if balance < self.bet:
+                self.finished = True
+                active_treasure_hunt_users.discard(self.owner_id)
+                for child in self.children:
+                    child.disabled = True
+                await interaction.response.edit_message(
+                    embed=self.make_embed("残高不足で終了。次の1回分の賭け金が足りないよ。"),
+                    view=self,
+                )
+                await self.send_final_log("残高不足")
+                return
+
+            if self.depths[lane] >= TH_DEPTH - 1:
+                await interaction.response.send_message(
+                    "このレーンは一番下まで掘り終わっているよ。", ephemeral=True
+                )
+                return
+
+            # 1マス掘るたびに賭け金を差し引く（開始時には徴収しない）
+            set_balance(self.owner_id, balance - self.bet)
+            self.profit -= self.bet
+            self.total_digs += 1
+
+            if self.depths[lane] == -1:
+                self.depths[lane] = 0
+                if lane == self.money_lane and not self.money_found:
+                    multiplier = random.randint(9, 15)
+                    payout = self.bet * multiplier
+                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                    self.profit += payout
+                    self.money_found = True
+                    result = f"💰 Green Money: **{multiplier}x** / **+{money(payout)}**"
+                    self.found.append(result)
+                else:
+                    result = None
+            else:
+                depth = self.depths[lane]
+                self.revealed[lane][depth] = True
+
+                if self.diamonds[lane] == depth:
+                    diamond_type = random.choices(
+                        ["Small Dia", "Medium Dia", "BIG Dia"],
+                        weights=[75, 24, 1],
+                        k=1,
+                    )[0]
+                    multipliers = {
+                        "Small Dia": 5,
+                        "Medium Dia": 20,
+                        "BIG Dia": 100,
+                    }
+                    multiplier = multipliers[diamond_type]
+                    payout = self.bet * multiplier
+                    self.results[lane][depth] = "💎"
+                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                    self.profit += payout
+                    result = f"💎 **{diamond_type}**: **{multiplier}x** / **+{money(payout)}**"
+                    self.found.append(result)
+                elif self.chest == (lane, depth):
+                    payout = self.bet * 300
+                    self.results[lane][depth] = "🪎"
+                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                    self.profit += payout
+                    result = f"🪎 **TREASURE CHEST**: **300x** / **+{money(payout)}**"
+                    self.found.append(result)
+                else:
+                    self.results[lane][depth] = "⬛"
+                    result = None
+
+                self.depths[lane] += 1
+
+            # 各掘削後の残高をJSONログに保存して、残高復旧に使えるようにする
+            current_balance = get_balance(self.owner_id)
+            record_coin({
+                "type": "treasure_hunt_dig",
+                "timestamp": datetime.now(timezone.utc).timestamp(),
+                "guild_id": self.guild.id if self.guild else None,
+                "user_id": str(self.owner_id),
+                "username": str(self.ctx.author),
+                "bet": self.bet,
+                "lane": lane + 1,
+                "balance": current_balance,
+                "profit": self.profit,
+            })
+
+            if result:
+                status = result
+            else:
+                status = f"レーン {TH_LANE_LABELS[lane]} を掘ったけど、今回は何も見つからなかったよ。"
+
+            if all(depth >= TH_DEPTH - 1 for depth in self.depths):
+                self.finished = True
+                active_treasure_hunt_users.discard(self.owner_id)
+                for child in self.children:
+                    child.disabled = True
+                status += "\n\n**全レーンを掘り終えたよ！**"
+                await interaction.response.edit_message(
+                    embed=self.make_embed(status), view=self
+                )
+                await self.send_final_log("全レーン終了")
+                return
+
+            await interaction.response.edit_message(
+                embed=self.make_embed(status), view=self
+            )
+
+    async def send_final_log(self, reason):
+        if self.guild is None:
+            return
+        try:
+            await send_coin_log(
+                self.guild,
+                discord.Embed(
+                    title="⛏️ TREASURE HUNT LOG",
+                    description=(
+                        f"ユーザー：{self.ctx.author.mention} (`{self.owner_id}`)\n"
+                        f"BET / DIG：**{money(self.bet)}**\n"
+                        f"Digs：**{self.total_digs}**\n"
+                        f"Won：**{money_change(self.profit)}**\n"
+                        f"残高：**{money(get_balance(self.owner_id))}**\n"
+                        f"終了理由：{reason}"
+                    ),
+                    color=discord.Color.green() if self.profit >= 0 else discord.Color.red(),
+                ),
+            )
+        except Exception:
+            print("[TREASURE HUNT LOG ERROR]")
+            traceback.print_exc()
+
+    async def on_timeout(self):
+        if self.finished:
+            return
+        self.finished = True
+        active_treasure_hunt_users.discard(self.owner_id)
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    embed=self.make_embed("時間切れで終了。"),
+                    view=self,
+                )
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+        await self.send_final_log("タイムアウト")
+
+
+class TreasureHuntLaneButton(discord.ui.Button):
+    def __init__(self, lane):
+        super().__init__(
+            label=TH_LANE_LABELS[lane],
+            style=discord.ButtonStyle.success,
+            row=lane // 5,
+        )
+        self.lane = lane
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if interaction.user.id != view.owner_id:
+            await interaction.response.send_message(
+                "このゲームを開始した人だけ操作できるよ。", ephemeral=True
+            )
+            return
+        await view.dig(interaction, self.lane)
+
+
 @bot.command(name="th")
 async def treasure_hunt_command(ctx: commands.Context, bet: str):
-    """宝探しゲームのマップを表示する（例: .th 1000）"""
+    """宝探しゲームを開始（例: .th 100）"""
+    if ctx.guild is None:
+        await ctx.send("サーバー内で使ってね。")
+        return
+
     try:
         bet_amount = int(str(bet).replace(",", "").strip())
     except (TypeError, ValueError):
-        await ctx.send("賭け金は数字で指定してください。例：`.th 1000`")
+        await ctx.send("賭け金は数字で指定してください。例：`.th 100`")
         return
 
     if bet_amount <= 0:
         await ctx.send("賭け金は1以上を指定してください。")
         return
 
+    if ctx.author.id in active_treasure_hunt_users:
+        await ctx.send("すでにTREASURE HUNTをプレイ中だよ。")
+        return
+
     balance = get_balance(ctx.author.id)
     if balance < bet_amount:
         await ctx.send(
-            f"所持金が足りません。現在の残高：**{money(balance)}**"
+            f"次の1回分の賭け金が足りません。現在の残高：**{money(balance)}**"
         )
         return
 
-    map_text = (
-        "🟩🟩🟩🟩🟩🟩🟩🟩🟩\n"
-        "🟫🟫🟫🟫🟫🟫🟫🪨🟫\n"
-        "🟫🟫🟫🟫🟫🟫🟫🟫🟫\n"
-        "🟫🪨🟫🟫🟫🟫🟫🟫🟫\n"
-        "🟫🟫🟫🟫🟫🪨🟫🟫🟫\n"
-        "🟫🟫🟫🟫🟫🟫🟫🟫🟫\n"
-        "🟫🟫🪨🟫🟫🟫🟫🟫🪨"
-    )
-
-    embed = discord.Embed(
-        title="⛏️ TREASURE HUNT",
-        description=map_text,
-        color=discord.Color.green(),
-    )
-    embed.add_field(name="BET", value=money(bet_amount), inline=False)
-    await ctx.send(embed=embed)
+    # 開始時には残高を引かず、最初に掘った時点で1回分だけ徴収する
+    view = TreasureHuntView(ctx, bet_amount)
+    active_treasure_hunt_users.add(ctx.author.id)
+    try:
+        view.message = await ctx.send(embed=view.make_embed(), view=view)
+    except Exception:
+        active_treasure_hunt_users.discard(ctx.author.id)
+        raise
 
 
 @bot.command(name="hl", aliases=["highlow"])

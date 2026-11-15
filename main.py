@@ -7346,7 +7346,7 @@ class TreasureHuntView(discord.ui.View):
 
     def render_map(self, reveal_all=False):
         # Discord上で数字と9列をそろえるため、等幅コードブロックで表示
-        lines = [" ".join(TH_LANE_LABELS)]
+        lines = ["".join(TH_LANE_LABELS)]
         for depth in range(TH_GREEN_DEPTH + TH_BROWN_DEPTH):
             row = []
             for lane in range(TH_LANES):
@@ -7369,7 +7369,7 @@ class TreasureHuntView(discord.ui.View):
                 elif cell is None:
                     cell = "🟩" if depth < TH_GREEN_DEPTH else "🟫"
                 row.append(cell)
-            lines.append(" ".join(row))
+            lines.append("".join(row))
         return chr(96) * 3 + "\n" + "\n".join(lines) + "\n" + chr(96) * 3
 
     def make_embed(self, status=None, reveal_all=False):
@@ -7407,9 +7407,10 @@ class TreasureHuntView(discord.ui.View):
                 )
                 return
             self.selected_lane = lane
-            for item in self.children:
+            # レーン選択後は①〜⑨の選択ボタンを表示から取り除く
+            for item in list(self.children):
                 if isinstance(item, TreasureHuntLaneButton):
-                    item.disabled = item.lane != lane
+                    self.remove_item(item)
             await interaction.response.edit_message(
                 embed=self.make_embed(f"レーン {TH_LANE_LABELS[lane]} を選択したよ。DIGで掘ってね。"),
                 view=self,

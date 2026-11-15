@@ -7006,7 +7006,13 @@ class HighLowView(discord.ui.View):
 
     embed = discord.Embed(
         title="HIGH&LOW",
-        color=discord.Color.blurple(),
+        color=(
+            discord.Color.red()
+            if self.finished and self.end_status == "Lose"
+            else discord.Color.green()
+            if self.finished and self.end_status == "Cash out"
+            else discord.Color.blurple()
+        ),
     )
     if self.finished:
       result_line = f"**{self.end_status}**"

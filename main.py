@@ -3946,6 +3946,25 @@ async def recover_coins_for_guild(guild):
                             r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
                             description,
                         )
+                    elif "HIGH&LOW" in title:
+                        user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
+                        if "ベットログ" in title:
+                            balance_match = re.search(
+                                r"ベット後残高：\*\*([+-]?\\$?[\\d,]+)\*\*",
+                                description,
+                            )
+                        else:
+                            balance_match = re.search(
+                                r"残高：\*\*([+-]?\\$?[\\d,]+)\*\*",
+                                description,
+                            )
+                        if user_match and balance_match:
+                            combined_logs.append({
+                                "timestamp": message.created_at.timestamp(),
+                                "user_id": user_match.group(1),
+                                "balance": parse_money_text(balance_match.group(1)),
+                            })
+
                     elif "Paymentログ" in title:
                         user_match = re.search(r"対象：.*?`(\d+)`", description)
                         balance_match = re.search(
@@ -4188,6 +4207,29 @@ async def coinrecovery_command(interaction: discord.Interaction):
                         if user_match and balance_match:
                             combined_logs.append({
                                 "type": "slot",
+                                "timestamp": message.created_at.timestamp(),
+                                "guild_id": guild_id,
+                                "user_id": user_match.group(1),
+                                "balance": parse_money_text(balance_match.group(1)),
+                                "source": "discord",
+                            })
+                            discord_log_count += 1
+
+                    elif "HIGH&LOW" in title:
+                        user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
+                        if "ベットログ" in title:
+                            balance_match = re.search(
+                                r"ベット後残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                                description,
+                            )
+                        else:
+                            balance_match = re.search(
+                                r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                                description,
+                            )
+                        if user_match and balance_match:
+                            combined_logs.append({
+                                "type": "highlow",
                                 "timestamp": message.created_at.timestamp(),
                                 "guild_id": guild_id,
                                 "user_id": user_match.group(1),
@@ -7071,6 +7113,13 @@ class HighLowView(discord.ui.View):
       update_user_balance(self.owner_id, final_payout)
 
     final_balance = get_balance(self.owner_id)
+    if self.guild is not None:
+      record_coin({
+          "type": "highlow_settlement",
+          "guild_id": self.guild.id,
+          "user_id": str(self.owner_id),
+          "balance": final_balance,
+      })
     profit = final_payout - self.bet
     if won:
       message += f"\n\n💰 **+{final_payout:,} コイン** を獲得しました！（所持金: {final_balance:,} コイン）"
@@ -7191,6 +7240,12 @@ class HighLowView(discord.ui.View):
       self.finished = True
       final_balance = get_balance(self.owner_id)
       if self.guild is not None:
+        record_coin({
+            "type": "highlow_timeout",
+            "guild_id": self.guild.id,
+            "user_id": str(self.owner_id),
+            "balance": final_balance,
+        })
         await send_coin_log(
             self.guild,
             discord.Embed(
@@ -7291,6 +7346,12 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
   balance_after_bet = get_balance(ctx.author.id)
 
   if ctx.guild is not None:
+    record_coin({
+        "type": "highlow_bet",
+        "guild_id": ctx.guild.id,
+        "user_id": str(ctx.author.id),
+        "balance": balance_after_bet,
+    })
     await send_coin_log(
         ctx.guild,
         discord.Embed(

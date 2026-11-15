@@ -3943,19 +3943,19 @@ async def recover_coins_for_guild(guild):
                     if "スロットログ" in title:
                         user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
                         balance_match = re.search(
-                            r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                                r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
                             description,
                         )
                     elif "HIGH&LOW" in title:
                         user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
                         if "ベットログ" in title:
                             balance_match = re.search(
-                                r"ベット後残高：\*\*([+-]?\\$?[\\d,]+)\*\*",
+                                r"ベット後残高：\*\*([+-]?\$?[\d,]+)\*\*",
                                 description,
                             )
                         else:
                             balance_match = re.search(
-                                r"残高：\*\*([+-]?\\$?[\\d,]+)\*\*",
+                                r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
                                 description,
                             )
                         if user_match and balance_match:

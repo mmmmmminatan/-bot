@@ -7340,6 +7340,7 @@ class TreasureHuntView(discord.ui.View):
         ]
 
         self.add_item(TreasureHuntDigButton())
+        self.add_item(TreasureHuntAllDigButton())
         self.add_item(TreasureHuntFinButton())
 
     def render_map(self, reveal_all=False):
@@ -7414,107 +7415,131 @@ class TreasureHuntView(discord.ui.View):
             )
 
     async def dig_selected(self, interaction):
+        await self.dig_lane(interaction, max_cells=1)
+
+    async def dig_all_selected(self, interaction):
+        await self.dig_lane(interaction, max_cells=None)
+
+    async def dig_lane(self, interaction, max_cells=1):
         async with self.lock:
             if self.finished:
                 await interaction.response.send_message("This game has ended.", ephemeral=True)
                 return
+
             lane = self.selected_lane
-            depth = self.depths[lane]
             total_depth = TH_GREEN_DEPTH + TH_BROWN_DEPTH
-            if depth >= total_depth:
+            start_depth = self.depths[lane]
+            if start_depth >= total_depth:
                 await interaction.response.send_message("このレーンは一番下まで掘り終わっているよ。", ephemeral=True)
                 return
 
-            brown_depth = depth - TH_GREEN_DEPTH
-            is_rock = (
-                depth >= TH_GREEN_DEPTH
-                and (lane, brown_depth) in self.rocks
-            )
-            dig_cost = self.bet * 2 if is_rock else self.bet
+            end_depth = total_depth if max_cells is None else min(total_depth, start_depth + max_cells)
+            # ALL DIGは残りマスをまとめて掘る。必要額を先に確認し、不足時は何も掘らない。
+            total_cost = 0
+            for depth in range(start_depth, end_depth):
+                brown_depth = depth - TH_GREEN_DEPTH
+                is_rock = depth >= TH_GREEN_DEPTH and (lane, brown_depth) in self.rocks
+                total_cost += self.bet * (2 if is_rock else 1)
+
             balance = get_balance(self.owner_id)
-            if balance < dig_cost:
+            if balance < total_cost:
                 await interaction.response.send_message(
-                    f"残高が足りないよ。必要額：**{money(dig_cost)}** / 残高：**{money(balance)}**",
+                    f"残高が足りないよ。必要額：**{money(total_cost)}** / 残高：**{money(balance)}**",
                     ephemeral=True,
                 )
                 return
 
-            set_balance(self.owner_id, balance - dig_cost)
-            self.profit -= dig_cost
-            self.total_digs += 1
+            results = []
+            for depth in range(start_depth, end_depth):
+                brown_depth = depth - TH_GREEN_DEPTH
+                is_rock = depth >= TH_GREEN_DEPTH and (lane, brown_depth) in self.rocks
+                dig_cost = self.bet * 2 if is_rock else self.bet
 
-            result = None
-            if depth < TH_GREEN_DEPTH:
-                if self.money_cell == (lane, depth):
-                    multiplier = random.randint(9, 15)
-                    payout = self.bet * multiplier
-                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
-                    self.profit += payout
-                    result = f"💰 Green Money **{multiplier}x** / **+{money(payout)}**"
-                    self.found.append(result)
-                    self.revealed[lane][depth] = "💰"
-                else:
-                    self.revealed[lane][depth] = "⬛"
-            else:
-                if is_rock:
-                    self.revealed[lane][depth] = "🪨"
-                    result = f"🪨 ROCKを掘ったよ。岩の掘削費用は **{money(dig_cost)} (2x)**"
-                elif self.diamonds[lane] == brown_depth:
-                    diamond_type = random.choices(
-                        ["Small Dia", "Medium Dia", "BIG Dia"],
-                        weights=[75, 24, 1],
-                        k=1,
-                    )[0]
-                    multiplier = {
-                        "Small Dia": 5,
-                        "Medium Dia": 20,
-                        "BIG Dia": 75,
-                    }[diamond_type]
-                    payout = self.bet * multiplier
-                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
-                    self.profit += payout
-                    result = f"💎 **{diamond_type}** / **{multiplier}x** / **+{money(payout)}**"
-                    self.found.append(result)
-                    self.revealed[lane][depth] = "💎"
-                elif self.chest == (lane, brown_depth):
-                    payout = self.bet * 150
-                    set_balance(self.owner_id, get_balance(self.owner_id) + payout)
-                    self.profit += payout
-                    result = f"🪎 **TREASURE CHEST** / **150x** / **+{money(payout)}**"
-                    self.found.append(result)
-                    self.revealed[lane][depth] = "🪎"
-                else:
-                    self.revealed[lane][depth] = "⬛"
+                set_balance(self.owner_id, get_balance(self.owner_id) - dig_cost)
+                self.profit -= dig_cost
+                self.total_digs += 1
 
-            self.depths[lane] += 1
-            current_balance = get_balance(self.owner_id)
-            record_coin({
-                "type": "treasure_hunt_dig",
-                "timestamp": datetime.now(timezone.utc).timestamp(),
-                "guild_id": self.guild.id if self.guild else None,
-                "user_id": str(self.owner_id),
-                "username": str(self.ctx.author),
-                "bet": self.bet,
-                "dig_cost": dig_cost,
-                "lane": lane + 1,
-                "depth": depth + 1,
-                "balance": current_balance,
-                "profit": self.profit,
-            })
+                result = None
+                if depth < TH_GREEN_DEPTH:
+                    if self.money_cell == (lane, depth):
+                        multiplier = random.randint(9, 15)
+                        payout = self.bet * multiplier
+                        set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                        self.profit += payout
+                        result = f"💰 Green Money **{multiplier}x** / **+{money(payout)}**"
+                        self.found.append(result)
+                        self.revealed[lane][depth] = "💰"
+                    else:
+                        self.revealed[lane][depth] = "⬛"
+                else:
+                    if is_rock:
+                        self.revealed[lane][depth] = "🪨"
+                        result = f"🪨 ROCK / Dig cost **{money(dig_cost)} (2x)**"
+                    elif self.diamonds[lane] == brown_depth:
+                        diamond_type = random.choices(
+                            ["Small Dia", "Medium Dia", "BIG Dia"],
+                            weights=[75, 24, 1],
+                            k=1,
+                        )[0]
+                        multiplier = {
+                            "Small Dia": 5,
+                            "Medium Dia": 20,
+                            "BIG Dia": 75,
+                        }[diamond_type]
+                        payout = self.bet * multiplier
+                        set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                        self.profit += payout
+                        result = f"💎 **{diamond_type}** / **{multiplier}x** / **+{money(payout)}**"
+                        self.found.append(result)
+                        self.revealed[lane][depth] = "💎"
+                    elif self.chest == (lane, brown_depth):
+                        payout = self.bet * 150
+                        set_balance(self.owner_id, get_balance(self.owner_id) + payout)
+                        self.profit += payout
+                        result = f"🪎 **TREASURE CHEST** / **150x** / **+{money(payout)}**"
+                        self.found.append(result)
+                        self.revealed[lane][depth] = "🪎"
+                    else:
+                        self.revealed[lane][depth] = "⬛"
+
+                self.depths[lane] = depth + 1
+                if result:
+                    results.append(result)
+
+                current_balance = get_balance(self.owner_id)
+                record_coin({
+                    "type": "treasure_hunt_dig",
+                    "timestamp": datetime.now(timezone.utc).timestamp(),
+                    "guild_id": self.guild.id if self.guild else None,
+                    "user_id": str(self.owner_id),
+                    "username": str(self.ctx.author),
+                    "bet": self.bet,
+                    "dig_cost": dig_cost,
+                    "lane": lane + 1,
+                    "depth": depth + 1,
+                    "balance": current_balance,
+                    "profit": self.profit,
+                })
 
             if self.depths[lane] >= total_depth:
                 self.finished = True
                 active_treasure_hunt_users.discard(self.owner_id)
                 for item in self.children:
                     item.disabled = True
-                status = (result + "\n" if result else "") + "このレーンを最後まで掘ったよ。"
+                results.append("このレーンを最後まで掘ったよ。")
                 await interaction.response.edit_message(
-                    embed=self.make_embed(status, reveal_all=True), view=self
+                    embed=self.make_embed("\\n".join(results) or "ALL DIG 完了。", reveal_all=True),
+                    view=self,
                 )
                 await self.send_final_log("レーン完掘")
                 return
 
-            status = result or f"レーン {TH_LANE_LABELS[lane]} を1マス掘ったよ。"
+            if max_cells is None:
+                status = f"ALL DIG — {end_depth - start_depth}マス掘ったよ。"
+            else:
+                status = f"レーン {TH_LANE_LABELS[lane]} を1マス掘ったよ。"
+            if results:
+                status += "\\n" + "\\n".join(results)
             await interaction.response.edit_message(embed=self.make_embed(status), view=self)
 
     async def finish_game(self, interaction):
@@ -7599,6 +7624,17 @@ class TreasureHuntDigButton(discord.ui.Button):
             await interaction.response.send_message("このゲームを開始した人だけ操作できるよ。", ephemeral=True)
             return
         await self.view.dig_selected(interaction)
+
+
+class TreasureHuntAllDigButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="ALL DIG", style=discord.ButtonStyle.success, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.view.owner_id:
+            await interaction.response.send_message("このゲームを開始した人だけ操作できるよ。", ephemeral=True)
+            return
+        await self.view.dig_all_selected(interaction)
 
 
 class TreasureHuntFinButton(discord.ui.Button):

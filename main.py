@@ -7384,7 +7384,7 @@ class TreasureHuntView(discord.ui.View):
                 await self.send_final_log("残高不足")
                 return
 
-            if self.depths[lane] >= TH_DEPTH - 1:
+            if self.depths[lane] >= TH_DEPTH:
                 await interaction.response.send_message(
                     "このレーンは一番下まで掘り終わっているよ。", ephemeral=True
                 )
@@ -7461,7 +7461,7 @@ class TreasureHuntView(discord.ui.View):
             else:
                 status = f"レーン {TH_LANE_LABELS[lane]} を掘ったけど、今回は何も見つからなかったよ。"
 
-            if all(depth >= TH_DEPTH - 1 for depth in self.depths):
+            if all(depth >= TH_DEPTH for depth in self.depths):
                 self.finished = True
                 active_treasure_hunt_users.discard(self.owner_id)
                 for child in self.children:

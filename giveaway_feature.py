@@ -308,42 +308,71 @@ class GiveawayJoinView(discord.ui.View):
 
 
 class GiveawayTypeView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, owner_user_id):
         super().__init__(timeout=180)
+        self.owner_user_id = int(owner_user_id)
+
+    async def require_currency_owner(self, interaction):
+        if interaction.user.id == self.owner_user_id:
+            return True
+        await interaction.response.send_message(
+            "通貨配布を開始できるのはBotオーナー本人だけです。",
+            ephemeral=True,
+        )
+        return False
 
     @discord.ui.button(label="通常配布", style=discord.ButtonStyle.primary, emoji="🎁", row=0)
     async def normal(self, interaction, button):
-        await interaction.response.send_modal(GiveawayModal("normal"))
+        await interaction.response.send_modal(GiveawayModal("normal", owner_user_id=self.owner_user_id))
 
     @discord.ui.button(label="通常通貨配布", style=discord.ButtonStyle.primary, emoji="💰", row=0)
     async def normal_coin(self, interaction, button):
-        await interaction.response.send_message("通貨の配布方法を選んでね。", view=GiveawayCoinModeView(), ephemeral=True)
+        if not await self.require_currency_owner(interaction):
+            return
+        await interaction.response.send_message("通貨の配布方法を選んでね。", view=GiveawayCoinModeView(self.owner_user_id), ephemeral=True)
 
     @discord.ui.button(label="早押し配布", style=discord.ButtonStyle.success, emoji="⚡", row=1)
     async def early(self, interaction, button):
-        await interaction.response.send_modal(GiveawayModal("early"))
+        await interaction.response.send_modal(GiveawayModal("early", owner_user_id=self.owner_user_id))
 
     @discord.ui.button(label="早押し通貨配布", style=discord.ButtonStyle.success, emoji="💸", row=1)
     async def early_coin(self, interaction, button):
-        await interaction.response.send_modal(GiveawayModal("early_coin"))
+        if not await self.require_currency_owner(interaction):
+            return
+        await interaction.response.send_modal(GiveawayModal("early_coin", owner_user_id=self.owner_user_id))
 
 
 class GiveawayCoinModeView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, owner_user_id):
         super().__init__(timeout=180)
+        self.owner_user_id = int(owner_user_id)
+
+    async def require_currency_owner(self, interaction):
+        if interaction.user.id == self.owner_user_id:
+            return True
+        await interaction.response.send_message(
+            "通貨配布を開始できるのはBotオーナー本人だけです。",
+            ephemeral=True,
+        )
+        return False
 
     @discord.ui.button(label="総額を山分け", style=discord.ButtonStyle.primary, emoji="🪙")
     async def total(self, interaction, button):
-        await interaction.response.send_modal(GiveawayModal("normal_coin", "total"))
+        if not await self.require_currency_owner(interaction):
+            return
+        await interaction.response.send_modal(GiveawayModal("normal_coin", "total", owner_user_id=self.owner_user_id))
 
     @discord.ui.button(label="1人あたり指定額", style=discord.ButtonStyle.success, emoji="👤")
     async def per_person(self, interaction, button):
-        await interaction.response.send_modal(GiveawayModal("normal_coin", "per_person"))
+        if not await self.require_currency_owner(interaction):
+            return
+        await interaction.response.send_modal(GiveawayModal("normal_coin", "per_person", owner_user_id=self.owner_user_id))
 
 class GiveawayModal(discord.ui.Modal):
-    def __init__(self, kind, coin_mode=None):
+    def __init__(self, kind, coin_mode=None, owner_user_id=None):
         self.kind = kind
         self.coin_mode = coin_mode
+        self.owner_user_id = int(owner_user_id) if owner_user_id is not None else None
         titles = {"normal": "通常配布の設定", "early": "早押し配布の設定", "normal_coin": "通常通貨配布の設定", "early_coin": "早押し通貨配布の設定"}
         super().__init__(title=titles[kind])
         if kind in ("normal", "early"):
@@ -359,6 +388,14 @@ class GiveawayModal(discord.ui.Modal):
             self.add_item(self.duration)
 
     async def on_submit(self, interaction):
+        if self.kind in ("normal_coin", "early_coin"):
+            if self.owner_user_id is None or interaction.user.id != self.owner_user_id:
+                await interaction.response.send_message(
+                    "通貨配布を開始できるのはBotオーナー本人だけです。",
+                    ephemeral=True,
+                )
+                return
+
         if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.send_message("サーバーのテキストチャンネルで使ってね。", ephemeral=True)
             return
@@ -437,8 +474,9 @@ async def restore(bot):
             traceback.print_exc()
 
 
-def setup_giveaway(bot, get_balance, set_balance, giveaway_logger):
+def setup_giveaway(bot, get_balance, set_balance, giveaway_logger, owner_user_id):
     globals()["get_balance"] = get_balance
+    owner_user_id = int(owner_user_id)
     globals()["set_balance"] = set_balance
     globals()["giveaway_logger"] = giveaway_logger
     group = app_commands.Group(name="giveaway", description="景品配布")
@@ -447,7 +485,7 @@ def setup_giveaway(bot, get_balance, set_balance, giveaway_logger):
     async def start(interaction):
         await interaction.response.send_message(
             "配布の種類を選んでね。",
-            view=GiveawayTypeView(),
+            view=GiveawayTypeView(owner_user_id),
             ephemeral=True,
         )
 

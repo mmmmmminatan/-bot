@@ -2840,6 +2840,15 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     active_lines_count = line_choice
     total_bet = base_bet * line_choice
 
+    # 1回のスピンの合計賭け金は$30まで
+    if total_bet > 30:
+        msg = "スロットの最高賭け金は1回あたり **$30** だよ。"
+        if interaction:
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await ctx.reply(msg, mention_author=False)
+        return
+
     if total_bet <= 0:
         msg = "賭け金に使える残高がないよ。"
         if interaction:
@@ -2988,9 +2997,9 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     # スロット盤面の右側（青線部分）にJP絵文字と数値を配置し、指定された箇所にグレーを配置
     slot_display = (
         f"{top_bottom_gray}\n"
-        f"{left_top} {'|'.join(displayed_rows[0])} {right_top} {gray_emoji}\n"
+        f"{left_top} {'|'.join(displayed_rows[0])} {right_top} {gray_emoji * (len(jp_nums) + 1)}\n"
         f"{left_mid} {'|'.join(displayed_rows[1])} {right_mid} {jp_display_parts}{gray_emoji}\n"
-        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot} {gray_emoji}\n"
+        f"{left_bot} {'|'.join(displayed_rows[2])} {right_bot} {gray_emoji * (len(jp_nums) + 1)}\n"
         f"{top_bottom_gray}\n"
         f"{bet_label_emoji}{b[0]}{b[1]}{b[2]}{gray_emoji}{won_label_emoji}{w[0]}{w[1]}{w[2]}{w[3]}{w[4]}{gray_emoji}{gray_emoji}\n"
         f"{divider_gray}\n"

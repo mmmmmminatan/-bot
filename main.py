@@ -3155,14 +3155,16 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 
 @bot.tree.command(
     name="decidecash",
-    description="指定したユーザーの残高を設定する（管理者専用）",
+    description="指定したユーザーの残高を設定する（オーナー本人専用）",
 )
 @app_commands.describe(
     target="残高を設定する対象のユーザー",
     amount="設定する金額",
 )
-@app_commands.default_permissions(administrator=True)
 async def decidecash_command(interaction: discord.Interaction, target: discord.User, amount: int):
+    if not await require_owner(interaction):
+        return
+
     if interaction.guild is None:
         await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return
@@ -7283,7 +7285,7 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
 from giveaway_feature import setup_giveaway
 from race_feature import setup_race
 
-setup_giveaway(bot, get_balance, set_balance, send_coin_log)
+setup_giveaway(bot, get_balance, set_balance, send_coin_log, OWNER_USER_ID)
 setup_race(bot, get_balance, set_balance, money)
 
 

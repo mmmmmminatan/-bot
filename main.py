@@ -6695,6 +6695,8 @@ bot.tree.add_command(request_group)
 # /welcome log 入退出ログ設定
 # ==================================================
 
+WELCOME_LOG_CHANNEL_ID = 1553043298749259941
+
 welcome_group = app_commands.Group(
     name="welcome",
     description="参加・退出ログの設定",
@@ -6754,12 +6756,7 @@ async def welcome_log_command(
 
     embed = discord.Embed(
         title="✅ 入退出ログを設定したよ！",
-        description=(
-            f"送信先：{target.mention}\n\n"
-            "🟩 **参加ログ：緑色の埋め込み**\n"
-            "🟥 **退出ログ：赤色の埋め込み**\n\n"
-            "これからメンバーが参加・退出すると、自動でここに記録するよ。"
-        ),
+        description=f"送信先：{target.mention}",
         color=discord.Color.green(),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -6768,86 +6765,42 @@ async def welcome_log_command(
 bot.tree.add_command(welcome_group)
 
 
-@bot.event
-async def on_member_join(member: discord.Member):
-    channel_id = welcome_log_configs.get(str(member.guild.id))
-    if not channel_id:
-        return
-
-    channel = bot.get_channel(int(channel_id))
+async def send_welcome_log(member: discord.Member, joined: bool):
+    channel_id = WELCOME_LOG_CHANNEL_ID
+    channel = bot.get_channel(channel_id)
     if channel is None:
         try:
-            channel = await bot.fetch_channel(int(channel_id))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            print(f"[WELCOME LOG] 参加ログ送信先を取得できません: {channel_id}")
+            channel = await bot.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+            print(f"[WELCOME LOG] 送信先を取得できません: {channel_id} / {error}")
             return
 
     if not isinstance(channel, discord.TextChannel):
+        print(f"[WELCOME LOG] 送信先がテキストチャンネルではありません: {channel_id}")
         return
 
     created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
-    joined_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
-    member_count = member.guild.member_count or "不明"
-
     embed = discord.Embed(
-        title="📥 メンバー参加",
-        description=f"{member.mention} がサーバーに参加しました！",
-        color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc),
+        title="📥 メンバー参加" if joined else "📤 メンバー退出",
+        color=discord.Color.green() if joined else discord.Color.red(),
     )
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="ユーザー名", value=f"{member}（{member.name}）", inline=True)
-    embed.add_field(name="ユーザーID", value=f"`{member.id}`", inline=True)
-    embed.add_field(name="アカウント作成日時", value=created_at, inline=False)
-    embed.add_field(name="参加日時", value=joined_at, inline=False)
-    embed.add_field(name="現在のメンバー数", value=str(member_count), inline=True)
-    embed.set_footer(text=f"JOIN • {member.guild.name}")
+    embed.add_field(name="名前", value=discord.utils.escape_markdown(str(member)), inline=False)
+    embed.add_field(name="作成日", value=created_at, inline=False)
 
     try:
         await channel.send(embed=embed)
     except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"[WELCOME LOG JOIN ERROR] {error}")
+        print(f"[WELCOME LOG {'JOIN' if joined else 'LEAVE'} ERROR] {error}")
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    await send_welcome_log(member, joined=True)
 
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    channel_id = welcome_log_configs.get(str(member.guild.id))
-    if not channel_id:
-        return
-
-    channel = bot.get_channel(int(channel_id))
-    if channel is None:
-        try:
-            channel = await bot.fetch_channel(int(channel_id))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            print(f"[WELCOME LOG] 退出ログ送信先を取得できません: {channel_id}")
-            return
-
-    if not isinstance(channel, discord.TextChannel):
-        return
-
-    created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
-    left_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
-    member_count = member.guild.member_count or "不明"
-
-    embed = discord.Embed(
-        title="📤 メンバー退出",
-        description=f"**{discord.utils.escape_markdown(str(member))}** がサーバーを退出しました。",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="ユーザー名", value=f"{member}（{member.name}）", inline=True)
-    embed.add_field(name="ユーザーID", value=f"`{member.id}`", inline=True)
-    embed.add_field(name="アカウント作成日時", value=created_at, inline=False)
-    embed.add_field(name="退出日時", value=left_at, inline=False)
-    embed.add_field(name="退出後のメンバー数", value=str(member_count), inline=True)
-    embed.set_footer(text=f"LEAVE • {member.guild.name}")
-
-    try:
-        await channel.send(embed=embed)
-    except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"[WELCOME LOG LEAVE ERROR] {error}")
+    await send_welcome_log(member, joined=False)
 
 
 # ==================================================

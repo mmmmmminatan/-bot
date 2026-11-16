@@ -716,7 +716,12 @@ async def on_command_error(ctx, error):
         missing_name = error.param.name
 
         # コマンドごとに、足りない項目を分かりやすく案内する
-        if command_name == "th":
+        if command_name == "give":
+            if missing_name == "member":
+                message = "送金相手が足りないよ！\n使い方：`.give @相手 金額`\n例：`.give @user 100`"
+            else:
+                message = "送金する金額が足りないよ！\n使い方：`.give @相手 金額`\n例：`.give @user 100`"
+        elif command_name == "th":
             if missing_name == "bet":
                 message = "賭け金が足りないよ！\n使い方：`.th 賭け金 1〜9`\n例：`.th 100 3`"
             else:

@@ -9,10 +9,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import discord
+import psycopg2
 from discord import app_commands
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_FILE = DATA_DIR / "race_feature.json"
+DATABASE_URL = os.getenv("DATABASE_URL")
 configs = {}
 tasks = {}
 locks = {}
@@ -46,14 +48,52 @@ BOAT_ODDS = [1.8, 2.2, 3.0, 4.0, 5.0, 6.0]
 
 def load_data():
     global configs
+    value = {}
     try:
         if DATA_FILE.exists():
             with DATA_FILE.open("r", encoding="utf-8") as f:
-                value = json.load(f)
-            configs = value if isinstance(value, dict) else {}
+                loaded = json.load(f)
+            value = loaded if isinstance(loaded, dict) else {}
     except Exception:
-        print("[RACE LOAD ERROR]")
+        print("[RACE JSON LOAD ERROR]")
         traceback.print_exc()
+
+    if DATABASE_URL:
+        try:
+            with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS bot_json_data (
+                            data_key TEXT PRIMARY KEY,
+                            payload JSONB NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cursor.execute(
+                        "SELECT payload FROM bot_json_data WHERE data_key = %s",
+                        (str(DATA_FILE),),
+                    )
+                    row = cursor.fetchone()
+                    if row is not None:
+                        configs = row[0] if isinstance(row[0], dict) else {}
+                        print(f"[DATABASE] Loaded race configs: {len(configs)}")
+                        return
+                    cursor.execute(
+                        """
+                        INSERT INTO bot_json_data (data_key, payload)
+                        VALUES (%s, %s::jsonb)
+                        ON CONFLICT (data_key) DO NOTHING
+                        """,
+                        (str(DATA_FILE), json.dumps(value, ensure_ascii=False)),
+                    )
+                    print("[DATABASE] Migrated race_feature.json")
+        except Exception:
+            print("[RACE DATABASE LOAD ERROR] JSONバックアップを使用します。")
+            traceback.print_exc()
+
+    configs = value
 
 
 def save_data():
@@ -64,8 +104,35 @@ def save_data():
             json.dump(configs, f, ensure_ascii=False, indent=2)
         temp.replace(DATA_FILE)
     except Exception:
-        print("[RACE SAVE ERROR]")
+        print("[RACE JSON BACKUP ERROR]")
         traceback.print_exc()
+
+    if DATABASE_URL:
+        try:
+            with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS bot_json_data (
+                            data_key TEXT PRIMARY KEY,
+                            payload JSONB NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO bot_json_data (data_key, payload, updated_at)
+                        VALUES (%s, %s::jsonb, NOW())
+                        ON CONFLICT (data_key)
+                        DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+                        """,
+                        (str(DATA_FILE), json.dumps(configs, ensure_ascii=False)),
+                    )
+            print("[DATABASE] Saved race configs")
+        except Exception:
+            print("[RACE DATABASE SAVE ERROR] JSONバックアップは保存済みです。")
+            traceback.print_exc()
 
 
 load_data()

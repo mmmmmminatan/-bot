@@ -513,6 +513,7 @@ def get_au_settings(guild_id):
     config.setdefault("enabled", True)
     config.setdefault("timeout_enabled", False)
     config.setdefault("timeout_seconds", 60)
+    config.setdefault("charge_limit", 1000)
     # 旧版の全サーバー共通ホワイトリストを初回だけ引き継ぐ
     config.setdefault("whitelist", sorted(au_whitelist, key=int))
     if not isinstance(config.get("whitelist"), list):
@@ -521,6 +522,10 @@ def get_au_settings(guild_id):
         config["timeout_seconds"] = max(1, min(86400, int(config.get("timeout_seconds", 60))))
     except (TypeError, ValueError):
         config["timeout_seconds"] = 60
+    try:
+        config["charge_limit"] = max(1, min(1000000, int(config.get("charge_limit", 1000))))
+    except (TypeError, ValueError):
+        config["charge_limit"] = 1000
     save_json(AU_SETTINGS_FILE, au_settings)
     return config
 
@@ -1072,7 +1077,8 @@ async def on_message(message):
         user_id = str(message.author.id)
 
         if config.get("enabled", True) and user_id not in config.get("whitelist", []):
-            amount = random.randint(1, 1000)
+            charge_limit = max(1, min(1000000, int(config.get("charge_limit", 1000))))
+            amount = random.randint(1, charge_limit)
             try:
                 await message.channel.send(
                     embed=make_au_message(message.author, amount),
@@ -4656,6 +4662,38 @@ class AuTimeoutModal(discord.ui.Modal, title="タイムアウト時間の設定"
         )
 
 
+class AuChargeLimitModal(discord.ui.Modal, title="1回あたりの請求上限設定"):
+    limit = discord.ui.TextInput(
+        label="請求上限（万円）",
+        placeholder="1〜1000000（例：1000）",
+        min_length=1,
+        max_length=7,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        try:
+            limit = int(str(self.limit.value).replace(",", "").strip())
+        except ValueError:
+            await interaction.response.send_message("上限は数字で入力してね。", ephemeral=True)
+            return
+        if not 1 <= limit <= 1000000:
+            await interaction.response.send_message("1〜1000000万円の範囲で指定してね。", ephemeral=True)
+            return
+
+        config = get_au_settings(interaction.guild.id)
+        config["charge_limit"] = limit
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(
+            f"✅ あう送信1回あたりの請求上限を **{limit:,}万円** に設定したよ。",
+            ephemeral=True,
+        )
+
+
 class AuWhitelistModal(discord.ui.Modal):
     def __init__(self, action):
         self.action = action
@@ -4741,7 +4779,11 @@ class AuSettingPanelView(discord.ui.View):
     async def remove_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuWhitelistModal("remove"))
 
-    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="請求上限を設定", style=discord.ButtonStyle.primary, row=2)
+    async def set_charge_limit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuChargeLimitModal())
+
+    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=3)
     async def list_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
         user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
@@ -4761,7 +4803,7 @@ class AuSettingPanelView(discord.ui.View):
 au_group = app_commands.Group(name="au", description="あう検知の設定")
 
 
-@au_group.command(name="setting", description="あう検知・タイムアウト・ホワイトリストを設定")
+@au_group.command(name="setting", description="あう検知・タイムアウト・ホワイトリスト・請求上限を設定")
 async def au_setting_command(interaction: discord.Interaction):
     if not await require_owner(interaction):
         return
@@ -4784,6 +4826,11 @@ async def au_setting_command(interaction: discord.Interaction):
     embed.add_field(name="あう検知", value="ON" if config.get("enabled", True) else "OFF", inline=True)
     embed.add_field(name="自動タイムアウト", value=timeout_text, inline=True)
     embed.add_field(name="ホワイトリスト", value=f"{whitelist_count}人", inline=True)
+    embed.add_field(
+        name="1回あたりの請求上限",
+        value=f"{config.get('charge_limit', 1000):,}万円",
+        inline=True,
+    )
     embed.add_field(
         name="タイムアウト仕様",
         value="1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。",

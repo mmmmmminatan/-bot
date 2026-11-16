@@ -608,7 +608,7 @@ async def apply_au_timeout(member, seconds):
     now = datetime.now(timezone.utc)
     # Discord APIの最短時間制限を避けるため、Discord側は1時間に設定し、
     # 指定秒数後にBotが自動解除する。
-    discord_expiry = now + timedelta(hours=1)
+    discord_expiry = now + timedelta(seconds=max(3600, int(seconds) + 60))
     release_at = now.timestamp() + int(seconds)
 
     try:

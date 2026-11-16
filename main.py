@@ -51,7 +51,7 @@ def format_au_charge(amount):
     return f"{man:,}万円"
 
 
-def make_au_message(user, amount, completed=False):
+def make_au_message(user, amount, completed=False, charge_stats=None):
     if completed:
         embed = discord.Embed(
             title="✅ お支払い完了",
@@ -59,13 +59,20 @@ def make_au_message(user, amount, completed=False):
             color=discord.Color.green(),
         )
     else:
+        description = (
+            f"当サーバーの利用規約に違反しているため、{user.mention}に"
+            f"**{format_au_charge(amount)}**の請求が届いてます。\n"
+            "直ちに下のボタンからお支払いください。"
+        )
+        if charge_stats:
+            description += (
+                "\n\n📊 **請求額記録**"
+                f"\n最高額：**{format_au_charge(charge_stats['max'])}**"
+                f"\n最低額：**{format_au_charge(charge_stats['min'])}**"
+            )
         embed = discord.Embed(
             title="⚠️ あうを検知しました ⚠️",
-            description=(
-                f"当サーバーの利用規約に違反しているため、{user.mention}に"
-                f"**{format_au_charge(amount)}**の請求が届いてます。\n"
-                "直ちに下のボタンからお支払いください。"
-            ),
+            description=description,
             color=discord.Color.gold(),
         )
 
@@ -525,10 +532,25 @@ def get_au_settings(guild_id):
     config.setdefault("timeout_enabled", False)
     config.setdefault("timeout_seconds", 60)
     config.setdefault("charge_limit", 1000)
+    config.setdefault("show_charge_extremes", False)
+    config.setdefault("charge_min", None)
+    config.setdefault("charge_max", None)
+    config.setdefault("timeout_exempt_channels", [])
     # 旧版の全サーバー共通ホワイトリストを初回だけ引き継ぐ
     config.setdefault("whitelist", sorted(au_whitelist, key=int))
     if not isinstance(config.get("whitelist"), list):
         config["whitelist"] = []
+    if not isinstance(config.get("timeout_exempt_channels"), list):
+        config["timeout_exempt_channels"] = []
+    config["timeout_exempt_channels"] = sorted(
+        set(str(x) for x in config["timeout_exempt_channels"] if str(x).isdigit()),
+        key=int,
+    )
+    for stat_key in ("charge_min", "charge_max"):
+        try:
+            config[stat_key] = None if config.get(stat_key) is None else max(1, int(config[stat_key]))
+        except (TypeError, ValueError):
+            config[stat_key] = None
     try:
         config["timeout_seconds"] = max(1, min(86400, int(config.get("timeout_seconds", 60))))
     except (TypeError, ValueError):
@@ -1091,13 +1113,31 @@ async def on_message(message):
             charge_limit = max(1, min(1000000, int(config.get("charge_limit", 1000))))
             amount = random.randint(1, charge_limit)
             try:
+                previous_min = config.get("charge_min")
+                previous_max = config.get("charge_max")
+                config["charge_min"] = amount if previous_min is None else min(int(previous_min), amount)
+                config["charge_max"] = amount if previous_max is None else max(int(previous_max), amount)
+                save_json(AU_SETTINGS_FILE, au_settings)
+
+                charge_stats = None
+                if config.get("show_charge_extremes", False):
+                    charge_stats = {
+                        "min": config["charge_min"],
+                        "max": config["charge_max"],
+                    }
                 await message.channel.send(
-                    embed=make_au_message(message.author, amount),
+                    embed=make_au_message(
+                        message.author, amount, charge_stats=charge_stats
+                    ),
                     view=AuPaymentView(message.author.id, amount),
                 )
                 print("[AU DETECTED] あうを検知しました")
 
-                if config.get("timeout_enabled", False) and isinstance(message.author, discord.Member):
+                if (
+                    config.get("timeout_enabled", False)
+                    and str(message.channel.id) not in config.get("timeout_exempt_channels", [])
+                    and isinstance(message.author, discord.Member)
+                ):
                     seconds = max(1, min(86400, int(config.get("timeout_seconds", 60))))
                     success, error_message = await apply_au_timeout(message.author, seconds)
                     if success:
@@ -4705,6 +4745,52 @@ class AuChargeLimitModal(discord.ui.Modal, title="1回あたりの請求上限�
         )
 
 
+class AuTimeoutExemptChannelModal(discord.ui.Modal):
+    def __init__(self, action):
+        self.action = action
+        title = "タイムアウト除外チャンネルを追加" if action == "add" else "タイムアウト除外チャンネルを削除"
+        super().__init__(title=title)
+        self.channel_id = discord.ui.TextInput(
+            label="チャンネルID または #チャンネル",
+            placeholder="チャンネルIDを入力",
+            min_length=1,
+            max_length=25,
+        )
+        self.add_item(self.channel_id)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        raw_id = re.sub(r"[^0-9]", "", str(self.channel_id.value).strip())
+        if not raw_id:
+            await interaction.response.send_message("チャンネルIDかチャンネルメンションを入力してね。", ephemeral=True)
+            return
+        channel = interaction.guild.get_channel(int(raw_id))
+        if channel is None:
+            await interaction.response.send_message("このサーバー内にそのチャンネルが見つからないよ。", ephemeral=True)
+            return
+
+        config = get_au_settings(interaction.guild.id)
+        channels = set(str(x) for x in config.get("timeout_exempt_channels", []))
+        if self.action == "add":
+            channels.add(raw_id)
+            result = f"✅ {channel.mention} をあうタイムアウト対象外にしたよ。"
+        else:
+            if raw_id not in channels:
+                await interaction.response.send_message("そのチャンネルは除外登録されていないよ。", ephemeral=True)
+                return
+            channels.remove(raw_id)
+            result = f"✅ {channel.mention} をタイムアウト対象外から削除したよ。"
+
+        config["timeout_exempt_channels"] = sorted(channels, key=int)
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(result, ephemeral=True)
+
+
 class AuWhitelistModal(discord.ui.Modal):
     def __init__(self, action):
         self.action = action
@@ -4794,7 +4880,55 @@ class AuSettingPanelView(discord.ui.View):
     async def set_charge_limit(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuChargeLimitModal())
 
-    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="最高・最低表示 ON / OFF", style=discord.ButtonStyle.primary, row=2)
+    async def toggle_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        config["show_charge_extremes"] = not config.get("show_charge_extremes", False)
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(
+            f"請求額の最高・最低表示を **{'ON' if config['show_charge_extremes'] else 'OFF'}** にしたよ。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="最高・最低リセット", style=discord.ButtonStyle.danger, row=2)
+    async def reset_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        config["charge_min"] = None
+        config["charge_max"] = None
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(
+            "✅ このサーバーの請求額の最高・最低記録をリセットしたよ。次の請求から新しく記録するね。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="除外CH追加", style=discord.ButtonStyle.success, row=3)
+    async def add_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuTimeoutExemptChannelModal("add"))
+
+    @discord.ui.button(label="除外CH削除", style=discord.ButtonStyle.secondary, row=3)
+    async def remove_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuTimeoutExemptChannelModal("remove"))
+
+    @discord.ui.button(label="除外CH一覧", style=discord.ButtonStyle.secondary, row=4)
+    async def list_timeout_exempt_channels(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        channel_ids = config.get("timeout_exempt_channels", [])
+        if not channel_ids:
+            await interaction.response.send_message("タイムアウト対象外チャンネルはまだ登録されていないよ。", ephemeral=True)
+            return
+        lines = []
+        for channel_id in channel_ids[:80]:
+            channel = interaction.guild.get_channel(int(channel_id))
+            lines.append(channel.mention if channel else f"チャンネルID: {channel_id}（見つからない）")
+        embed = discord.Embed(
+            title="⏱️ あうタイムアウト対象外チャンネル",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"登録数：{len(channel_ids)}チャンネル")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=4)
     async def list_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
         user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
@@ -4842,6 +4976,20 @@ async def au_setting_command(interaction: discord.Interaction):
         value=f"{config.get('charge_limit', 1000):,}万円",
         inline=True,
     )
+    min_charge = config.get("charge_min")
+    max_charge = config.get("charge_max")
+    extremes_text = (
+        f"最高：{format_au_charge(max_charge)} / 最低：{format_au_charge(min_charge)}"
+        if min_charge is not None and max_charge is not None
+        else "まだ記録なし"
+    )
+    exempt_count = len(config.get("timeout_exempt_channels", []))
+    embed.add_field(
+        name="請求額の最高・最低",
+        value=f"表示：{'ON' if config.get('show_charge_extremes', False) else 'OFF'}\n{extremes_text}",
+        inline=True,
+    )
+    embed.add_field(name="タイムアウト対象外CH", value=f"{exempt_count}チャンネル", inline=True)
     embed.add_field(
         name="タイムアウト仕様",
         value="1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。",

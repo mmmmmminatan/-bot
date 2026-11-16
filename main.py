@@ -736,7 +736,7 @@ async def on_command_error(ctx, error):
             }
             missing_label = argument_names.get(missing_name, missing_name)
             message = (
-                f「{missing_label}」が足りないよ！\n"
+                f"「{missing_label}」が足りないよ！\n"
                 f"コマンド：`{ctx.prefix}{command_name}`"
             )
 

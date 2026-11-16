@@ -3259,6 +3259,182 @@ async def decidecash_command(interaction: discord.Interaction, target: discord.U
 
 
 # ==================================================
+# .give ユーザー間送金（送信者の確認ボタン付き）
+# ==================================================
+
+class GiveConfirmView(discord.ui.View):
+    def __init__(self, sender, recipient, amount):
+        super().__init__(timeout=120)
+        self.sender_id = sender.id
+        self.sender = sender
+        self.recipient = recipient
+        self.amount = int(amount)
+        self.completed = False
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.sender_id:
+            await interaction.response.send_message(
+                "この送金を操作できるのは送信者だけだよ。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="送る", style=discord.ButtonStyle.success)
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.completed:
+            await interaction.response.send_message("この送金はすでに処理済みだよ。", ephemeral=True)
+            return
+
+        sender_before = get_balance(self.sender_id)
+        if sender_before < self.amount:
+            self.completed = True
+            for item in self.children:
+                item.disabled = True
+            await interaction.response.edit_message(
+                content="残高が足りないため、送金できなかったよ。",
+                embed=None,
+                view=self,
+            )
+            return
+
+        # この時点で初めて残高を移動する
+        recipient_before = get_balance(self.recipient.id)
+        sender_after = sender_before - self.amount
+        recipient_after = recipient_before + self.amount
+        self.completed = True
+        set_balance(self.sender_id, sender_after)
+        set_balance(self.recipient.id, recipient_after)
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="✅ 送金完了",
+            description=(
+                f"送信者：{self.sender.mention}\n"
+                f"受取人：{self.recipient.mention}\n"
+                f"送金額：**{money(self.amount)}**\n"
+                f"送信者の残高：**{money(sender_after)}**"
+            ),
+            color=discord.Color.green(),
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=self)
+
+        record_coin({
+            "type": "give",
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "guild_id": interaction.guild.id if interaction.guild else None,
+            "user_id": self.sender_id,
+            "username": str(self.sender),
+            "recipient_id": self.recipient.id,
+            "recipient_name": str(self.recipient),
+            "amount": self.amount,
+            "sender_before": sender_before,
+            "sender_after": sender_after,
+            "recipient_before": recipient_before,
+            "recipient_after": recipient_after,
+        })
+
+        if interaction.guild is not None:
+            await send_coin_log(
+                interaction.guild,
+                discord.Embed(
+                    title="💸 Give送金ログ",
+                    description=(
+                        f"送信者：{self.sender.mention} (`{self.sender_id}`)\n"
+                        f"受取人：{self.recipient.mention} (`{self.recipient.id}`)\n"
+                        f"送金額：**{money(self.amount)}**\n"
+                        f"送金後残高：**{money(sender_after)}**\n"
+                        f"受取後残高：**{money(recipient_after)}**"
+                    ),
+                    color=discord.Color.blurple(),
+                ),
+            )
+
+    @discord.ui.button(label="送らない", style=discord.ButtonStyle.danger)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.completed:
+            await interaction.response.send_message("この送金はすでに処理済みだよ。", ephemeral=True)
+            return
+
+        self.completed = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content="送金をキャンセルしたよ。残高は変わっていないよ。",
+            embed=None,
+            view=self,
+        )
+
+    async def on_timeout(self):
+        if self.completed:
+            return
+        self.completed = True
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content="確認時間が過ぎたため、送金をキャンセルしたよ。残高は変わっていないよ。",
+                    embed=None,
+                    view=self,
+                )
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+
+@bot.command(name="give")
+async def give_command(ctx: commands.Context, member: discord.Member, amount_text: str):
+    """他のメンバーへ残高を送る（例：.give @user 100）"""
+    if ctx.guild is None:
+        await ctx.reply("サーバー内で使ってね。", mention_author=False)
+        return
+
+    if member.bot:
+        await ctx.reply("Botには送金できないよ。", mention_author=False)
+        return
+
+    if member.id == ctx.author.id:
+        await ctx.reply("自分自身には送金できないよ。", mention_author=False)
+        return
+
+    try:
+        amount = parse_money_text(amount_text)
+    except (TypeError, ValueError):
+        await ctx.reply("金額は数字で入力してね。例：`.give @user 100`", mention_author=False)
+        return
+
+    if amount <= 0:
+        await ctx.reply("送金額は1以上を指定してね。", mention_author=False)
+        return
+
+    current_balance = get_balance(ctx.author.id)
+    if current_balance < amount:
+        await ctx.reply(
+            f"残高が足りないよ。\n現在の残高：**{money(current_balance)}**\n送金額：**{money(amount)}**",
+            mention_author=False,
+        )
+        return
+
+    view = GiveConfirmView(ctx.author, member, amount)
+    embed = discord.Embed(
+        title="💸 送金の確認",
+        description=(
+            f"送信者：{ctx.author.mention}\n"
+            f"受取人：{member.mention}\n"
+            f"送金額：**{money(amount)}**\n"
+            f"現在の残高：**{money(current_balance)}**\n\n"
+            "この内容で送金する？\n"
+            "「送る」を押すまで残高は変わらないよ。"
+        ),
+        color=discord.Color.gold(),
+    )
+    view.message = await ctx.reply(embed=embed, view=view, mention_author=False)
+
+
+# ==================================================
 # /payment 残高の増減（スラッシュコマンド版）
 # ==================================================
 

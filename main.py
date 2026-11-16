@@ -7038,17 +7038,25 @@ bot.tree.add_command(welcome_group)
 
 
 async def send_welcome_log(member: discord.Member, joined: bool):
-    channel_id = WELCOME_LOG_CHANNEL_ID
-    channel = bot.get_channel(channel_id)
+    # サーバーごとに設定されたログ送信先を使う
+    guild_key = str(member.guild.id)
+    channel_id = welcome_log_configs.get(guild_key)
+
+    # 未設定のサーバーから、別サーバー（メインを含む）へ誤送信しない
+    if channel_id is None:
+        print(f"[WELCOME LOG] 送信先未設定: {member.guild.name} ({member.guild.id})")
+        return
+
+    channel = member.guild.get_channel(int(channel_id))
     if channel is None:
         try:
-            channel = await bot.fetch_channel(channel_id)
+            channel = await member.guild.fetch_channel(int(channel_id))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
             print(f"[WELCOME LOG] 送信先を取得できません: {channel_id} / {error}")
             return
 
-    if not isinstance(channel, discord.TextChannel):
-        print(f"[WELCOME LOG] 送信先がテキストチャンネルではありません: {channel_id}")
+    if not isinstance(channel, discord.TextChannel) or channel.guild.id != member.guild.id:
+        print(f"[WELCOME LOG] 送信先が同じサーバーのテキストチャンネルではありません: {channel_id}")
         return
 
     created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")

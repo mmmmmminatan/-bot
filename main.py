@@ -14,6 +14,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from flask import Flask
+import psycopg2
 
 
 # ==========================================
@@ -299,6 +300,108 @@ def save_json(path, data):
         print(f"[JSON SAVE ERROR] {path}")
         traceback.print_exc()
 
+
+# ==================================================
+# 入退出ログ設定の永続保存（Neon PostgreSQL）
+# ==================================================
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+def load_welcome_log_configs_from_database(fallback):
+    if not DATABASE_URL:
+        print("[WELCOME DB] DATABASE_URL未設定。JSONから読み込みます。")
+        return fallback
+
+    try:
+        with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS welcome_log_configs (
+                        guild_id TEXT PRIMARY KEY,
+                        channel_id BIGINT NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    "SELECT guild_id, channel_id FROM welcome_log_configs"
+                )
+                rows = cursor.fetchall()
+
+                # 初回接続時は、残っているJSON設定をデータベースへ移行
+                if not rows and fallback:
+                    cursor.executemany(
+                        """
+                        INSERT INTO welcome_log_configs (guild_id, channel_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT (guild_id)
+                        DO UPDATE SET channel_id = EXCLUDED.channel_id
+                        """,
+                        [
+                            (str(guild_id), int(channel_id))
+                            for guild_id, channel_id in fallback.items()
+                        ],
+                    )
+                    print(
+                        f"[WELCOME DB] JSONから{len(fallback)}件の設定を移行しました。"
+                    )
+                    return {
+                        str(guild_id): int(channel_id)
+                        for guild_id, channel_id in fallback.items()
+                    }
+
+                loaded = {
+                    str(guild_id): int(channel_id)
+                    for guild_id, channel_id in rows
+                }
+                print(f"[WELCOME DB] {len(loaded)}件の設定を読み込みました。")
+                return loaded
+
+    except Exception:
+        print("[WELCOME DB LOAD ERROR] データベースから読み込めませんでした。")
+        traceback.print_exc()
+        return fallback
+
+
+def save_welcome_log_config(guild_id, channel_id):
+    if not DATABASE_URL:
+        print(
+            "[WELCOME DB] DATABASE_URL未設定。"
+            "この設定はJSONにのみ保存され、再デプロイで消える可能性があります。"
+        )
+        return False
+
+    try:
+        with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS welcome_log_configs (
+                        guild_id TEXT PRIMARY KEY,
+                        channel_id BIGINT NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO welcome_log_configs (guild_id, channel_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (guild_id)
+                    DO UPDATE SET channel_id = EXCLUDED.channel_id
+                    """,
+                    (str(guild_id), int(channel_id)),
+                )
+
+        print(f"[WELCOME DB] 保存しました: guild={guild_id}, channel={channel_id}")
+        return True
+
+    except Exception:
+        print("[WELCOME DB SAVE ERROR] データベースへ保存できませんでした。")
+        traceback.print_exc()
+        return False
+
+
 balances = load_json(BALANCES_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
 slot_logs = load_json(SLOT_LOGS_FILE, [])
@@ -308,7 +411,9 @@ server_settings = load_json(SETTINGS_FILE, {})
 daily_data = load_json(DAILY_FILE, {})
 guess_data = load_json(GUESS_FILE, {})
 jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
-welcome_log_configs = load_json(WELCOME_LOG_FILE, {})
+welcome_log_configs = load_welcome_log_configs_from_database(
+    load_json(WELCOME_LOG_FILE, {})
+)
 au_whitelist = set(str(user_id) for user_id in load_json(AU_WHITELIST_FILE, []))
 anti_mention_settings = load_json(ANTI_MENTION_FILE, {})
 
@@ -7019,6 +7124,13 @@ async def welcome_log_command(
     if not permissions.view_channel or not permissions.send_messages or not permissions.embed_links:
         await interaction.response.send_message(
             "Botにこのチャンネルの「チャンネルを見る」「メッセージを送信」「埋め込みリンク」の権限が必要だよ。",
+            ephemeral=True,
+        )
+        return
+
+    if not save_welcome_log_config(interaction.guild.id, target.id):
+        await interaction.response.send_message(
+            "❌ 設定をデータベースに保存できなかったよ。RenderのDATABASE_URL設定を確認してね。",
             ephemeral=True,
         )
         return

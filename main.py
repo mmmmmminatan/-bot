@@ -278,34 +278,111 @@ def parse_money_text(value):
     return int(value)
 
 # ==================================================
-# JSON読み書き
+# JSON / Neon PostgreSQL 共通保存
 # ==================================================
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_JSON_TABLE = "bot_json_data"
+
+
+def _ensure_json_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_json_data (
+            data_key TEXT PRIMARY KEY,
+            payload JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
 def load_json(path, default):
+    data_key = str(path)
+    file_data = default
+
+    # まず既存JSONを読み込む。DBにまだデータがない場合の移行元として使う。
     try:
         if path.exists():
             with path.open("r", encoding="utf-8") as file:
-                return json.load(file)
+                file_data = json.load(file)
     except Exception:
         print(f"[JSON LOAD ERROR] {path}")
         traceback.print_exc()
-    return default
+
+    if not DATABASE_URL:
+        return file_data
+
+    try:
+        with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                _ensure_json_table(cursor)
+                cursor.execute(
+                    "SELECT payload FROM bot_json_data WHERE data_key = %s",
+                    (data_key,),
+                )
+                row = cursor.fetchone()
+
+                if row is not None:
+                    print(f"[DATABASE] Loaded: {data_key}")
+                    return row[0]
+
+                # 初回のみ、既存JSONの内容をNeonへ移行する。
+                cursor.execute(
+                    """
+                    INSERT INTO bot_json_data (data_key, payload)
+                    VALUES (%s, %s::jsonb)
+                    ON CONFLICT (data_key) DO NOTHING
+                    """,
+                    (data_key, json.dumps(file_data, ensure_ascii=False)),
+                )
+                print(f"[DATABASE] Migrated JSON: {data_key}")
+                return file_data
+
+    except Exception:
+        print(f"[DATABASE LOAD ERROR] {data_key} — JSONバックアップを使用します。")
+        traceback.print_exc()
+        return file_data
+
 
 def save_json(path, data):
+    # JSONファイルにも常にバックアップを残す。
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=2)
     except Exception:
-        print(f"[JSON SAVE ERROR] {path}")
+        print(f"[JSON BACKUP SAVE ERROR] {path}")
+        traceback.print_exc()
+
+    if not DATABASE_URL:
+        return
+
+    try:
+        with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                _ensure_json_table(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO bot_json_data (data_key, payload, updated_at)
+                    VALUES (%s, %s::jsonb, NOW())
+                    ON CONFLICT (data_key)
+                    DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        updated_at = NOW()
+                    """,
+                    (str(path), json.dumps(data, ensure_ascii=False)),
+                )
+        print(f"[DATABASE] Saved: {path}")
+
+    except Exception:
+        print(f"[DATABASE SAVE ERROR] {path} — JSONバックアップは保存済みです。")
         traceback.print_exc()
 
 
 # ==================================================
 # 入退出ログ設定の永続保存（Neon PostgreSQL）
 # ==================================================
-
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def load_welcome_log_configs_from_database(fallback):

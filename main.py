@@ -80,10 +80,12 @@ def make_au_message(user, amount, completed=False, charge_stats=None):
 
 
 class AuPaymentView(discord.ui.View):
-    def __init__(self, target_user_id, amount):
+    def __init__(self, guild_id, target_user_id, amount):
         super().__init__(timeout=300)
+        self.guild_id = int(guild_id)
         self.target_user_id = int(target_user_id)
         self.amount = int(amount)
+        self.paid = False
 
     @discord.ui.button(
         label="お支払い",
@@ -102,9 +104,23 @@ class AuPaymentView(discord.ui.View):
             )
             return
 
-        # 実際の決済や残高変更は行わず、表示だけ完了状態にする
+        if self.paid:
+            await interaction.response.send_message(
+                "この請求はすでに支払い済みとして記録されているよ。",
+                ephemeral=True,
+            )
+            return
+
+        # 支払いボタンによる支払い済み記録（Bot内の残高・現金は動かさない）
+        record_au_payment(self.guild_id, self.target_user_id, self.amount)
+        self.paid = True
         completed_embed = make_au_message(
             interaction.user, self.amount, completed=True
+        )
+        completed_embed.add_field(
+            name="支払い記録",
+            value=f"請求額：**{format_au_charge(self.amount)}**\n支払い済みとして記録したよ。",
+            inline=False,
         )
         for child in self.children:
             child.disabled = True
@@ -520,9 +536,58 @@ au_whitelist = set(str(user_id) for user_id in load_json(AU_WHITELIST_FILE, []))
 anti_mention_settings = load_json(ANTI_MENTION_FILE, {})
 AU_SETTINGS_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_settings.json"
 AU_TIMEOUTS_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_timeout_records.json"
+AU_DEBT_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_debt_records.json"
 au_settings = load_json(AU_SETTINGS_FILE, {})
 au_timeout_records = load_json(AU_TIMEOUTS_FILE, {})
+au_debt_records = load_json(AU_DEBT_FILE, {})
 AU_TIMEOUT_TASKS = {}
+
+
+def get_au_debt_record(guild_id, user_id):
+    guild_data = au_debt_records.setdefault(str(guild_id), {})
+    record = guild_data.setdefault(str(user_id), {
+        "billed": 0,
+        "paid": 0,
+        "unpaid": 0,
+        "bill_count": 0,
+    })
+    for key in ("billed", "paid", "unpaid", "bill_count"):
+        try:
+            record[key] = max(0, int(record.get(key, 0)))
+        except (TypeError, ValueError):
+            record[key] = 0
+    return record
+
+
+def record_au_charge(guild_id, user_id, amount):
+    record = get_au_debt_record(guild_id, user_id)
+    amount = max(0, int(amount))
+    record["billed"] += amount
+    record["unpaid"] += amount
+    record["bill_count"] += 1
+    save_json(AU_DEBT_FILE, au_debt_records)
+
+
+def record_au_payment(guild_id, user_id, amount):
+    record = get_au_debt_record(guild_id, user_id)
+    amount = max(0, int(amount))
+    paid_now = min(amount, record["unpaid"])
+    record["paid"] += paid_now
+    record["unpaid"] -= paid_now
+    save_json(AU_DEBT_FILE, au_debt_records)
+    return paid_now
+
+
+def get_au_guild_debt_totals(guild_id):
+    guild_data = au_debt_records.get(str(guild_id), {})
+    totals = {"billed": 0, "paid": 0, "unpaid": 0, "bill_count": 0}
+    for user_record in guild_data.values():
+        for key in totals:
+            try:
+                totals[key] += max(0, int(user_record.get(key, 0)))
+            except (TypeError, ValueError, AttributeError):
+                pass
+    return totals
 
 
 def get_au_settings(guild_id):
@@ -1113,6 +1178,7 @@ async def on_message(message):
             charge_limit = max(1, min(1000000, int(config.get("charge_limit", 1000))))
             amount = random.randint(1, charge_limit)
             try:
+                record_au_charge(message.guild.id, message.author.id, amount)
                 previous_min = config.get("charge_min")
                 previous_max = config.get("charge_max")
                 config["charge_min"] = amount if previous_min is None else min(int(previous_min), amount)
@@ -1129,7 +1195,7 @@ async def on_message(message):
                     embed=make_au_message(
                         message.author, amount, charge_stats=charge_stats
                     ),
-                    view=AuPaymentView(message.author.id, amount),
+                    view=AuPaymentView(message.guild.id, message.author.id, amount),
                 )
                 print("[AU DETECTED] あうを検知しました")
 
@@ -4946,6 +5012,45 @@ class AuSettingPanelView(discord.ui.View):
 
 
 au_group = app_commands.Group(name="au", description="あう検知の設定")
+
+
+@au_group.command(name="debt", description="請求額・支払い済み・未払いの集計を確認")
+@app_commands.describe(member="個人別の集計を確認するメンバー（省略するとサーバー全体）")
+async def au_debt_command(
+    interaction: discord.Interaction,
+    member: discord.Member | None = None,
+):
+    if not await require_owner(interaction):
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+        return
+
+    if member is not None:
+        record = get_au_debt_record(interaction.guild.id, member.id)
+        embed = discord.Embed(
+            title="📊 あう請求・支払い集計",
+            description=f"対象：{member.mention}",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="請求された額（累計）", value=f"**{format_au_charge(record['billed'])}**", inline=True)
+        embed.add_field(name="支払った額（累計）", value=f"**{format_au_charge(record['paid'])}**", inline=True)
+        embed.add_field(name="未払い額", value=f"**{format_au_charge(record['unpaid'])}**", inline=True)
+        embed.add_field(name="請求回数", value=f"{record['bill_count']}回", inline=True)
+    else:
+        totals = get_au_guild_debt_totals(interaction.guild.id)
+        embed = discord.Embed(
+            title="📊 サーバー全体のあう請求・支払い集計",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="請求された額（累計）", value=f"**{format_au_charge(totals['billed'])}**", inline=True)
+        embed.add_field(name="支払った額（累計）", value=f"**{format_au_charge(totals['paid'])}**", inline=True)
+        embed.add_field(name="未払い額", value=f"**{format_au_charge(totals['unpaid'])}**", inline=True)
+        embed.add_field(name="請求回数", value=f"{totals['bill_count']}回", inline=True)
+        embed.add_field(name="集計対象", value=f"{len(au_debt_records.get(str(interaction.guild.id), {}))}人", inline=True)
+
+    embed.set_footer(text="支払いボタンの記録を集計。Bot内の残高・現金は変更しません。")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @au_group.command(name="setting", description="あう検知・タイムアウト・ホワイトリスト・請求上限を設定")

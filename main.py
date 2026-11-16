@@ -174,6 +174,7 @@ JACKPOT_FILE = Path("jackpot_data.json")
 WELCOME_LOG_FILE = Path(os.getenv("DATA_DIR", ".")) / "welcome_log_configs.json"
 # RenderのPersistent Diskを /data にマウントし、DATA_DIR=/data を設定すると再デプロイ後も保持される
 AU_WHITELIST_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_whitelist.json"
+ANTI_MENTION_FILE = Path(os.getenv("DATA_DIR", ".")) / "anti_mention_settings.json"
 
 DAILY_REWARD = 1000
 DAILY_STREAK_BONUS = 100
@@ -309,6 +310,7 @@ guess_data = load_json(GUESS_FILE, {})
 jackpot_data = load_json(JACKPOT_FILE, {"pool": 10000})
 welcome_log_configs = load_json(WELCOME_LOG_FILE, {})
 au_whitelist = set(str(user_id) for user_id in load_json(AU_WHITELIST_FILE, []))
+anti_mention_settings = load_json(ANTI_MENTION_FILE, {})
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
@@ -674,15 +676,80 @@ async def on_ready():
                 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
-
     print(
         f"[MESSAGE] guild={message.guild.id if message.guild else 'DM'} "
         f"channel={message.channel.id} "
         f"user={message.author} "
         f"content={message.content[:150]}"
     )
+
+    # ==================================================
+    # 大量メンション自動タイムアウト
+    # ==================================================
+    if message.guild is not None:
+        guild = message.guild
+        author = message.author
+        config = anti_mention_settings.get(
+            str(guild.id),
+            {"mention_threshold": 5, "timeout_minutes": 10},
+        )
+
+        try:
+            mention_threshold = max(1, int(config.get("mention_threshold", 5)))
+            timeout_minutes = max(1, min(40320, int(config.get("timeout_minutes", 10))))
+        except (TypeError, ValueError):
+            mention_threshold = 5
+            timeout_minutes = 10
+
+        unique_mention_count = len({member.id for member in message.mentions})
+        triggered = message.mention_everyone or unique_mention_count >= mention_threshold
+
+        is_exempt = (
+            author.id == guild.owner_id
+            or (
+                isinstance(author, discord.Member)
+                and author.guild_permissions.administrator
+            )
+        )
+
+        if triggered and not is_exempt:
+            if author.bot:
+                # Discordの仕様上、Botアカウントにはタイムアウトを設定できない
+                print(f"[ANTI MENTION] Botアカウントのためタイムアウト不可: {author}")
+            elif isinstance(author, discord.Member):
+                bot_member = guild.me
+                if bot_member is None or not bot_member.guild_permissions.moderate_members:
+                    print("[ANTI MENTION ERROR] Botにメンバーをタイムアウトする権限がありません")
+                elif author.top_role >= bot_member.top_role:
+                    print(f"[ANTI MENTION ERROR] ロール階層のためタイムアウト不可: {author}")
+                else:
+                    try:
+                        until = discord.utils.utcnow() + timedelta(minutes=timeout_minutes)
+                        await author.timeout(
+                            until,
+                            reason=(
+                                "大量メンション自動対策 "
+                                f"(everyone/here={message.mention_everyone}, "
+                                f"unique_mentions={unique_mention_count})"
+                            ),
+                        )
+                        await message.channel.send(
+                            f"🚫 {author.display_name} を大量メンションのため "
+                            f"{timeout_minutes}分間タイムアウトしました。"
+                        )
+                        print(
+                            f"[ANTI MENTION] {author} を{timeout_minutes}分タイムアウト "
+                            f"(mentions={unique_mention_count}, everyone={message.mention_everyone})"
+                        )
+                    except discord.Forbidden:
+                        print(f"[ANTI MENTION ERROR] 権限不足でタイムアウトできません: {author}")
+                    except discord.HTTPException:
+                        print(f"[ANTI MENTION ERROR] タイムアウト処理に失敗: {author}")
+                        traceback.print_exc()
+
+    # Botのメッセージはここで終了（上の大量メンション検知だけ実施）
+    if message.author.bot:
+        return
 
     # ホワイトリスト登録者は「あう」検知の対象外
     if str(message.author.id) not in au_whitelist and pattern.search(message.content):
@@ -7935,6 +8002,48 @@ from race_feature import setup_race
 
 setup_giveaway(bot, get_balance, set_balance, send_coin_log, OWNER_USER_ID)
 setup_race(bot, get_balance, set_balance, money)
+
+
+# ==================================================
+# 大量メンション対策設定コマンド
+# ==================================================
+
+@bot.tree.command(
+    name="antimention",
+    description="大量メンションの検知人数とタイムアウト時間を設定します",
+)
+@app_commands.describe(
+    mention_threshold="タイムアウト対象にするメンション人数（1〜100人）",
+    timeout_minutes="タイムアウトする時間（1〜40320分）",
+)
+@app_commands.guild_only()
+async def antimention_command(
+    interaction: discord.Interaction,
+    mention_threshold: app_commands.Range[int, 1, 100],
+    timeout_minutes: app_commands.Range[int, 1, 40320],
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "このコマンドはサーバー内で使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    guild_key = str(interaction.guild.id)
+    anti_mention_settings[guild_key] = {
+        "mention_threshold": int(mention_threshold),
+        "timeout_minutes": int(timeout_minutes),
+    }
+    save_json(ANTI_MENTION_FILE, anti_mention_settings)
+
+    await interaction.response.send_message(
+        "✅ 大量メンション対策を設定しました。\n"
+        f"検知人数：**{mention_threshold}人以上**（同じ人の重複は1人として計算）\n"
+        f"タイムアウト：**{timeout_minutes}分**\n"
+        "対象：@everyone / @here / 設定人数以上のユーザーメンション\n"
+        "除外：サーバーオーナー・管理者権限を持つメンバー",
+        ephemeral=True,
+    )
 
 
 # ==================================================

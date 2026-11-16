@@ -324,6 +324,12 @@ def load_welcome_log_configs_from_database(fallback):
                     )
                     """
                 )
+                # Neonへの接続確認
+                cursor.execute("SELECT 1")
+                if cursor.fetchone() != (1,):
+                    raise RuntimeError("PostgreSQL connection test failed")
+                print("[DATABASE] PostgreSQL connected!")
+
                 cursor.execute(
                     "SELECT guild_id, channel_id FROM welcome_log_configs"
                 )

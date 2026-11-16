@@ -40,6 +40,17 @@ bot = commands.Bot(
 pattern = re.compile(r"あう")
 
 # あう検知メッセージ（黄色：未完了／緑色：完了）
+def format_au_charge(amount):
+    """万円単位の請求額を、日本語の億・万表記に整える。"""
+    amount = int(amount)
+    oku, man = divmod(amount, 10000)
+    if oku and man:
+        return f"{oku:,}億{man:,}万円"
+    if oku:
+        return f"{oku:,}億円"
+    return f"{man:,}万円"
+
+
 def make_au_message(user, amount, completed=False):
     if completed:
         embed = discord.Embed(
@@ -52,7 +63,7 @@ def make_au_message(user, amount, completed=False):
             title="⚠️ あうを検知しました ⚠️",
             description=(
                 f"当サーバーの利用規約に違反しているため、{user.mention}に"
-                f"**{amount}万円**の請求が届いてます。\n"
+                f"**{format_au_charge(amount)}**の請求が届いてます。\n"
                 "直ちに下のボタンからお支払いください。"
             ),
             color=discord.Color.gold(),

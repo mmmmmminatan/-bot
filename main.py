@@ -4740,7 +4740,7 @@ class AuChargeLimitModal(discord.ui.Modal, title="1回あたりの請求上限�
         config["charge_limit"] = limit
         save_json(AU_SETTINGS_FILE, au_settings)
         await interaction.response.send_message(
-            f"✅ あう送信1回あたりの請求上限を **{limit:,}万円** に設定したよ。",
+            f"✅ あう送信1回あたりの請求上限を **{format_au_charge(limit)}** に設定したよ。",
             ephemeral=True,
         )
 
@@ -4973,7 +4973,7 @@ async def au_setting_command(interaction: discord.Interaction):
     embed.add_field(name="ホワイトリスト", value=f"{whitelist_count}人", inline=True)
     embed.add_field(
         name="1回あたりの請求上限",
-        value=f"{config.get('charge_limit', 1000):,}万円",
+        value=format_au_charge(config.get("charge_limit", 1000)),
         inline=True,
     )
     min_charge = config.get("charge_min")

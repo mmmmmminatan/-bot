@@ -7471,15 +7471,28 @@ class TreasureHuntView(discord.ui.View):
         }
 
         # 宝箱は25%の確率で1個だけ配置
+        # 配置する場合、80%の確率でダイヤと同じレーンの「ダイヤより下」に置く
         self.chest = None
         if random.random() < 0.25:
-            possible = [
+            below_diamond_positions = [
+                (lane, depth)
+                for lane in range(TH_LANES)
+                for depth in range(TH_BROWN_DEPTH)
+                if self.diamonds[lane] is not None
+                and depth > self.diamonds[lane]
+            ]
+
+            all_possible_positions = [
                 (lane, depth)
                 for lane in range(TH_LANES)
                 for depth in range(TH_BROWN_DEPTH)
                 if self.diamonds[lane] != depth
             ]
-            self.chest = random.choice(possible)
+
+            if below_diamond_positions and random.random() < 0.80:
+                self.chest = random.choice(below_diamond_positions)
+            else:
+                self.chest = random.choice(all_possible_positions)
 
         # 各レーンは50%の確率で、茶色6段のどこかに岩を1個配置
         self.rocks = set()

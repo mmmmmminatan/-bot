@@ -3,3 +3,4 @@ python-dotenv
 flask
 gunicorn
 pillow
+psycopg2-binary

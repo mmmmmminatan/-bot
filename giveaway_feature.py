@@ -9,10 +9,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import discord
+import psycopg2
 from discord import app_commands
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 GIVEAWAY_FILE = DATA_DIR / "giveaways.json"
+DATABASE_URL = os.getenv("DATABASE_URL")
 giveaways = {}
 locks = {}
 tasks = {}
@@ -21,14 +23,52 @@ restored = False
 
 def load_data():
     global giveaways
+    value = {}
     try:
         if GIVEAWAY_FILE.exists():
             with GIVEAWAY_FILE.open("r", encoding="utf-8") as f:
-                value = json.load(f)
-            giveaways = value if isinstance(value, dict) else {}
+                loaded = json.load(f)
+            value = loaded if isinstance(loaded, dict) else {}
     except Exception:
-        print("[GIVEAWAY LOAD ERROR]")
+        print("[GIVEAWAY JSON LOAD ERROR]")
         traceback.print_exc()
+
+    if DATABASE_URL:
+        try:
+            with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS bot_json_data (
+                            data_key TEXT PRIMARY KEY,
+                            payload JSONB NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cursor.execute(
+                        "SELECT payload FROM bot_json_data WHERE data_key = %s",
+                        (str(GIVEAWAY_FILE),),
+                    )
+                    row = cursor.fetchone()
+                    if row is not None:
+                        giveaways = row[0] if isinstance(row[0], dict) else {}
+                        print(f"[DATABASE] Loaded giveaways: {len(giveaways)}")
+                        return
+                    cursor.execute(
+                        """
+                        INSERT INTO bot_json_data (data_key, payload)
+                        VALUES (%s, %s::jsonb)
+                        ON CONFLICT (data_key) DO NOTHING
+                        """,
+                        (str(GIVEAWAY_FILE), json.dumps(value, ensure_ascii=False)),
+                    )
+                    print("[DATABASE] Migrated giveaways.json")
+        except Exception:
+            print("[GIVEAWAY DATABASE LOAD ERROR] JSONバックアップを使用します。")
+            traceback.print_exc()
+
+    giveaways = value
 
 
 def save_data():
@@ -39,8 +79,35 @@ def save_data():
             json.dump(giveaways, f, ensure_ascii=False, indent=2)
         temp.replace(GIVEAWAY_FILE)
     except Exception:
-        print("[GIVEAWAY SAVE ERROR]")
+        print("[GIVEAWAY JSON BACKUP ERROR]")
         traceback.print_exc()
+
+    if DATABASE_URL:
+        try:
+            with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS bot_json_data (
+                            data_key TEXT PRIMARY KEY,
+                            payload JSONB NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO bot_json_data (data_key, payload, updated_at)
+                        VALUES (%s, %s::jsonb, NOW())
+                        ON CONFLICT (data_key)
+                        DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+                        """,
+                        (str(GIVEAWAY_FILE), json.dumps(giveaways, ensure_ascii=False)),
+                    )
+            print("[DATABASE] Saved giveaways")
+        except Exception:
+            print("[GIVEAWAY DATABASE SAVE ERROR] JSONバックアップは保存済みです。")
+            traceback.print_exc()
 
 
 load_data()

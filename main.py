@@ -460,7 +460,7 @@ async def require_owner(interaction):
     if is_owner_user(interaction.user):
         return True
 
-    message = "このコマンドを使えるのは指定されたオーナー本人だけだよ。"
+    message = "🚫Only Minatan can use this command."
 
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=True)

@@ -106,6 +106,7 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンド同期: {len(synced)}個")
+        await restore_au_timeout_tasks()
 
     except Exception:
         print("[SLASH SYNC ERROR]")
@@ -499,6 +500,132 @@ welcome_log_configs = load_welcome_log_configs_from_database(
 )
 au_whitelist = set(str(user_id) for user_id in load_json(AU_WHITELIST_FILE, []))
 anti_mention_settings = load_json(ANTI_MENTION_FILE, {})
+AU_SETTINGS_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_settings.json"
+AU_TIMEOUTS_FILE = Path(os.getenv("DATA_DIR", ".")) / "au_timeout_records.json"
+au_settings = load_json(AU_SETTINGS_FILE, {})
+au_timeout_records = load_json(AU_TIMEOUTS_FILE, {})
+AU_TIMEOUT_TASKS = {}
+
+
+def get_au_settings(guild_id):
+    key = str(guild_id)
+    config = au_settings.setdefault(key, {})
+    config.setdefault("enabled", True)
+    config.setdefault("timeout_enabled", False)
+    config.setdefault("timeout_seconds", 60)
+    # 旧版の全サーバー共通ホワイトリストを初回だけ引き継ぐ
+    config.setdefault("whitelist", sorted(au_whitelist, key=int))
+    if not isinstance(config.get("whitelist"), list):
+        config["whitelist"] = []
+    try:
+        config["timeout_seconds"] = max(1, min(86400, int(config.get("timeout_seconds", 60))))
+    except (TypeError, ValueError):
+        config["timeout_seconds"] = 60
+    save_json(AU_SETTINGS_FILE, au_settings)
+    return config
+
+
+async def au_timeout_release_task(guild_id, user_id, release_at, discord_until):
+    record_key = f"{guild_id}:{user_id}"
+    try:
+        wait_seconds = max(0, float(release_at) - datetime.now(timezone.utc).timestamp())
+        await asyncio.sleep(wait_seconds)
+
+        guild = bot.get_guild(int(guild_id))
+        if guild is None:
+            try:
+                guild = await bot.fetch_guild(int(guild_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        member = guild.get_member(int(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(user_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        current_until = member.timed_out_until
+        if current_until is not None:
+            expected = datetime.fromtimestamp(float(discord_until), timezone.utc)
+            # Botが設定したタイムアウトのままの場合だけ解除する。
+            # 管理者が手動で解除・延長した場合は上書きしない。
+            if abs((current_until - expected).total_seconds()) <= 10:
+                await member.timeout(None, reason="あう検知の設定時間が経過したため自動解除")
+
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        print(f"[AU TIMEOUT RELEASE ERROR] guild={guild_id} user={user_id}")
+        traceback.print_exc()
+    finally:
+        au_timeout_records.pop(record_key, None)
+        save_json(AU_TIMEOUTS_FILE, au_timeout_records)
+        AU_TIMEOUT_TASKS.pop(record_key, None)
+
+
+def schedule_au_timeout_release(guild_id, user_id, release_at, discord_until):
+    record_key = f"{guild_id}:{user_id}"
+    old_task = AU_TIMEOUT_TASKS.get(record_key)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    AU_TIMEOUT_TASKS[record_key] = asyncio.create_task(
+        au_timeout_release_task(guild_id, user_id, release_at, discord_until)
+    )
+
+
+async def restore_au_timeout_tasks():
+    # 再起動・再デプロイ後も、保存済みの解除予定を復元する。
+    for record_key, record in list(au_timeout_records.items()):
+        try:
+            guild_id, user_id = record_key.split(":", 1)
+            schedule_au_timeout_release(
+                guild_id,
+                user_id,
+                float(record["release_at"]),
+                float(record["discord_until"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            print(f"[AU TIMEOUT] 不正な解除記録を削除: {record_key}")
+            au_timeout_records.pop(record_key, None)
+    save_json(AU_TIMEOUTS_FILE, au_timeout_records)
+
+
+async def apply_au_timeout(member, seconds):
+    guild_id = str(member.guild.id)
+    user_id = str(member.id)
+    record_key = f"{guild_id}:{user_id}"
+
+    if record_key in au_timeout_records:
+        return False, "このメンバーには既にあう検知のタイムアウトが設定されています。"
+
+    bot_member = member.guild.me
+    if bot_member is None or not bot_member.guild_permissions.moderate_members:
+        return False, "Botに「メンバーをタイムアウト」の権限がありません。"
+    if member.top_role >= bot_member.top_role:
+        return False, "Botより上位または同じロールのメンバーにはタイムアウトを設定できません。"
+
+    now = datetime.now(timezone.utc)
+    # Discord APIの最短時間制限を避けるため、Discord側は1時間に設定し、
+    # 指定秒数後にBotが自動解除する。
+    discord_expiry = now + timedelta(hours=1)
+    release_at = now.timestamp() + int(seconds)
+
+    try:
+        await member.timeout(discord_expiry, reason=f"あう検知（設定時間: {seconds}秒）")
+        au_timeout_records[record_key] = {
+            "release_at": release_at,
+            "discord_until": discord_expiry.timestamp(),
+        }
+        save_json(AU_TIMEOUTS_FILE, au_timeout_records)
+        schedule_au_timeout_release(
+            guild_id, user_id, release_at, discord_expiry.timestamp()
+        )
+        return True, None
+    except discord.Forbidden:
+        return False, "権限不足でタイムアウトできませんでした。"
+    except discord.HTTPException:
+        return False, "Discord側でエラーが発生し、タイムアウトできませんでした。"
 
 DAILY_LOCK = asyncio.Lock()
 GUESS_LOCKS = {}
@@ -939,11 +1066,32 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # ホワイトリスト登録者は「あう」検知の対象外
-    if str(message.author.id) not in au_whitelist and pattern.search(message.content):
-        amount = random.randint(1, 1000)
-        await message.channel.send(embed=make_au_message(message.author, amount), view=AuPaymentView(message.author.id, amount))
-        print("[AU DETECTED] あうを検知しました")
+    # サーバーごとの「あう」検知設定
+    if message.guild is not None and pattern.search(message.content):
+        config = get_au_settings(message.guild.id)
+        user_id = str(message.author.id)
+
+        if config.get("enabled", True) and user_id not in config.get("whitelist", []):
+            amount = random.randint(1, 1000)
+            try:
+                await message.channel.send(
+                    embed=make_au_message(message.author, amount),
+                    view=AuPaymentView(message.author.id, amount),
+                )
+                print("[AU DETECTED] あうを検知しました")
+
+                if config.get("timeout_enabled", False) and isinstance(message.author, discord.Member):
+                    seconds = max(1, min(86400, int(config.get("timeout_seconds", 60))))
+                    success, error_message = await apply_au_timeout(message.author, seconds)
+                    if success:
+                        await message.channel.send(
+                            f"⏱️ {message.author.mention} を **{seconds}秒間** タイムアウトしました。"
+                        )
+                    else:
+                        print(f"[AU TIMEOUT] {error_message}")
+            except Exception:
+                print("[AU DETECTION ERROR]")
+                traceback.print_exc()
 
     # 既存機能
     await process_guess_message(message)
@@ -4474,100 +4622,177 @@ async def recover_coins_for_guild(guild):
     return f"{len(latest_balances)}人の残高を復旧"
 
 # ==================================================
-# /whitelist あう検知ホワイトリスト（Botオーナー専用）
+# /au setting — あう検知設定を1か所に集約
 # ==================================================
 
-whitelist_group = app_commands.Group(
-    name="whitelist",
-    description="あう検知ホワイトリストを管理する",
-)
-
-
-@whitelist_group.command(name="add", description="ユーザーをあう検知ホワイトリストに登録する")
-@app_commands.describe(user="ホワイトリストに登録するユーザー")
-async def whitelist_add(
-    interaction: discord.Interaction,
-    user: discord.Member,
-):
-    if not await require_owner(interaction):
-        return
-
-    user_id = str(user.id)
-    if user_id in au_whitelist:
-        await interaction.response.send_message(
-            f"{user.mention} は既にホワイトリストに登録されているよ。",
-            ephemeral=True,
-        )
-        return
-
-    au_whitelist.add(user_id)
-    save_json(AU_WHITELIST_FILE, sorted(au_whitelist, key=int))
-
-    await interaction.response.send_message(
-        f"✅ {user.mention} をあう検知ホワイトリストに登録したよ！\n"
-        "このユーザーのメッセージでは「あう」検知に反応しなくなるよ。",
-        ephemeral=True,
+class AuTimeoutModal(discord.ui.Modal, title="タイムアウト時間の設定"):
+    seconds = discord.ui.TextInput(
+        label="タイムアウト時間（秒）",
+        placeholder="1〜86400（例：5）",
+        min_length=1,
+        max_length=5,
     )
 
-
-@whitelist_group.command(name="remove", description="ユーザーをあう検知ホワイトリストから解除する")
-@app_commands.describe(user="ホワイトリストから解除するユーザー")
-async def whitelist_remove(
-    interaction: discord.Interaction,
-    user: discord.Member,
-):
-    if not await require_owner(interaction):
-        return
-
-    user_id = str(user.id)
-    if user_id not in au_whitelist:
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        try:
+            seconds = int(str(self.seconds.value).strip())
+        except ValueError:
+            await interaction.response.send_message("秒数は数字で入力してね。", ephemeral=True)
+            return
+        if not 1 <= seconds <= 86400:
+            await interaction.response.send_message("1〜86400秒の範囲で指定してね。", ephemeral=True)
+            return
+        config = get_au_settings(interaction.guild.id)
+        config["timeout_seconds"] = seconds
+        save_json(AU_SETTINGS_FILE, au_settings)
         await interaction.response.send_message(
-            f"{user.mention} はホワイトリストに登録されていないよ。",
+            f"✅ あう検知のタイムアウト時間を **{seconds}秒** に設定したよ。",
             ephemeral=True,
         )
+
+
+class AuWhitelistModal(discord.ui.Modal):
+    def __init__(self, action):
+        self.action = action
+        title = "ホワイトリストに追加" if action == "add" else "ホワイトリストから削除"
+        super().__init__(title=title)
+        self.user_id = discord.ui.TextInput(
+            label="ユーザーID",
+            placeholder="DiscordユーザーIDを入力",
+            min_length=17,
+            max_length=20,
+        )
+        self.add_item(self.user_id)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        raw_id = str(self.user_id.value).strip()
+        if not raw_id.isdigit():
+            await interaction.response.send_message("ユーザーIDは数字で入力してね。", ephemeral=True)
+            return
+
+        config = get_au_settings(interaction.guild.id)
+        whitelist = set(str(x) for x in config.get("whitelist", []))
+        if self.action == "add":
+            whitelist.add(raw_id)
+            result = f"✅ <@{raw_id}> をこのサーバーのホワイトリストに追加したよ。"
+        else:
+            if raw_id not in whitelist:
+                await interaction.response.send_message("そのユーザーは登録されていないよ。", ephemeral=True)
+                return
+            whitelist.remove(raw_id)
+            result = f"✅ <@{raw_id}> をこのサーバーのホワイトリストから削除したよ。"
+
+        config["whitelist"] = sorted(whitelist, key=int)
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(result, ephemeral=True)
+
+
+class AuSettingPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if not await require_owner(interaction):
+            return False
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="検知 ON / OFF", style=discord.ButtonStyle.primary, row=0)
+    async def toggle_detection(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        config["enabled"] = not config.get("enabled", True)
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(
+            f"あう検知を **{'ON' if config['enabled'] else 'OFF'}** にしたよ。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="タイムアウト ON / OFF", style=discord.ButtonStyle.danger, row=0)
+    async def toggle_timeout(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        config["timeout_enabled"] = not config.get("timeout_enabled", False)
+        save_json(AU_SETTINGS_FILE, au_settings)
+        await interaction.response.send_message(
+            f"自動タイムアウトを **{'ON' if config['timeout_enabled'] else 'OFF'}** にしたよ。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="時間を設定", style=discord.ButtonStyle.secondary, row=1)
+    async def set_time(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuTimeoutModal())
+
+    @discord.ui.button(label="WL追加", style=discord.ButtonStyle.success, row=1)
+    async def add_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuWhitelistModal("add"))
+
+    @discord.ui.button(label="WL削除", style=discord.ButtonStyle.secondary, row=1)
+    async def remove_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AuWhitelistModal("remove"))
+
+    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=2)
+    async def list_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_au_settings(interaction.guild.id)
+        user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
+        if not user_ids:
+            await interaction.response.send_message("このサーバーのホワイトリストは空だよ。", ephemeral=True)
+            return
+        lines = [f"<@{user_id}>（{user_id}）" for user_id in user_ids[:80]]
+        embed = discord.Embed(
+            title="📋 あう検知ホワイトリスト",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"登録者数：{len(user_ids)}人")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+au_group = app_commands.Group(name="au", description="あう検知の設定")
+
+
+@au_group.command(name="setting", description="あう検知・タイムアウト・ホワイトリストを設定")
+async def au_setting_command(interaction: discord.Interaction):
+    if not await require_owner(interaction):
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return
 
-    au_whitelist.remove(user_id)
-    save_json(AU_WHITELIST_FILE, sorted(au_whitelist, key=int))
-
-    await interaction.response.send_message(
-        f"✅ {user.mention} をホワイトリストから解除したよ！",
-        ephemeral=True,
+    config = get_au_settings(interaction.guild.id)
+    whitelist_count = len(config.get("whitelist", []))
+    timeout_text = (
+        f"ON（{config.get('timeout_seconds', 60)}秒）"
+        if config.get("timeout_enabled", False)
+        else "OFF"
     )
-
-
-@whitelist_group.command(name="list", description="あう検知ホワイトリストの登録者一覧を表示する")
-async def whitelist_list(interaction: discord.Interaction):
-    if not await require_owner(interaction):
-        return
-
-    if not au_whitelist:
-        await interaction.response.send_message(
-            "ホワイトリストの登録者はいないよ。",
-            ephemeral=True,
-        )
-        return
-
-    user_ids = sorted(au_whitelist, key=int)
-    lines = [f"<@{user_id}>  (ID: {user_id})" for user_id in user_ids]
-
     embed = discord.Embed(
-        title="📋 あう検知ホワイトリスト",
-        description="\n".join(lines[:80]),
+        title="😅 あう検知設定",
+        description="下のボタンから、このサーバーの設定を変更できるよ。",
         color=discord.Color.blurple(),
     )
-    embed.set_footer(text=f"登録者数：{len(user_ids)}人")
-    if len(lines) > 80:
-        embed.add_field(
-            name="表示について",
-            value=f"先頭80人を表示中。残り {len(lines) - 80} 人は省略したよ。",
-            inline=False,
-        )
+    embed.add_field(name="あう検知", value="ON" if config.get("enabled", True) else "OFF", inline=True)
+    embed.add_field(name="自動タイムアウト", value=timeout_text, inline=True)
+    embed.add_field(name="ホワイトリスト", value=f"{whitelist_count}人", inline=True)
+    embed.add_field(
+        name="タイムアウト仕様",
+        value="1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。",
+        inline=False,
+    )
+    await interaction.response.send_message(embed=embed, view=AuSettingPanelView(), ephemeral=True)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-bot.tree.add_command(whitelist_group)
+bot.tree.add_command(au_group)
 
 
 # ==================================================

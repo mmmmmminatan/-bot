@@ -8046,6 +8046,54 @@ async def antimention_command(
     )
 
 
+@bot.tree.command(
+    name="unantimention",
+    description="指定したメンバーのタイムアウトを解除します",
+)
+@app_commands.describe(
+    member="タイムアウトを解除するメンバー",
+)
+@app_commands.guild_only()
+async def unantimention_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "このコマンドはサーバー内で使ってね。",
+            ephemeral=True,
+        )
+        return
+
+    # 既にタイムアウトされていない場合
+    timed_out_until = member.timed_out_until
+    if timed_out_until is None or timed_out_until <= datetime.now(timezone.utc):
+        await interaction.response.send_message(
+            f"ℹ️ {member.mention} はタイムアウトされていません。",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        await member.timeout(
+            None,
+            reason=f"Timeout解除（実行者: {interaction.user}）",
+        )
+        await interaction.response.send_message(
+            f"✅ {member.mention} のタイムアウトを解除しました。",
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ 解除できませんでした。Botに「メンバーをタイムアウト」の権限があるか、対象メンバーのロールがBotより下か確認してね。",
+            ephemeral=True,
+        )
+    except discord.HTTPException:
+        await interaction.response.send_message(
+            "❌ Discord側でエラーが発生したため、タイムアウトを解除できませんでした。",
+            ephemeral=True,
+        )
+
+
 # ==================================================
 # スラッシュコマンド共通制限
 # ==================================================

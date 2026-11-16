@@ -712,10 +712,35 @@ async def on_command_error(ctx, error):
         return
 
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.reply(
-            f"引数が足りないよ。\nコマンド: `{ctx.prefix}{ctx.command}`",
-            mention_author=False,
-        )
+        command_name = ctx.command.name if ctx.command else ""
+        missing_name = error.param.name
+
+        # コマンドごとに、足りない項目を分かりやすく案内する
+        if command_name == "th":
+            if missing_name == "bet":
+                message = "賭け金が足りないよ！\n使い方：`.th 賭け金 1〜9`\n例：`.th 100 3`"
+            else:
+                message = "レーン番号が足りないよ！1〜9の番号を入力してね。\n例：`.th 100 3`"
+        else:
+            argument_names = {
+                "bet": "賭け金",
+                "amount": "金額",
+                "target": "相手",
+                "user": "ユーザー",
+                "member": "メンバー",
+                "lane": "レーン番号",
+                "color": "色",
+                "choice": "選択肢",
+                "reason": "理由",
+                "message": "メッセージ",
+            }
+            missing_label = argument_names.get(missing_name, missing_name)
+            message = (
+                f「{missing_label}」が足りないよ！\n"
+                f"コマンド：`{ctx.prefix}{command_name}`"
+            )
+
+        await ctx.reply(message, mention_author=False)
         return
 
     if isinstance(error, commands.BadArgument):

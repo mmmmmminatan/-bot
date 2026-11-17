@@ -8707,6 +8707,9 @@ class TreasureHuntView(discord.ui.View):
                 )
                 return
 
+            # ALL DIGは処理に時間がかかるため、先に応答を確定してUnknown interactionを防ぐ
+            await interaction.response.defer()
+
             results = []
             for depth in range(start_depth, end_depth):
                 brown_depth = depth - TH_GREEN_DEPTH
@@ -8785,7 +8788,7 @@ class TreasureHuntView(discord.ui.View):
                 for item in self.children:
                     item.disabled = True
                 results.append("このレーンを最後まで掘ったよ。")
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     embed=self.make_embed("\n".join(results) or "ALL DIG 完了。", reveal_all=True),
                     view=self,
                 )
@@ -8798,7 +8801,7 @@ class TreasureHuntView(discord.ui.View):
                 status = f"レーン {TH_LANE_LABELS[lane]} を1マス掘ったよ。"
             if results:
                 status += "\n" + "\n".join(results)
-            await interaction.response.edit_message(embed=self.make_embed(status), view=self)
+            await interaction.edit_original_response(embed=self.make_embed(status), view=self)
 
     async def finish_game(self, interaction):
         async with self.lock:

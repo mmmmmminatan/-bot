@@ -2379,33 +2379,20 @@ class DiceGameView(discord.ui.View):
 
     def make_rolling_embed(self, chosen_color):
         return discord.Embed(
-            title=f"🎲 第{self.round_number}回",
-            description=(
-                f"狙う色：{DICE_COLORS[chosen_color]['name']}\n\n"
-                + " ".join([DICE_ROLLING_EMOJI] * 4)
-            ),
+            description=" ".join([DICE_ROLLING_EMOJI] * 4),
             color=discord.Color.blurple(),
         )
 
     def make_result_embed(self, dice, chosen_color, count):
         if count in (1, 4):
-            result_text = "🎉 勝ち！"
             color = discord.Color.green()
         elif count in (2, 3):
-            result_text = "🔄 もう一度！次に狙う色を選んでね。"
             color = discord.Color.blurple()
         else:
-            result_text = "💨 はずれ！"
             color = discord.Color.red()
 
         return discord.Embed(
-            title=f"🎲 第{self.round_number}回",
-            description=(
-                f"狙う色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"{self.format_dice(dice)}\n"
-                f"一致した数：{count}個\n\n"
-                f"{result_text}"
-            ),
+            description=self.format_dice(dice),
             color=color,
         )
 

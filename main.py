@@ -2377,32 +2377,6 @@ class DiceGameView(discord.ui.View):
     def format_dice(self, dice):
         return " ".join(get_dice_emoji(self.guild, color) for color in dice)
 
-    def make_result_embed(self, dice, chosen_color, count):
-        if count in (1, 4):
-            result_text = "🎉 **勝ち！**"
-            color = discord.Color.green()
-        elif count in (2, 3):
-            result_text = (
-                "🔄 **もう一度！**\n"
-                "次に狙う色を選んでね。"
-            )
-            color = discord.Color.gold()
-        else:
-            result_text = "💨 **はずれ！**"
-            color = discord.Color.red()
-
-        return discord.Embed(
-            title=f"🎲 4個のサイコロ — 第{self.round_number}回",
-            description=(
-                f"プレイヤー：{self.ctx.author.mention}\n"
-                f"選んだ色：**{DICE_COLORS[chosen_color]['name']}**\n\n"
-                f"{self.format_dice(dice)}\n\n"
-                f"一致した数：**{count}個**\n"
-                f"{result_text}"
-            ),
-            color=color,
-        )
-
     async def show_roll(self, chosen_color, interaction=None):
         self.round_number += 1
         self.clear_items()

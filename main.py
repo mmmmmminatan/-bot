@@ -2407,21 +2407,16 @@ class DiceGameView(discord.ui.View):
         self.round_number += 1
         self.clear_items()
 
+        rolling_text = " ".join([DICE_ROLLING_EMOJI] * 4)
         if interaction is not None:
             await interaction.response.edit_message(
-                content=(
-                    f"{get_dice_emoji(self.guild, chosen_color)}\n"
-                    + " ".join([DICE_ROLLING_EMOJI] * 4)
-                ),
+                content=rolling_text,
                 embed=None,
                 view=None,
             )
         else:
             await self.message.edit(
-                content=(
-            f"{get_dice_emoji(ctx.guild, color_key)}\n"
-            + " ".join([DICE_ROLLING_EMOJI] * 4)
-        ),
+                content=rolling_text,
                 embed=None,
                 view=None,
             )
@@ -2430,14 +2425,14 @@ class DiceGameView(discord.ui.View):
 
         dice = self.roll_dice()
         count = dice.count(chosen_color)
-        embed = self.make_result_embed(dice, chosen_color, count)
+        result_text = self.make_result_text(dice, chosen_color, count)
 
         if count in (2, 3):
             self.add_item(DiceColorSelect(self))
 
         await self.message.edit(
-            content=None,
-            embed=embed,
+            content=result_text,
+            embed=None,
             view=self if count in (2, 3) else None,
         )
 
@@ -2477,9 +2472,9 @@ async def dice_command(ctx, color_text: str = None):
     color_key = (color_text or "").strip().lower()
     if color_key not in DICE_COLORS:
         await ctx.reply(
-            "色を選んでね！\n"
+            "色を選んでね！\\n"
             "`a` 赤 / `b` 青 / `y` 黄色 / "
-            "`o` オレンジ / `g` 緑 / `p` 紫\n"
+            "`o` オレンジ / `g` 緑 / `p` 紫\\n"
             "例：`.dice a`",
             mention_author=False,
         )
@@ -2487,25 +2482,11 @@ async def dice_command(ctx, color_text: str = None):
 
     view = DiceGameView(ctx)
     message = await ctx.reply(
-        content="　".join([DICE_ROLLING_EMOJI] * 4),
+        content=" ".join([DICE_ROLLING_EMOJI] * 4),
         mention_author=False,
     )
     view.message = message
-
-    await asyncio.sleep(1)
-    dice = view.roll_dice()
-    view.round_number = 1
-    count = dice.count(color_key)
-    embed = view.make_result_embed(dice, color_key, count)
-
-    if count in (2, 3):
-        view.add_item(DiceColorSelect(view))
-        await message.edit(content=None, embed=embed, view=view)
-    else:
-        view.finished = True
-        view.stop()
-        await message.edit(content=None, embed=embed, view=None)
-
+    await view.show_roll(color_key)
 
 # ==================================================
 # .mine 爆弾ゲーム

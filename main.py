@@ -2377,6 +2377,22 @@ class DiceGameView(discord.ui.View):
     def format_dice(self, dice):
         return " ".join(get_dice_emoji(self.guild, color) for color in dice)
 
+    def make_result_text(self, dice, chosen_color, count):
+        if count in (1, 4):
+            result_text = "🎉 勝ち！"
+        elif count in (2, 3):
+            result_text = "🔄 もう一度！次に狙う色を選んでね。"
+        else:
+            result_text = "💨 はずれ！"
+
+        return (
+            f"🎲 第{self.round_number}回\n"
+            f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
+            f"{self.format_dice(dice)}\n"
+            f"一致した数：{count}個\n"
+            f"{result_text}"
+        )
+
     async def show_roll(self, chosen_color, interaction=None):
         self.round_number += 1
         self.clear_items()

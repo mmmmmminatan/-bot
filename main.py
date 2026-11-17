@@ -2303,17 +2303,19 @@ async def color_command(ctx, bet_text: str):
         raise
 
 # ==================================================
-# .dice 4個のサイコロゲーム
+# .dice 4個のサイコロゲーム（賭け金なし）
 # ==================================================
 
 DICE_COLORS = {
-    "r": {"name": "赤", "emoji": "🔴", "custom": "aka"},
+    "a": {"name": "赤", "emoji": "🔴", "custom": "aka"},
     "b": {"name": "青", "emoji": "🔵", "custom": "ao"},
     "y": {"name": "黄色", "emoji": "🟡", "custom": "kiro"},
     "o": {"name": "オレンジ", "emoji": "🟠", "custom": "orengi"},
     "g": {"name": "緑", "emoji": "🟢", "custom": "midori"},
     "p": {"name": "紫", "emoji": "🟣", "custom": "murasaki"},
 }
+
+DICE_ROLLING_EMOJI = "<a:emoji_31:1572239943718150164>"
 
 def get_dice_emoji(guild, color_key):
     color = DICE_COLORS[color_key]
@@ -2322,6 +2324,7 @@ def get_dice_emoji(guild, color_key):
             if emoji.name == color["custom"]:
                 return str(emoji)
     return color["emoji"]
+
 
 class DiceColorSelect(discord.ui.Select):
     def __init__(self, game_view):
@@ -2335,7 +2338,7 @@ class DiceColorSelect(discord.ui.Select):
             for key, data in DICE_COLORS.items()
         ]
         super().__init__(
-            placeholder="再抽選する色を選ね",
+            placeholder="次に狙う色を選んでね",
             min_values=1,
             max_values=1,
             options=options,
@@ -2343,231 +2346,121 @@ class DiceColorSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.game_view
-
         if interaction.user.id != view.player_id:
             await interaction.response.send_message(
-                "このゲームを操作できるのは賭けた本人だけだよ。",
+                "このゲームを操作できるのは開始した本人だけだよ。",
                 ephemeral=True,
             )
             return
-
         if view.finished:
             await interaction.response.send_message(
                 "このゲームはもう終了しているよ。",
                 ephemeral=True,
             )
             return
-
         await view.roll_again(interaction, self.values[0])
 
-class DiceBetView(discord.ui.View):
-    def __init__(self, ctx, bet, first_color):
-        super().__init__(timeout=120)
+
+class DiceGameView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=180)
         self.ctx = ctx
-        self.bet = bet
         self.player_id = ctx.author.id
         self.guild = ctx.guild
-        self.first_color = first_color
         self.finished = False
-        self.reroll_used = False
         self.message = None
+        self.round_number = 0
 
     def roll_dice(self):
-        return [
-            random.choice(list(DICE_COLORS.keys()))
-            for _ in range(4)
-        ]
+        return [random.choice(list(DICE_COLORS.keys())) for _ in range(4)]
 
     def format_dice(self, dice):
-        return " ".join(
-            get_dice_emoji(self.guild, color)
-            for color in dice
-        )
+        return "　".join(get_dice_emoji(self.guild, color) for color in dice)
 
-    async def finish_game(self, interaction, dice, chosen_color, count, result):
-        if self.finished:
-            return
-
-        self.finished = True
-        self.stop()
-
-        current_balance = get_balance(self.player_id)
-
-        if result == "lose":
-            payout = 0
-            profit = -self.bet
-            new_balance = current_balance
+    def make_result_embed(self, dice, chosen_color, count):
+        if count in (1, 4):
+            result_text = "🎉 **勝ち！**"
+            color = discord.Color.green()
+        elif count in (2, 3):
             result_text = (
-                "💸 **負け！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
-                f"損失：**{money(self.bet)}**"
+                "🔄 **もう一度！**\n"
+                "次に狙う色を選んでね。"
             )
-            embed_color = discord.Color.red()
-
-        elif result == "double":
-            payout = self.bet * 2
-            profit = payout - self.bet
-            new_balance = current_balance + payout
-            result_text = (
-                "🎉 **当たり！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
-                f"配当：**{money(payout)}**"
-            )
-            embed_color = discord.Color.green()
-
+            color = discord.Color.gold()
         else:
-            payout = self.bet * 3
-            profit = payout - self.bet
-            new_balance = current_balance + payout
-            result_text = (
-                "🎉 **大当たり！**\n"
-                f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"一致した数：{count}個\n"
-                f"配当：**{money(payout)}**"
-            )
-            embed_color = discord.Color.green()
+            result_text = "💨 **はずれ！**"
+            color = discord.Color.red()
 
-        set_balance(self.player_id, new_balance)
-
-        house_result = transfer_to_house(
-            player_id=self.player_id,
-            profit=profit,
-            guild_id=self.guild.id if self.guild else None,
-            game="dice",
-        )
-
-        for item in self.children:
-            item.disabled = True
-
-        house_text = ""
-        if house_result is not None:
-            house_text = (
-                f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                f"\n胴元の残高：**{money(house_result['after'])}**"
-            )
-
-        embed = discord.Embed(
-            title="🎲 4個のサイコロ",
+        return discord.Embed(
+            title=f"🎲 4個のサイコロ — 第{self.round_number}回",
             description=(
                 f"プレイヤー：{self.ctx.author.mention}\n"
-                f"賭け金：**{money(self.bet)}**\n\n"
+                f"選んだ色：**{DICE_COLORS[chosen_color]['name']}**\n\n"
                 f"{self.format_dice(dice)}\n\n"
-                f"{result_text}\n\n"
-                f"収支：**{money_change(profit)}**\n"
-                f"残高：**{money(new_balance)}**"
-                f"{house_text}"
+                f"一致した数：**{count}個**\n"
+                f"{result_text}"
             ),
-            color=embed_color,
+            color=color,
         )
 
-        await interaction.response.edit_message(embed=embed, view=self)
+    async def show_roll(self, chosen_color, interaction=None):
+        self.round_number += 1
+        self.clear_items()
 
-        record_coin({
-            "type": "dice",
-            "timestamp": datetime.now(timezone.utc).timestamp(),
-            "guild_id": self.guild.id if self.guild else None,
-            "user_id": self.player_id,
-            "username": str(self.ctx.author),
-            "bet": self.bet,
-            "first_color": self.first_color,
-            "chosen_color": chosen_color,
-            "dice": dice,
-            "match_count": count,
-            "reroll_used": self.reroll_used,
-            "payout": payout,
-            "profit": profit,
-            "amount": profit,
-            "balance": new_balance,
-        })
-
-        if self.guild is not None:
-            log_description = (
-                f"ユーザー：{self.ctx.author.mention} (`{self.player_id}`)\n"
-                f"賭け金：**{money(self.bet)}**\n"
-                f"選択色：{DICE_COLORS[chosen_color]['name']}\n"
-                f"出目：{self.format_dice(dice)}\n"
-                f"一致数：{count}個\n"
-                f"再抽選：{'あり' if self.reroll_used else 'なし'}\n"
-                f"配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n"
-                f"残高：**{money(new_balance)}**"
+        if interaction is not None:
+            await interaction.response.edit_message(
+                content="　".join([DICE_ROLLING_EMOJI] * 4),
+                embed=None,
+                view=None,
+            )
+        else:
+            await self.message.edit(
+                content="　".join([DICE_ROLLING_EMOJI] * 4),
+                embed=None,
+                view=None,
             )
 
-            if house_result is not None:
-                log_description += (
-                    f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
-                )
+        await asyncio.sleep(1)
 
-            await send_coin_log(
-                self.guild,
-                discord.Embed(
-                    title="🎲 サイコロゲームログ",
-                    description=log_description,
-                    color=embed_color,
-                ),
-            )
-
-    async def roll_again(self, interaction, chosen_color):
-        if self.finished:
-            await interaction.response.send_message(
-                "このゲームはもう終了しているよ。",
-                ephemeral=True,
-            )
-            return
-
-        if self.reroll_used:
-            await interaction.response.send_message(
-                "再抽選は1回までだよ。",
-                ephemeral=True,
-            )
-            return
-
-        self.reroll_used = True
         dice = self.roll_dice()
         count = dice.count(chosen_color)
+        embed = self.make_result_embed(dice, chosen_color, count)
 
-        if count == 0:
-            result = "lose"
-        elif count == 1:
-            result = "double"
-        elif count == 4:
-            result = "triple"
-        else:
-            result = "lose"
+        if count in (2, 3):
+            self.add_item(DiceColorSelect(self))
 
-        await self.finish_game(
-            interaction,
-            dice,
-            chosen_color,
-            count,
-            result,
+        await self.message.edit(
+            content=None,
+            embed=embed,
+            view=self if count in (2, 3) else None,
         )
 
-    async def on_timeout(self):
-        if self.finished:
-            return
+        if count in (0, 1, 4):
+            self.finished = True
+            self.stop()
 
+    async def roll_again(self, interaction, chosen_color):
+        await self.show_roll(chosen_color, interaction=interaction)
+
+    async def on_timeout(self):
+        if self.finished or self.message is None:
+            return
         self.finished = True
         self.stop()
-
         for item in self.children:
             item.disabled = True
+        try:
+            await self.message.edit(
+                content="⏰ 時間切れ！ゲームを終了したよ。",
+                embed=None,
+                view=self,
+            )
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
-        if self.message is not None:
-            try:
-                await self.message.edit(
-                    content="⏰ 時間切れ！ゲームは終了したよ。賭け金は返金されないよ。",
-                    embed=None,
-                    view=self,
-                )
-            except (discord.NotFound, discord.HTTPException):
-                pass
 
-@bot.command(name="mdice", aliases=["ダイス", "サイコロ"])
-async def dice_command(ctx, bet_text: str, color_text: str):
+@bot.command(name="dice", aliases=["mdice", "ダイス", "サイコロ"])
+async def dice_command(ctx, color_text: str = None):
     if ctx.guild is None:
         await ctx.reply(
             "このコマンドはサーバー内で使ってね。",
@@ -2575,217 +2468,38 @@ async def dice_command(ctx, bet_text: str, color_text: str):
         )
         return
 
-    color_key = color_text.strip().lower()
-
+    color_key = (color_text or "").strip().lower()
     if color_key not in DICE_COLORS:
         await ctx.reply(
-            "色の指定が違うよ！\n"
-            "`r` 赤 / `b` 青 / `y` 黄色 / "
+            "色を選んでね！\n"
+            "`a` 赤 / `b` 青 / `y` 黄色 / "
             "`o` オレンジ / `g` 緑 / `p` 紫\n"
-            "例：`.dice 100 r`",
+            "例：`.dice a`",
             mention_author=False,
         )
         return
 
-    bet = resolve_bet(ctx.author.id, bet_text)
-
-    if bet is None:
-        await ctx.reply(
-            "賭け金は数字か `all` で指定してね。\n"
-            "例：`.dice 100 r` / `.dice all b`",
-            mention_author=False,
-        )
-        return
-
-    if bet <= 0:
-        await ctx.reply(
-            "賭け金に使える残高がないよ。",
-            mention_author=False,
-        )
-        return
-
-    settings = get_server_settings(ctx.guild.id)
-    minimum = int(settings.get("min_bet", 1))
-
-    if bet < minimum:
-        await ctx.reply(
-            f"最低賭け金は **{money(minimum)}** だよ。",
-            mention_author=False,
-        )
-        return
-
-    current_balance = get_balance(ctx.author.id)
-
-    if bet > current_balance:
-        await ctx.reply(
-            f"残高が足りないよ！\n残高：**{money(current_balance)}**",
-            mention_author=False,
-        )
-        return
-
-    set_balance(ctx.author.id, current_balance - bet)
-
-    view = DiceBetView(ctx, bet, color_key)
-    dice = view.roll_dice()
-    count = dice.count(color_key)
-
-    if count == 0:
-        result = "lose"
-    elif count == 1:
-        result = "double"
-    elif count == 4:
-        result = "triple"
-    else:
-        result = None
-
-    if result is not None:
-        embed = discord.Embed(
-            title="🎲 4個のサイコロ",
-            description=(
-                f"プレイヤー：{ctx.author.mention}\n"
-                f"賭け金：**{money(bet)}**\n\n"
-                f"{view.format_dice(dice)}\n\n"
-                f"選んだ色：{DICE_COLORS[color_key]['name']}\n"
-                f"一致した数：{count}個"
-            ),
-            color=discord.Color.blurple(),
-        )
-
-        message = await ctx.reply(
-            embed=embed,
-            mention_author=False,
-        )
-        view.message = message
-
-        if result == "lose":
-            payout = 0
-            profit = -bet
-            new_balance = current_balance - bet
-            result_text = "💸 **負け！賭け金を失ったよ。**"
-            embed_color = discord.Color.red()
-        elif result == "double":
-            payout = bet * 2
-            profit = payout - bet
-            new_balance = current_balance - bet + payout
-            result_text = f"🎉 **当たり！賭け金の2倍、{money(payout)}を付与！**"
-            embed_color = discord.Color.green()
-        else:
-            payout = bet * 3
-            profit = payout - bet
-            new_balance = current_balance - bet + payout
-            result_text = f"🎉 **大当たり！賭け金の3倍、{money(payout)}を付与！**"
-            embed_color = discord.Color.green()
-
-        set_balance(ctx.author.id, new_balance)
-
-        house_result = transfer_to_house(
-            player_id=ctx.author.id,
-            profit=profit,
-            guild_id=ctx.guild.id,
-            game="dice",
-        )
-
-        house_text = ""
-        if house_result is not None:
-            house_text = (
-                f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                f"\n胴元の残高：**{money(house_result['after'])}**"
-            )
-
-        final_embed = discord.Embed(
-            title="🎲 4個のサイコロ",
-            description=(
-                f"プレイヤー：{ctx.author.mention}\n"
-                f"賭け金：**{money(bet)}**\n\n"
-                f"{view.format_dice(dice)}\n\n"
-                f"{result_text}\n"
-                f"選んだ色：{DICE_COLORS[color_key]['name']}\n"
-                f"一致した数：{count}個\n"
-                f"収支：**{money_change(profit)}**\n"
-                f"残高：**{money(new_balance)}**"
-                f"{house_text}"
-            ),
-            color=embed_color,
-        )
-
-        await message.edit(embed=final_embed)
-
-        record_coin({
-            "type": "dice",
-            "timestamp": datetime.now(timezone.utc).timestamp(),
-            "guild_id": ctx.guild.id,
-            "user_id": ctx.author.id,
-            "username": str(ctx.author),
-            "bet": bet,
-            "first_color": color_key,
-            "chosen_color": color_key,
-            "dice": dice,
-            "match_count": count,
-            "reroll_used": False,
-            "payout": payout,
-            "profit": profit,
-            "amount": profit,
-            "balance": new_balance,
-        })
-
-        if ctx.guild is not None:
-            log_description = (
-                f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-                f"賭け金：**{money(bet)}**\n"
-                f"選択色：{DICE_COLORS[color_key]['name']}\n"
-                f"出目：{view.format_dice(dice)}\n"
-                f"一致数：{count}個\n"
-                f"配当：**{money(payout)}**\n"
-                f"収支：**{money_change(profit)}**\n"
-                f"残高：**{money(new_balance)}**"
-            )
-
-            if house_result is not None:
-                log_description += (
-                    f"\n胴元の残高変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
-                )
-
-            await send_coin_log(
-                ctx.guild,
-                discord.Embed(
-                    title="🎲 サイコロゲームログ",
-                    description=log_description,
-                    color=embed_color,
-                ),
-            )
-
-        return
-
-    view.add_item(DiceColorSelect(view))
-
-    embed = discord.Embed(
-        title="🎲 4個のサイコロ",
-        description=(
-            f"プレイヤー：{ctx.author.mention}\n"
-            f"賭け金：**{money(bet)}**\n\n"
-            f"{view.format_dice(dice)}\n\n"
-            f"最初に選んだ色：{DICE_COLORS[color_key]['name']}\n"
-            f"一致した数：{count}個\n\n"
-            "🔄 **再抽選！**\n"
-            "次に狙う色を選んでね。\n"
-            "追加の賭け金は必要ないよ。\n"
-            "再抽選でも2〜3個なら負けになるよ。"
-        ),
-        color=discord.Color.gold(),
+    view = DiceGameView(ctx)
+    message = await ctx.reply(
+        content="　".join([DICE_ROLLING_EMOJI] * 4),
+        mention_author=False,
     )
+    view.message = message
 
-    try:
-        message = await ctx.reply(
-            embed=embed,
-            view=view,
-            mention_author=False,
-        )
-        view.message = message
-    except Exception:
-        latest_balance = get_balance(ctx.author.id)
-        set_balance(ctx.author.id, latest_balance + bet)
-        raise
+    await asyncio.sleep(1)
+    dice = view.roll_dice()
+    view.round_number = 1
+    count = dice.count(color_key)
+    embed = view.make_result_embed(dice, color_key, count)
+
+    if count in (2, 3):
+        view.add_item(DiceColorSelect(view))
+        await message.edit(content=None, embed=embed, view=view)
+    else:
+        view.finished = True
+        view.stop()
+        await message.edit(content=None, embed=embed, view=None)
+
 
 # ==================================================
 # .mine 爆弾ゲーム

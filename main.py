@@ -2377,38 +2377,53 @@ class DiceGameView(discord.ui.View):
     def format_dice(self, dice):
         return " ".join(get_dice_emoji(self.guild, color) for color in dice)
 
-    def make_result_text(self, dice, chosen_color, count):
+    def make_rolling_embed(self, chosen_color):
+        return discord.Embed(
+            title=f"🎲 第{self.round_number}回",
+            description=(
+                f"狙う色：{DICE_COLORS[chosen_color]['name']}\\n\\n"
+                + " ".join([DICE_ROLLING_EMOJI] * 4)
+            ),
+            color=discord.Color.blurple(),
+        )
+
+    def make_result_embed(self, dice, chosen_color, count):
         if count in (1, 4):
             result_text = "🎉 勝ち！"
+            color = discord.Color.green()
         elif count in (2, 3):
             result_text = "🔄 もう一度！次に狙う色を選んでね。"
+            color = discord.Color.blurple()
         else:
             result_text = "💨 はずれ！"
+            color = discord.Color.red()
 
-        return (
-            f"🎲 第{self.round_number}回\n"
-            f"{get_dice_emoji(self.guild, chosen_color)} {DICE_COLORS[chosen_color]['name']}\n"
-            f"{self.format_dice(dice)}\n"
-            f"一致した数：{count}個\n"
-            f"{result_text}"
+        return discord.Embed(
+            title=f"🎲 第{self.round_number}回",
+            description=(
+                f"狙う色：{DICE_COLORS[chosen_color]['name']}\\n"
+                f"{self.format_dice(dice)}\\n"
+                f"一致した数：{count}個\\n\\n"
+                f"{result_text}"
+            ),
+            color=color,
         )
 
     async def show_roll(self, chosen_color, interaction=None):
         self.round_number += 1
         self.clear_items()
+        rolling_embed = self.make_rolling_embed(chosen_color)
 
-        chosen_emoji = get_dice_emoji(self.guild, chosen_color)
-        rolling_text = f"{chosen_emoji}\n" + " ".join([DICE_ROLLING_EMOJI] * 4)
         if interaction is not None:
             await interaction.response.edit_message(
-                content=rolling_text,
-                embed=None,
+                content=None,
+                embed=rolling_embed,
                 view=None,
             )
         else:
             await self.message.edit(
-                content=rolling_text,
-                embed=None,
+                content=None,
+                embed=rolling_embed,
                 view=None,
             )
 
@@ -2416,14 +2431,14 @@ class DiceGameView(discord.ui.View):
 
         dice = self.roll_dice()
         count = dice.count(chosen_color)
-        result_text = self.make_result_text(dice, chosen_color, count)
+        result_embed = self.make_result_embed(dice, chosen_color, count)
 
         if count in (2, 3):
             self.add_item(DiceColorSelect(self))
 
         await self.message.edit(
-            content=result_text,
-            embed=None,
+            content=None,
+            embed=result_embed,
             view=self if count in (2, 3) else None,
         )
 
@@ -2443,8 +2458,12 @@ class DiceGameView(discord.ui.View):
             item.disabled = True
         try:
             await self.message.edit(
-                content="⏰ 時間切れ！ゲームを終了したよ。",
-                embed=None,
+                content=None,
+                embed=discord.Embed(
+                    title="⏰ 時間切れ",
+                    description="ゲームを終了したよ。",
+                    color=discord.Color.orange(),
+                ),
                 view=self,
             )
         except (discord.NotFound, discord.HTTPException):
@@ -2472,10 +2491,12 @@ async def dice_command(ctx, color_text: str = None):
         return
 
     view = DiceGameView(ctx)
+    view.round_number = 1
     message = await ctx.reply(
-        content=" ".join([DICE_ROLLING_EMOJI] * 4),
+        embed=view.make_rolling_embed(color_key),
         mention_author=False,
     )
+    view.round_number = 0
     view.message = message
     await view.show_roll(color_key)
 

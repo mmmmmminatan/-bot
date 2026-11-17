@@ -3718,7 +3718,7 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
 # .scratch スクラッチゲーム
 # ==================================================
 
-SCRATCH_SYMBOLS = ["あ", "い", "う", "え", "お", "🤓"]
+SCRATCH_SYMBOLS = list("あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん") + ["🤓"]
 SCRATCH_USER_LOCKS = {}
 
 def get_scratch_lock(user_id):

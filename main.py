@@ -2387,7 +2387,7 @@ class DiceGameView(discord.ui.View):
 
         return (
             f"🎲 第{self.round_number}回\n"
-            f"選んだ色：{DICE_COLORS[chosen_color]['name']}\n"
+            f"{get_dice_emoji(self.guild, chosen_color)} {DICE_COLORS[chosen_color]['name']}\n"
             f"{self.format_dice(dice)}\n"
             f"一致した数：{count}個\n"
             f"{result_text}"
@@ -2397,7 +2397,8 @@ class DiceGameView(discord.ui.View):
         self.round_number += 1
         self.clear_items()
 
-        rolling_text = " ".join([DICE_ROLLING_EMOJI] * 4)
+        chosen_emoji = get_dice_emoji(self.guild, chosen_color)
+        rolling_text = f"{chosen_emoji}\n" + " ".join([DICE_ROLLING_EMOJI] * 4)
         if interaction is not None:
             await interaction.response.edit_message(
                 content=rolling_text,

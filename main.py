@@ -2381,7 +2381,7 @@ class DiceGameView(discord.ui.View):
         return discord.Embed(
             title=f"🎲 第{self.round_number}回",
             description=(
-                f"狙う色：{DICE_COLORS[chosen_color]['name']}\\n\\n"
+                f"狙う色：{DICE_COLORS[chosen_color]['name']}\n\n"
                 + " ".join([DICE_ROLLING_EMOJI] * 4)
             ),
             color=discord.Color.blurple(),
@@ -2401,9 +2401,9 @@ class DiceGameView(discord.ui.View):
         return discord.Embed(
             title=f"🎲 第{self.round_number}回",
             description=(
-                f"狙う色：{DICE_COLORS[chosen_color]['name']}\\n"
-                f"{self.format_dice(dice)}\\n"
-                f"一致した数：{count}個\\n\\n"
+                f"狙う色：{DICE_COLORS[chosen_color]['name']}\n"
+                f"{self.format_dice(dice)}\n"
+                f"一致した数：{count}個\n\n"
                 f"{result_text}"
             ),
             color=color,
@@ -2482,9 +2482,9 @@ async def dice_command(ctx, color_text: str = None):
     color_key = (color_text or "").strip().lower()
     if color_key not in DICE_COLORS:
         await ctx.reply(
-            "色を選んでね！\\n"
+            "色を選んでね！\n"
             "`a` 赤 / `b` 青 / `y` 黄色 / "
-            "`o` オレンジ / `g` 緑 / `p` 紫\\n"
+            "`o` オレンジ / `g` 緑 / `p` 紫\n"
             "例：`.dice a`",
             mention_author=False,
         )

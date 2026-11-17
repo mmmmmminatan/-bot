@@ -2375,7 +2375,7 @@ class DiceGameView(discord.ui.View):
         return [random.choice(list(DICE_COLORS.keys())) for _ in range(4)]
 
     def format_dice(self, dice):
-        return "　".join(get_dice_emoji(self.guild, color) for color in dice)
+        return " ".join(get_dice_emoji(self.guild, color) for color in dice)
 
     def make_result_embed(self, dice, chosen_color, count):
         if count in (1, 4):
@@ -2409,13 +2409,19 @@ class DiceGameView(discord.ui.View):
 
         if interaction is not None:
             await interaction.response.edit_message(
-                content="　".join([DICE_ROLLING_EMOJI] * 4),
+                content=(
+                    f"{get_dice_emoji(self.guild, chosen_color)}\n"
+                    + " ".join([DICE_ROLLING_EMOJI] * 4)
+                ),
                 embed=None,
                 view=None,
             )
         else:
             await self.message.edit(
-                content="　".join([DICE_ROLLING_EMOJI] * 4),
+                content=(
+            f"{get_dice_emoji(ctx.guild, color_key)}\n"
+            + " ".join([DICE_ROLLING_EMOJI] * 4)
+        ),
                 embed=None,
                 view=None,
             )

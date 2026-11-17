@@ -3715,6 +3715,134 @@ async def slot_command(ctx, bet_text: str, lines_text: str = "1"):
     await execute_slot(ctx, base_bet, line_choice)
 
 # ==================================================
+# .scratch スクラッチゲーム
+# ==================================================
+
+SCRATCH_SYMBOLS = ["あ", "い", "う", "え", "お", "🤓"]
+SCRATCH_USER_LOCKS = {}
+
+def get_scratch_lock(user_id):
+    user_id = int(user_id)
+    if user_id not in SCRATCH_USER_LOCKS:
+        SCRATCH_USER_LOCKS[user_id] = asyncio.Lock()
+    return SCRATCH_USER_LOCKS[user_id]
+
+
+def get_scratch_multiplier(result):
+    # 100倍：🤓が最後にあり、先頭2文字が指定の組み合わせ
+    if result in ("あう🤓", "うお🤓", "おう🤓"):
+        return 100, "🎉 JACKPOT！"
+
+    # 30倍：🤓が先頭または真ん中にある指定の組み合わせ
+    if result in (
+        "🤓あう", "🤓おう", "🤓うお",
+        "あ🤓う", "お🤓う", "う🤓お",
+    ):
+        return 30, "🤓 BONUS！"
+
+    # 10倍：3マスすべて同じ文字
+    if result[0] == result[1] == result[2]:
+        return 10, "🎊 3つ揃い！"
+
+    # 3倍：同じ文字が隣り合って2つ
+    if result[0] == result[1] or result[1] == result[2]:
+        return 3, "✨ 2連続！"
+
+    return 0, "はずれ"
+
+
+@bot.command(name="scratch", aliases=["スクラッチ"])
+async def scratch_command(ctx, bet_text: str = None):
+    if ctx.author.bot:
+        return
+    if ctx.guild is None:
+        await ctx.reply("このコマンドはサーバー内で使ってね。", mention_author=False)
+        return
+    if bet_text is None:
+        await ctx.reply("賭け金を指定してね！\n例：`.scratch 100` または `.scratch all`", mention_author=False)
+        return
+
+    bet = resolve_bet(ctx.author.id, bet_text)
+    if bet is None or bet <= 0:
+        await ctx.reply("賭け金は1以上の数字か `all` で指定してね。\n例：`.scratch 100`", mention_author=False)
+        return
+
+    lock = get_scratch_lock(ctx.author.id)
+    async with lock:
+        balance_before = get_balance(ctx.author.id)
+        if bet > balance_before:
+            await ctx.reply(
+                f"残高が足りないよ！\n必要額：**{money(bet)}**\n残高：**{money(balance_before)}**",
+                mention_author=False,
+            )
+            return
+
+        result = "".join(random.choice(SCRATCH_SYMBOLS) for _ in range(3))
+        multiplier, result_label = get_scratch_multiplier(result)
+        returned = bet * multiplier
+        profit = returned - bet
+        balance_after = balance_before - bet + returned
+
+        set_balance(ctx.author.id, balance_after)
+        transfer_to_house(
+            player_id=ctx.author.id,
+            profit=profit,
+            guild_id=ctx.guild.id,
+            game="scratch",
+        )
+
+        record_coin({
+            "type": "scratch",
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "guild_id": ctx.guild.id,
+            "user_id": ctx.author.id,
+            "username": str(ctx.author),
+            "bet": bet,
+            "result": result,
+            "multiplier": multiplier,
+            "returned": returned,
+            "profit": profit,
+            "before": balance_before,
+            "after": balance_after,
+        })
+
+    embed = discord.Embed(
+        title="🎟️ スクラッチ結果",
+        description=(
+            f"**{ctx.author.display_name} の結果**\n\n"
+            f"╭─────┬─────┬─────╮\n"
+            f"│　**{result[0]}**　│　**{result[1]}**　│　**{result[2]}**　│\n"
+            f"╰─────┴─────┴─────╯\n\n"
+            f"**{result_label}**\n"
+            f"倍率：**{multiplier}倍**\n"
+            f"賭け金：**{money(bet)}**\n"
+            f"返却：**{money(returned)}**\n"
+            f"利益：**{money_change(profit)}**\n"
+            f"残高：**{money(balance_after)}**"
+        ),
+        color=discord.Color.gold() if multiplier >= 30 else (
+            discord.Color.green() if multiplier > 0 else discord.Color.red()
+        ),
+    )
+    await ctx.reply(embed=embed, mention_author=False)
+
+    log_embed = discord.Embed(
+        title="🎟️ スクラッチログ",
+        description=(
+            f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+            f"出目：**{result}**\n"
+            f"倍率：**{multiplier}倍**\n"
+            f"賭け金：**{money(bet)}**\n"
+            f"返却：**{money(returned)}**\n"
+            f"利益：**{money_change(profit)}**\n"
+            f"残高：**{money(balance_after)}**"
+        ),
+        color=discord.Color.gold(),
+    )
+    await send_coin_log(ctx.guild, log_embed)
+
+
+# ==================================================
 # /decidecash 指定したユーザーの残高を設定
 # ==================================================
 

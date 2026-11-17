@@ -3729,8 +3729,8 @@ def get_scratch_lock(user_id):
 
 
 def get_scratch_multiplier(result):
-    # 100倍：🤓が最後にあり、先頭2文字が指定の組み合わせ
-    if result in ("あう🤓", "うお🤓", "おう🤓"):
+    # 100倍：指定された3文字の組み合わせ
+    if result in ("あう🤓", "うお🤓", "おう🤓", "まんこ", "ちんこ", "うんこ"):
         return 100, "🎉 JACKPOT！"
 
     # 30倍：🤓が先頭または真ん中にある指定の組み合わせ

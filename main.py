@@ -5053,6 +5053,157 @@ async def au_debt_command(
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+
+# ==================================================
+# 借金ランキング（現在額・累計額）
+# ==================================================
+
+def get_au_debt_ranking_rows(guild_id, ranking_type):
+    """サーバー内の借金記録からランキングを作る。"""
+    guild_data = au_debt_records.get(str(guild_id), {})
+    field = "unpaid" if ranking_type == "current" else "billed"
+    rows = []
+
+    for user_id, record in guild_data.items():
+        if not isinstance(record, dict):
+            continue
+        try:
+            amount = max(0, int(record.get(field, 0)))
+        except (TypeError, ValueError):
+            amount = 0
+
+        # 現在額は未払い0円を除外。累計は請求履歴がある人だけ表示。
+        if amount > 0:
+            rows.append((str(user_id), amount))
+
+    rows.sort(key=lambda item: (-item[1], int(item[0]) if item[0].isdigit() else 0))
+    return rows
+
+
+class AuDebtRankingView(discord.ui.View):
+    def __init__(self, ctx, ranking_type, rows):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+        self.ranking_type = ranking_type
+        self.rows = rows
+        self.page = 0
+        self.per_page = 10
+        self.message = None
+        self.update_buttons()
+
+    @property
+    def max_page(self):
+        return max(0, (len(self.rows) - 1) // self.per_page)
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.page <= 0
+        self.next_button.disabled = self.page >= self.max_page
+
+    def make_embed(self):
+        is_current = self.ranking_type == "current"
+        title = "💸 現在の借金ランキング" if is_current else "🏆 累計借金ランキング"
+        field = "unpaid" if is_current else "billed"
+        start = self.page * self.per_page
+        page_rows = self.rows[start:start + self.per_page]
+
+        if page_rows:
+            lines = []
+            for index, (user_id, amount) in enumerate(page_rows, start=start + 1):
+                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(index, f"**{index}.**")
+                lines.append(f"{medal} <@{user_id}> — **{format_au_charge(amount)}**")
+            description = "\n".join(lines)
+        else:
+            description = "ランキング対象者はいないよ。"
+
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=discord.Color.gold() if is_current else discord.Color.blurple(),
+        )
+        embed.set_footer(
+            text=f"対象：このサーバーのみ / {self.page + 1}ページ目・全{self.max_page + 1}ページ"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message(
+                "このランキングのページ操作は、表示した本人だけが使えるよ。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="前へ", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    @discord.ui.button(label="次へ", emoji="▶️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.max_page, self.page + 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+
+async def send_au_debt_ranking(ctx, ranking_type):
+    if ctx.guild is None:
+        await ctx.send("このコマンドはサーバー内で使ってね。")
+        return
+
+    rows = get_au_debt_ranking_rows(ctx.guild.id, ranking_type)
+    view = AuDebtRankingView(ctx, ranking_type, rows)
+    view.message = await ctx.send(embed=view.make_embed(), view=view)
+
+
+@bot.command(name="debtランキング", aliases=["debt_rank", "借金ランキング"])
+async def au_current_debt_ranking_command(ctx: commands.Context):
+    """現在の未払い借金ランキングを表示する。"""
+    await send_au_debt_ranking(ctx, "current")
+
+
+@bot.command(name="debt累計ランキング", aliases=["debt_totalランキング", "累計借金ランキング"])
+async def au_total_debt_ranking_command(ctx: commands.Context):
+    """累計請求額ランキングを表示する。"""
+    await send_au_debt_ranking(ctx, "total")
+
+
+@bot.command(name="debt自分", aliases=["debt_me", "自分の借金"])
+async def au_my_debt_command(ctx: commands.Context):
+    """自分の請求額・支払い済み・未払い額を表示する。"""
+    if ctx.guild is None:
+        await ctx.send("このコマンドはサーバー内で使ってね。")
+        return
+
+    record = au_debt_records.get(str(ctx.guild.id), {}).get(str(ctx.author.id), {})
+    def safe_amount(key):
+        try:
+            return max(0, int(record.get(key, 0)))
+        except (TypeError, ValueError, AttributeError):
+            return 0
+
+    embed = discord.Embed(
+        title="📊 自分の借金状況",
+        description=f"対象：{ctx.author.mention}",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="現在の未払い額", value=f"**{format_au_charge(safe_amount('unpaid'))}**", inline=True)
+    embed.add_field(name="請求された額（累計）", value=f"**{format_au_charge(safe_amount('billed'))}**", inline=True)
+    embed.add_field(name="支払った額（累計）", value=f"**{format_au_charge(safe_amount('paid'))}**", inline=True)
+    embed.add_field(name="請求回数", value=f"{safe_amount('bill_count')}回", inline=True)
+    await ctx.send(embed=embed)
+
+
 @au_group.command(name="setting", description="あう検知・タイムアウト・ホワイトリスト・請求上限を設定")
 async def au_setting_command(interaction: discord.Interaction):
     if not await require_owner(interaction):

@@ -423,102 +423,52 @@ def save_json(path, data):
 def load_welcome_log_configs_from_database(fallback):
     if not DATABASE_URL:
         print("[WELCOME DB] DATABASE_URL未設定。JSONから読み込みます。")
-        return fallback
-
+        result = {}
+        for gid, value in fallback.items():
+            if isinstance(value, dict):
+                channel_id, enabled = value.get("channel_id"), value.get("enabled", True)
+            else:
+                channel_id, enabled = value, True
+            if channel_id: result[str(gid)] = {"channel_id": int(channel_id), "enabled": bool(enabled)}
+        return result
     try:
         with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS welcome_log_configs (
-                        guild_id TEXT PRIMARY KEY,
-                        channel_id BIGINT NOT NULL
-                    )
-                    """
-                )
-                # Neonへの接続確認
-                cursor.execute("SELECT 1")
-                if cursor.fetchone() != (1,):
-                    raise RuntimeError("PostgreSQL connection test failed")
-                print("[DATABASE] PostgreSQL connected!")
-
-                cursor.execute(
-                    "SELECT guild_id, channel_id FROM welcome_log_configs"
-                )
+                cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_log_configs (guild_id TEXT PRIMARY KEY, channel_id BIGINT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE)""")
+                cursor.execute("ALTER TABLE welcome_log_configs ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE")
+                cursor.execute("SELECT guild_id, channel_id, enabled FROM welcome_log_configs")
                 rows = cursor.fetchall()
-
-                # 初回接続時は、残っているJSON設定をデータベースへ移行
                 if not rows and fallback:
-                    cursor.executemany(
-                        """
-                        INSERT INTO welcome_log_configs (guild_id, channel_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT (guild_id)
-                        DO UPDATE SET channel_id = EXCLUDED.channel_id
-                        """,
-                        [
-                            (str(guild_id), int(channel_id))
-                            for guild_id, channel_id in fallback.items()
-                        ],
-                    )
-                    print(
-                        f"[WELCOME DB] JSONから{len(fallback)}件の設定を移行しました。"
-                    )
-                    return {
-                        str(guild_id): int(channel_id)
-                        for guild_id, channel_id in fallback.items()
-                    }
-
-                loaded = {
-                    str(guild_id): int(channel_id)
-                    for guild_id, channel_id in rows
-                }
-                print(f"[WELCOME DB] {len(loaded)}件の設定を読み込みました。")
-                return loaded
-
+                    migrated = []
+                    for gid, value in fallback.items():
+                        if isinstance(value, dict): channel_id, enabled = value.get("channel_id"), value.get("enabled", True)
+                        else: channel_id, enabled = value, True
+                        if channel_id: migrated.append((str(gid), int(channel_id), bool(enabled)))
+                    if migrated:
+                        cursor.executemany("INSERT INTO welcome_log_configs (guild_id, channel_id, enabled) VALUES (%s, %s, %s) ON CONFLICT (guild_id) DO NOTHING", migrated)
+                    return {gid: {"channel_id": channel_id, "enabled": enabled} for gid, channel_id, enabled in migrated}
+                return {str(gid): {"channel_id": int(cid), "enabled": bool(enabled)} for gid, cid, enabled in rows}
     except Exception:
-        print("[WELCOME DB LOAD ERROR] データベースから読み込めませんでした。")
+        print("[WELCOME DB LOAD ERROR] Neonから読み込めません。")
         traceback.print_exc()
-        return fallback
+        return {}
 
 
-def save_welcome_log_config(guild_id, channel_id):
-    if not DATABASE_URL:
-        print(
-            "[WELCOME DB] DATABASE_URL未設定。"
-            "この設定はJSONにのみ保存され、再デプロイで消える可能性があります。"
-        )
-        return False
-
+def save_welcome_log_config(guild_id, channel_id=None, enabled=None):
+    if not DATABASE_URL: return False
+    current = welcome_log_configs.get(str(guild_id), {})
+    channel_id = channel_id or current.get("channel_id")
+    if enabled is None: enabled = current.get("enabled", True)
+    if not channel_id: return False
     try:
         with psycopg2.connect(DATABASE_URL, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS welcome_log_configs (
-                        guild_id TEXT PRIMARY KEY,
-                        channel_id BIGINT NOT NULL
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO welcome_log_configs (guild_id, channel_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT (guild_id)
-                    DO UPDATE SET channel_id = EXCLUDED.channel_id
-                    """,
-                    (str(guild_id), int(channel_id)),
-                )
-
-        print(f"[WELCOME DB] 保存しました: guild={guild_id}, channel={channel_id}")
+                cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_log_configs (guild_id TEXT PRIMARY KEY, channel_id BIGINT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE)""")
+                cursor.execute("ALTER TABLE welcome_log_configs ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE")
+                cursor.execute("INSERT INTO welcome_log_configs (guild_id, channel_id, enabled) VALUES (%s, %s, %s) ON CONFLICT (guild_id) DO UPDATE SET channel_id=EXCLUDED.channel_id, enabled=EXCLUDED.enabled", (str(guild_id), int(channel_id), bool(enabled)))
         return True
-
     except Exception:
-        print("[WELCOME DB SAVE ERROR] データベースへ保存できませんでした。")
-        traceback.print_exc()
-        return False
-
+        print("[WELCOME DB SAVE ERROR]"); traceback.print_exc(); return False
 
 balances = load_json(BALANCES_FILE, {})
 slot_positions = load_json(POSITIONS_FILE, {})
@@ -7667,135 +7617,84 @@ bot.tree.add_command(request_group)
 
 
 # ==================================================
-# /welcome log 入退出ログ設定
-# ==================================================
+# /welcome 入退出ログ設定（Neon共有）
 
-WELCOME_LOG_CHANNEL_ID = 1553043298749259941
+welcome_group = app_commands.Group(name="welcome", description="参加・退出ログの設定")
 
-welcome_group = app_commands.Group(
-    name="welcome",
-    description="参加・退出ログの設定",
-)
-
-
-@welcome_group.command(
-    name="log",
-    description="このチャンネルをメンバー参加・退出ログの送信先に設定する",
-)
+@welcome_group.command(name="log", description="参加・退出ログの送信先チャンネルを設定")
 @app_commands.describe(channel="ログを送信するチャンネル（省略すると現在のチャンネル）")
 @app_commands.default_permissions(administrator=True)
-async def welcome_log_command(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel = None,
-):
-    if interaction.guild is None:
-        await interaction.response.send_message(
-            "このコマンドはサーバー内で使ってね。",
-            ephemeral=True,
-        )
-        return
-
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "この設定はサーバー管理者だけが使えるよ。",
-            ephemeral=True,
-        )
-        return
-
+async def welcome_log_command(interaction: discord.Interaction, channel: discord.TextChannel = None):
+    if interaction.guild is None or not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("サーバー管理者だけが使えるよ。", ephemeral=True); return
     target = channel or interaction.channel
     if not isinstance(target, discord.TextChannel):
-        await interaction.response.send_message(
-            "ログ送信先にはテキストチャンネルを指定してね。",
-            ephemeral=True,
-        )
-        return
+        await interaction.response.send_message("テキストチャンネルを指定してね。", ephemeral=True); return
+    me = interaction.guild.me
+    perms = target.permissions_for(me) if me else None
+    if not perms or not (perms.view_channel and perms.send_messages and perms.embed_links):
+        await interaction.response.send_message("Botにチャンネル閲覧・メッセージ送信・埋め込みリンク権限が必要だよ。", ephemeral=True); return
+    key = str(interaction.guild.id)
+    old = welcome_log_configs.get(key, {})
+    enabled = bool(old.get("enabled", True))
+    welcome_log_configs[key] = {"channel_id": target.id, "enabled": enabled}
+    if not save_welcome_log_config(interaction.guild.id, target.id, enabled):
+        await interaction.response.send_message("Neonへの保存に失敗。DATABASE_URLを確認してね。", ephemeral=True); return
+    await interaction.response.send_message(f"✅ 送信先を {target.mention} に設定したよ！ 状態：{ "ON" if enabled else "OFF" }", ephemeral=True)
 
-    bot_member = interaction.guild.me
-    if bot_member is None:
-        await interaction.response.send_message(
-            "Botのメンバー情報を取得できなかったよ。",
-            ephemeral=True,
-        )
-        return
+@welcome_group.command(name="stop", description="参加・退出ログの送信を停止")
+@app_commands.default_permissions(administrator=True)
+async def welcome_log_stop(interaction: discord.Interaction):
+    if interaction.guild is None or not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("サーバー管理者だけが使えるよ。", ephemeral=True); return
+    key = str(interaction.guild.id); data = welcome_log_configs.get(key)
+    if not data or not data.get("channel_id"):
+        await interaction.response.send_message("先に /welcome log で送信先を設定してね。", ephemeral=True); return
+    data["enabled"] = False
+    if not save_welcome_log_config(interaction.guild.id, enabled=False):
+        await interaction.response.send_message("Neonへの保存に失敗したよ。", ephemeral=True); return
+    await interaction.response.send_message("⏸️ 入退出ログを停止したよ。", ephemeral=True)
 
-    permissions = target.permissions_for(bot_member)
-    if not permissions.view_channel or not permissions.send_messages or not permissions.embed_links:
-        await interaction.response.send_message(
-            "Botにこのチャンネルの「チャンネルを見る」「メッセージを送信」「埋め込みリンク」の権限が必要だよ。",
-            ephemeral=True,
-        )
-        return
-
-    if not save_welcome_log_config(interaction.guild.id, target.id):
-        await interaction.response.send_message(
-            "❌ 設定をデータベースに保存できなかったよ。RenderのDATABASE_URL設定を確認してね。",
-            ephemeral=True,
-        )
-        return
-
-    welcome_log_configs[str(interaction.guild.id)] = target.id
-    save_json(WELCOME_LOG_FILE, welcome_log_configs)
-
-    embed = discord.Embed(
-        title="✅ 入退出ログを設定したよ！",
-        description=f"送信先：{target.mention}",
-        color=discord.Color.green(),
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
+@welcome_group.command(name="start", description="参加・退出ログの送信を再開")
+@app_commands.default_permissions(administrator=True)
+async def welcome_log_start(interaction: discord.Interaction):
+    if interaction.guild is None or not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("サーバー管理者だけが使えるよ。", ephemeral=True); return
+    key = str(interaction.guild.id); data = welcome_log_configs.get(key)
+    if not data or not data.get("channel_id"):
+        await interaction.response.send_message("先に /welcome log で送信先を設定してね。", ephemeral=True); return
+    data["enabled"] = True
+    if not save_welcome_log_config(interaction.guild.id, enabled=True):
+        await interaction.response.send_message("Neonへの保存に失敗したよ。", ephemeral=True); return
+    await interaction.response.send_message("▶️ 入退出ログを再開したよ。", ephemeral=True)
 
 bot.tree.add_command(welcome_group)
 
-
 async def send_welcome_log(member: discord.Member, joined: bool):
-    # サーバーごとに設定されたログ送信先を使う
-    guild_key = str(member.guild.id)
-    channel_id = welcome_log_configs.get(guild_key)
-
-    # 未設定のサーバーから、別サーバー（メインを含む）へ誤送信しない
-    if channel_id is None:
-        print(f"[WELCOME LOG] 送信先未設定: {member.guild.name} ({member.guild.id})")
-        return
-
+    settings = welcome_log_configs.get(str(member.guild.id), {})
+    if not settings or not settings.get("enabled", True): return
+    channel_id = settings.get("channel_id")
+    if not channel_id: return
     channel = member.guild.get_channel(int(channel_id))
     if channel is None:
-        try:
-            channel = await member.guild.fetch_channel(int(channel_id))
+        try: channel = await member.guild.fetch_channel(int(channel_id))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
-            print(f"[WELCOME LOG] 送信先を取得できません: {channel_id} / {error}")
-            return
-
-    if not isinstance(channel, discord.TextChannel) or channel.guild.id != member.guild.id:
-        print(f"[WELCOME LOG] 送信先が同じサーバーのテキストチャンネルではありません: {channel_id}")
-        return
-
+            print(f"[WELCOME LOG] channel fetch error: {error}"); return
+    if not isinstance(channel, discord.TextChannel) or channel.guild.id != member.guild.id: return
     created_at = member.created_at.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
-    embed = discord.Embed(
-        title="📥 メンバー参加" if joined else "📤 メンバー退出",
-        color=discord.Color.green() if joined else discord.Color.red(),
-    )
+    embed = discord.Embed(title="📥 メンバー参加" if joined else "📤 メンバー退出", color=discord.Color.green() if joined else discord.Color.red())
     embed.add_field(name="名前", value=discord.utils.escape_markdown(str(member)), inline=False)
     embed.add_field(name="作成日", value=created_at, inline=False)
     embed.add_field(name="現在のメンバー数", value=str(member.guild.member_count or 0), inline=False)
     embed.set_thumbnail(url=member.display_avatar.url)
-
-    try:
-        await channel.send(embed=embed)
-    except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"[WELCOME LOG {'JOIN' if joined else 'LEAVE'} ERROR] {error}")
-
+    try: await channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as error: print(f"[WELCOME LOG ERROR] {error}")
 
 @bot.event
-async def on_member_join(member: discord.Member):
-    await send_welcome_log(member, joined=True)
-
+async def on_member_join(member: discord.Member): await send_welcome_log(member, joined=True)
 
 @bot.event
-async def on_member_remove(member: discord.Member):
-    await send_welcome_log(member, joined=False)
-
-
-# ==================================================
+async def on_member_remove(member: discord.Member): await send_welcome_log(member, joined=False)
 # /servers Botの参加サーバー数（オーナー専用）
 # ==================================================
 

@@ -7940,6 +7940,26 @@ def calculate_odds(deck: list, current_card: dict, high: bool) -> float:
   return max(odds, 1.05)
 
 
+class HighLowButton(ui.Button):
+
+  def __init__(self, label, style, action_type, disabled=False):
+    super().__init__(label=label, style=style, disabled=disabled)
+    self.action_type = action_type
+
+  async def callback(self, interaction: discord.Interaction):
+    view: HighLowView = self.view
+    if self.action_type == "high":
+      await view.choose(interaction, True)
+    elif self.action_type == "low":
+      await view.choose(interaction, False)
+    elif self.action_type == "fin":
+      await view.finish(
+          interaction,
+          f"ゲームを終了して精算したよ！連続正解：**{view.streak}回**",
+          won=True,
+      )
+
+
 class HighLowView(discord.ui.LayoutView):
 
   def __init__(self, owner_id: int, deck: list, current: dict, bet: int, guild):
@@ -7949,7 +7969,7 @@ class HighLowView(discord.ui.LayoutView):
     self.deck = deck
     self.current = current
     self.bet = bet
-    self.current_prize = bet  # スタート時の賞金ベース
+    self.current_prize = bet
     self.streak = 0
     self.finished = False
     self.end_status = None
@@ -7957,7 +7977,6 @@ class HighLowView(discord.ui.LayoutView):
     self.image_path = f"cards/hl_{id(self)}.png"
     self.lock = asyncio.Lock()
 
-    # 初期描画とコンテナの構築
     self.render_cards(show_back=True)
     self.rebuild_container()
 
@@ -8000,13 +8019,11 @@ class HighLowView(discord.ui.LayoutView):
     return True
 
   def rebuild_container(self, show_back=True):
-    """Components V2用のContainerを組み立ててビューにセットする"""
     self.clear_items()
 
     high_odds = calculate_odds(self.deck, self.current, True)
     low_odds = calculate_odds(self.deck, self.current, False)
 
-    # 状態に応じたテキストの組み立て
     if self.finished:
       result_line = f"### {self.end_status}"
       won_value = f"+{self.final_profit:,}$" if self.final_profit > 0 else "0$"
@@ -8032,7 +8049,6 @@ class HighLowView(discord.ui.LayoutView):
           f"LOW : **{low_odds}x**"
       )
 
-    # コンテナのカラー設定（終了状態によって変更）
     accent_color = None
     if self.finished:
       if self.end_status == "Lose":
@@ -8040,7 +8056,6 @@ class HighLowView(discord.ui.LayoutView):
       elif self.end_status == "Cash out":
         accent_color = discord.Color.green()
 
-    # Containerの中に TextDisplay, MediaGallery, Footer, ActionRow をすべて配置
     container = ui.Container(
         ui.TextDisplay(desc_text),
         ui.MediaGallery(
@@ -8050,22 +8065,19 @@ class HighLowView(discord.ui.LayoutView):
         ),
         ui.TextDisplay(f"-# {len(self.deck)} cards"),
         ui.ActionRow(
-            ui.Button(
-                label="HIGH",
-                style=discord.ButtonStyle.success,
-                custom_id="hl_high",
+            HighLowButton(
+                "HIGH",
+                discord.ButtonStyle.success,
+                "high",
                 disabled=self.finished,
             ),
-            ui.Button(
-                label="LOW",
-                style=discord.ButtonStyle.danger,
-                custom_id="hl_low",
-                disabled=self.finished,
+            HighLowButton(
+                "LOW", discord.ButtonStyle.danger, "low", disabled=self.finished
             ),
-            ui.Button(
-                label="FIN",
-                style=discord.ButtonStyle.secondary,
-                custom_id="hl_fin",
+            HighLowButton(
+                "FIN",
+                discord.ButtonStyle.secondary,
+                "fin",
                 disabled=self.finished,
             ),
         ),
@@ -8077,20 +8089,16 @@ class HighLowView(discord.ui.LayoutView):
   async def update_message(
       self, interaction, description, show_back=True, disable=False
   ):
-    # self.finished は choose や finish 側で設定済み
     self.rebuild_container(show_back=show_back)
     file = discord.File(
         self.image_path, filename=os.path.basename(self.image_path)
     )
 
-    # Components V2のメッセージ送信・編集時は is_components_v2 フラグが必要
     await interaction.response.edit_message(
         view=self,
         attachments=[file],
         flags=discord.MessageFlags(is_components_v2=True),
     )
-    # 必要に応じてゲーム中のテキストフィードバック（description）を別途送るか、
-    # あるいはメッセージ上部に反映する場合は適宜調整してください。
 
   async def finish(self, interaction, message, won=False):
     if self.finished:
@@ -8207,31 +8215,37 @@ class HighLowView(discord.ui.LayoutView):
             won=False,
         )
 
-  # LayoutView内では、デコレータ(@discord.ui.button)の代わりに
-  5行前のコンテナ内（ui.ActionRow）に直接 ui.Button を定義して制御する形になります。
-  # そのため、各ボタンが押されたときのルーティングとして、ボタンごとのインタラクションを拾うか、
-  # あるいはカスタムIDで分岐させるコールバックを持たせたカスタムボタンクラスを作るとスッキリします。
-
-
-# --- ボタンの処理を個別にスッキリ書くためのクラス例 ---
-class HighLowButton(ui.Button):
-
-  def __init__(self, label, style, action_type):
-    super().__init__(label=label, style=style)
-    self.action_type = action_type  # 'high', 'low', 'fin'
-
-  async def callback(self, interaction: discord.Interaction):
-    view: HighLowView = self.view
-    if self.action_type == "high":
-      await view.choose(interaction, True)
-    elif self.action_type == "low":
-      await view.choose(interaction, False)
-    elif self.action_type == "fin":
-      await view.finish(
-          interaction,
-          f"ゲームを終了して精算したよ！連続正解：**{view.streak}回**",
-          won=True,
-      )
+  async def on_timeout(self):
+    if not self.finished:
+      self.finished = True
+      final_balance = get_balance(self.owner_id)
+      if self.guild is not None:
+        record_coin({
+            "type": "highlow_timeout",
+            "guild_id": self.guild.id,
+            "user_id": str(self.owner_id),
+            "balance": final_balance,
+        })
+        await send_coin_log(
+            self.guild,
+            discord.Embed(
+                title="🃏 HIGH&LOW タイムアウトログ",
+                description=(
+                    f"ユーザー：<@{self.owner_id}> (`{self.owner_id}`)\n"
+                    f"賭け金：**{money(self.bet)}**\n"
+                    f"配当：**{money(0)}**\n"
+                    f"収支：**{money_change(-self.bet)}**\n"
+                    f"残高：**{money(final_balance)}**\n"
+                    f"Combo：**{self.streak}**"
+                ),
+                color=discord.Color.red(),
+            ),
+        )
+    try:
+      if os.path.exists(self.image_path):
+        os.remove(self.image_path)
+    except OSError:
+      pass
 
 
 # ==================================================

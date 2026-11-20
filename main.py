@@ -140,14 +140,6 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンド同期: {len(synced)}個")
-        # 登録完了後は、再起動しても一括登録コマンドを復活させない
-        if bj_emoji_registration_done:
-            for bj_guild_id in BJ_EMOJI_GUILD_SPLITS:
-                bot.tree.remove_command(
-                    "bj-emoji-register",
-                    guild=discord.Object(id=bj_guild_id),
-                )
-
         for bj_guild_id in (1573260159403294793, 1573260415474073660):
             try:
                 guild_synced = await bot.tree.sync(guild=discord.Object(id=bj_guild_id))
@@ -5386,13 +5378,11 @@ async def register_bj_emojis(interaction: discord.Interaction):
         bj_emoji_registration_done = True
 
         for guild_id in BJ_EMOJI_GUILD_SPLITS:
-            guild_obj = discord.Object(id=guild_id)
-            bot.tree.remove_command("bj-emoji-register", guild=guild_obj)
-            await bot.tree.sync(guild=guild_obj)
+            await bot.tree.sync(guild=discord.Object(id=guild_id))
 
         await interaction.followup.send(
             f"登録完了！ {total}/54個\nサーバー①：27個\nサーバー②：27個\n"
-            "一括登録コマンドは両サーバーから削除したよ。",
+            "削除コマンドで入れ替えた後、もう一度登録できるよ。",
             ephemeral=True,
         )
 
@@ -5410,6 +5400,73 @@ async def register_bj_emojis(interaction: discord.Interaction):
         if rollback_errors:
             detail += f"\n取り消せなかった絵文字: {len(rollback_errors)}個"
         await interaction.followup.send(detail[:1900], ephemeral=True)
+
+
+@app_commands.guilds(
+    discord.Object(id=1573260159403294793),
+    discord.Object(id=1573260415474073660),
+)
+@bot.tree.command(
+    name="bj-emoji-delete",
+    description="ブラックジャック用のカード絵文字54個を両サーバーから削除する",
+)
+async def delete_bj_emojis(interaction: discord.Interaction):
+    if interaction.guild is None or interaction.guild.id not in BJ_EMOJI_GUILD_SPLITS:
+        await interaction.response.send_message(
+            "このコマンドは指定された2つのサーバーでのみ使えます。",
+            ephemeral=True,
+        )
+        return
+
+    if interaction.user.id != OWNER_USER_ID:
+        await interaction.response.send_message(
+            "この操作はBot所有者だけが実行できます。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    deleted = 0
+    errors = []
+
+    for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            errors.append(f"サーバー {guild_id}: Botが参加していません")
+            continue
+
+        bot_member = guild.get_member(bot.user.id) if bot.user else None
+        if bot_member is None or not bot_member.guild_permissions.manage_emojis_and_stickers:
+            errors.append(f"サーバー {guild_id}: Botに絵文字管理権限がありません")
+            continue
+
+        target_names = {f"bj_{number}" for number in file_numbers}
+        for emoji in list(guild.emojis):
+            if emoji.name not in target_names:
+                continue
+            try:
+                await emoji.delete(reason="ブラックジャックカード絵文字の透明背景版へ入れ替え")
+                deleted += 1
+            except Exception as error:
+                errors.append(f"{guild.name}/{emoji.name}: {error}")
+
+    # 登録済みIDを破棄し、透明背景版を再登録できる状態に戻す
+    new_map = {
+        key: value for key, value in bj_emoji_map.items()
+        if not (str(key).isdigit() and 625 <= int(key) <= 678)
+    }
+    save_json(BJ_EMOJI_MAP_FILE, new_map)
+    bj_emoji_map.clear()
+    bj_emoji_map.update(new_map)
+    save_json(BJ_EMOJI_DONE_FILE, False)
+    bj_emoji_registration_done = False
+
+    result = f"削除した絵文字: {deleted}/54個"
+    if errors:
+        result += "\n一部削除できなかったよ:\n" + "\n".join(errors[:8])
+    else:
+        result += "\n54個の登録枠を空けたよ。次に /bj-emoji-register を実行してね。"
+    await interaction.followup.send(result[:1900], ephemeral=True)
 
 
 # ==========================================

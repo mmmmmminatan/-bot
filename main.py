@@ -6678,19 +6678,14 @@ class BlackjackView(discord.ui.View):
             files = []
 
         # ----------------------------------
-        # 手札表示
+        # 手札表示（見た目のみ：カードを大きな見出しにする）
         # ----------------------------------
 
-        embed.add_field(
-            name=f"DEALER {dealer_text}",
-            value=d_cards_str,
-            inline=False
-        )
-
-        embed.add_field(
-            name=f"PLAYER HAND (TOTAL: {p_score})",
-            value=p_cards_str,
-            inline=False
+        embed.description = (
+            f"**DEALER {dealer_text}**\\n"
+            f"# {d_cards_str}\\n\\n"
+            f"**PLAYER HAND (TOTAL: {p_score})**\\n"
+            f"# {p_cards_str}"
         )
 
         # ----------------------------------

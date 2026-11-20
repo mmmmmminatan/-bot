@@ -5935,15 +5935,12 @@ def create_bj_table_image(
 
         os.makedirs("cards", exist_ok=True)
 
-        # Add transparent side margins so Discord displays the cards smaller.
-        margin = table_img.width // 3
-        padded_img = Image.new(
-            "RGBA",
-            (table_img.width + margin * 2, table_img.height),
-            (0, 0, 0, 0)
+        # カード全体を従来表示の約1/3に縮小。背景は透明のまま維持する。
+        display_size = (
+            max(1, table_img.width // 3),
+            max(1, table_img.height // 3),
         )
-        padded_img.paste(table_img, (margin, 0), table_img)
-        table_img = padded_img
+        table_img = table_img.resize(display_size, Image.Resampling.LANCZOS)
 
         table_img.save(output_path)
 
@@ -7683,18 +7680,12 @@ class HighLowView(discord.ui.LayoutView):
     if image is None:
       return False
 
-    margin = image.width // 2 if not show_back else image.width // 4
-    canvas = Image.new(
-        "RGB",
-        (image.width + margin * 2, image.height),
-        (0, 128, 0),
+    # カードを従来表示の約1/3に縮小し、背景は完全な透明にする。
+    display_size = (
+        max(1, image.width // 3),
+        max(1, image.height // 3),
     )
-    if image.mode == "RGBA":
-      canvas.paste(image, (margin, 0), image)
-    else:
-      canvas.paste(image, (margin, 0))
-    image = canvas
-
+    image = image.resize(display_size, Image.Resampling.LANCZOS)
     image.save(self.image_path, format="PNG")
     return True
 

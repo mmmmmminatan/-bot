@@ -7087,6 +7087,8 @@ class HighLowButton(ui.Button):
       await view.choose(interaction, True)
     elif self.action_type == "low":
       await view.choose(interaction, False)
+    elif self.action_type == "same":
+      await view.choose(interaction, None)
     elif self.action_type == "fin":
       await view.finish(
           interaction,
@@ -7210,6 +7212,9 @@ class HighLowView(discord.ui.LayoutView):
                 "LOW", discord.ButtonStyle.danger, "low", disabled=self.finished
             ),
             HighLowButton(
+                "SAME", discord.ButtonStyle.primary, "same", disabled=self.finished
+            ),
+            HighLowButton(
                 "FIN",
                 discord.ButtonStyle.secondary,
                 "fin",
@@ -7280,7 +7285,7 @@ class HighLowView(discord.ui.LayoutView):
         interaction, message, show_back=False, disable=True
     )
 
-  async def choose(self, interaction, high):
+  async def choose(self, interaction, high=None):
     async with self.lock:
       if self.finished:
         await interaction.response.send_message(
@@ -7297,8 +7302,8 @@ class HighLowView(discord.ui.LayoutView):
         )
         return
 
-      odds = calculate_odds(self.deck, self.current, high)
-      if odds <= 0.0:
+      odds = None if high is None else calculate_odds(self.deck, self.current, high)
+      if high is not None and odds <= 0.0:
         await interaction.response.send_message(
             "その選択肢に該当するカードが残っていません！別のほうを選んでね。",
             ephemeral=True,
@@ -7316,6 +7321,24 @@ class HighLowView(discord.ui.LayoutView):
             interaction,
             f"🃏 ジョーカー！引き分けだよ。連続正解数と賞金はそのまま。\n次のカードは HIGH？ LOW？",
         )
+        return
+
+      if high is None:
+        self.current = next_card
+        self.render_cards(show_back=False)
+        if old_rank == next_rank:
+          self.current_prize = self.bet * 10
+          await self.finish(
+              interaction,
+              f"🎯 SAME成功！同じ数字だよ！**10倍払い出し**！",
+              won=True,
+          )
+        else:
+          await self.finish(
+              interaction,
+              f"❌ SAME失敗！次のカードは **{hl_card_label(next_card)}** でした。",
+              won=False,
+          )
         return
 
       if old_rank == next_rank:

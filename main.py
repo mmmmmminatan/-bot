@@ -997,8 +997,7 @@ async def on_message(message):
         f"user={message.author} "
         f"content={message.content[:150]}"
     )
-    # Botのメッセージはここで終了（上の大量メンション検知だけ実施）
-    if message.author.bot:
+    # Botのメッセージはここで終了（上の大量メンション検知だけ実施）    if message.author.bot:
         return
 
     # サーバーごとの「あう」検知設定
@@ -1997,8 +1996,7 @@ class ColorBetView(discord.ui.View):
             )
 
             if house_result is not None:                description += (
-                    f"\n胴元の変動：**{money_change(house_result['change'])}**"
-                    f"\n胴元の残高：**{money(house_result['after'])}**"
+                    f"\n胴元の変動：**{money_change(house_result['change'])}**"                    f"\n胴元の残高：**{money(house_result['after'])}**"
                 )
 
             await send_coin_log(
@@ -2997,8 +2995,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         payline_rows.extend([(0, 1, 2), (2, 1, 0)])
     for row_positions in payline_rows:
         left_symbol = grid[row_positions[0]][0]
-        middle_symbol = grid[row_positions[1]][1]
-        right_symbol = grid[row_positions[2]][2]
+        middle_symbol = grid[row_positions[1]][1]        right_symbol = grid[row_positions[2]][2]
 
         # 777 / JP の2つがリーチして外れた場合だけ、右レーンの隣の段に表示
         if (
@@ -3997,8 +3994,7 @@ class WeightsSettingModal(discord.ui.Modal):
         await interaction.response.send_message(            embed=discord.Embed(
                 title="🎰 出現比率を更新したよ",
                 description=get_weights_text(parsed),
-                color=discord.Color.green(),
-            ),
+                color=discord.Color.green(),            ),
             ephemeral=True,
         )
 
@@ -4997,8 +4993,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
                                 description,
                             )
                         else:
-                            balance_match = re.search(
-                                r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                            balance_match = re.search(                                r"残高：\*\*([+-]?\$?[\d,]+)\*\*",
                                 description,
                             )
                         if user_match and balance_match:
@@ -5303,8 +5298,9 @@ async def register_bj_emojis(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
 
     target_guilds = {}
+    prepared = {}
     try:
-        prepared = {}
+        # 登録前に両サーバーの権限・空き枠・全画像をまとめて確認する
         for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
             guild = bot.get_guild(guild_id)
             if guild is None:
@@ -5339,67 +5335,87 @@ async def register_bj_emojis(interaction: discord.Interaction):
                 )
 
     except Exception as error:
-        await interaction.followup.send(
-            f"登録前チェックで停止したよ。\n{error}",
-            ephemeral=True,
+        await interaction.edit_original_response(
+            content=f"登録前チェックで停止したよ。\n{error}"
         )
         return
 
-    created = []
     new_map = dict(bj_emoji_map)
-    try:
-        total = 0
-        for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
-            guild, existing = target_guilds[guild_id]
-            for number in file_numbers:
-                name = f"bj_{number}"
-                emoji = existing.get(name)
-                if emoji is None:
-                    emoji = await guild.create_custom_emoji(
-                        name=name,
-                        image=prepared[number],
-                        reason="ブラックジャック用カード絵文字の一括登録",
-                    )
-                    created.append(emoji)
+    completed = 0
+    failed = []
+    total = sum(len(numbers) for numbers in BJ_EMOJI_GUILD_SPLITS.values())
 
+    for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
+        guild, existing = target_guilds[guild_id]
+        for number in file_numbers:
+            name = f"bj_{number}"
+            emoji = existing.get(name)
+
+            if emoji is None:
+                # 一時的なDiscord側エラーだけ最大3回まで再試行する。
+                for attempt in range(3):
+                    try:
+                        emoji = await guild.create_custom_emoji(
+                            name=name,
+                            image=prepared[number],
+                            reason="ブラックジャック用カード絵文字の一括登録",
+                        )
+                        break
+                    except discord.HTTPException as error:
+                        if error.status not in (500, 502, 503, 504) or attempt == 2:
+                            failed.append(f"{name}: {error}")
+                            break
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                    except Exception as error:
+                        failed.append(f"{name}: {error}")
+                        break
+
+            if emoji is not None:
                 new_map[str(number)] = {
                     "guild_id": guild_id,
                     "id": emoji.id,
                     "name": emoji.name,
                 }
-                total += 1
+                completed += 1
 
+            # 3個ごとに進捗を更新。大量の編集リクエストも避ける。
+            if completed % 3 == 0 or completed == total or (number == list(file_numbers)[-1]):
+                status = f"絵文字登録中：{completed}/{total}個"
+                if failed:
+                    status += f"\n失敗：{len(failed)}個（最後まで続けるよ）"
+                try:
+                    await interaction.edit_original_response(content=status)
+                except discord.HTTPException:
+                    pass
+
+        # サーバーごとに途中経過を保存し、失敗時も成功分を失わない
         save_json(BJ_EMOJI_MAP_FILE, new_map)
-        bj_emoji_map.clear()
-        bj_emoji_map.update(new_map)
 
-        # 完了フラグを永続保存。Bot再起動後に登録コマンドが復活するのを防ぐ
+    bj_emoji_map.clear()
+    bj_emoji_map.update(new_map)
+
+    if not failed and completed == total:
         save_json(BJ_EMOJI_DONE_FILE, True)
         bj_emoji_registration_done = True
-
         for guild_id in BJ_EMOJI_GUILD_SPLITS:
             await bot.tree.sync(guild=discord.Object(id=guild_id))
-
-        await interaction.followup.send(
-            f"登録完了！ {total}/54個\nサーバー①：27個\nサーバー②：27個\n"
-            "削除コマンドで入れ替えた後、もう一度登録できるよ。",
-            ephemeral=True,
+        await interaction.edit_original_response(
+            content=(
+                f"登録完了！ {completed}/{total}個\n"
+                "サーバー①：27個\nサーバー②：27個"
+            )
         )
-
-    except Exception as error:
-        print("[BJ EMOJI REGISTER ERROR]")
-        traceback.print_exc()
-        rollback_errors = []
-        for emoji in reversed(created):
-            try:
-                await emoji.delete(reason="ブラックジャック絵文字登録のロールバック")
-            except Exception as rollback_error:
-                rollback_errors.append(str(rollback_error))
-
-        detail = f"登録に失敗したため、今回作成した絵文字を取り消したよ。\n{error}"
-        if rollback_errors:
-            detail += f"\n取り消せなかった絵文字: {len(rollback_errors)}個"
-        await interaction.followup.send(detail[:1900], ephemeral=True)
+    else:
+        save_json(BJ_EMOJI_DONE_FILE, False)
+        bj_emoji_registration_done = False
+        detail = "\n".join(failed[:12])
+        await interaction.edit_original_response(
+            content=(
+                f"登録処理終了：成功 {completed}/{total}個、失敗 {len(failed)}個。\n"
+                "成功したIDは保存済み。もう一度コマンドを実行すると、残りだけ登録するよ。\n"
+                + detail
+            )[:1900]
+        )
 
 
 @app_commands.guilds(
@@ -5997,8 +6013,7 @@ class BlackjackView(discord.ui.View):
         style=discord.ButtonStyle.green
     )
     async def hit(
-        self,
-        interaction: discord.Interaction,
+        self,        interaction: discord.Interaction,
         button: discord.ui.Button
     ):
 
@@ -6997,8 +7012,7 @@ async def execute_roulette_game(ctx, message, bet, target_clean, target_raw):
             ctx.guild,
             discord.Embed(
                 title="🎰 ルーレットログ",
-                description=(
-                    f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                description=(                    f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
                     f"賭け金：**{money(bet)}** | 賭け先：`{target_raw}`\n"
                     f"結果：{color_emoji} **{landed_number}** ({'当たり' if won else 'ハズレ'})\n"
                     f"配当：**{money(payout)}** | 収支：**{money_change(profit)}**\n"
@@ -7997,8 +8011,7 @@ async def treasure_hunt_command(ctx: commands.Context, bet: str, lane: str):
 
 
 @bot.command(name="hl", aliases=["highlow"])
-async def highlow_command(ctx: commands.Context, bet: str = "100"):
-  """ハイ＆ローを開始（例: !hl 500, !hl all）"""
+async def highlow_command(ctx: commands.Context, bet: str = "100"):  """ハイ＆ローを開始（例: !hl 500, !hl all）"""
   balance = get_balance(ctx.author.id)
 
   # 「all」が指定された場合の判定

@@ -140,6 +140,14 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンド同期: {len(synced)}個")
+        # 登録完了後は、再起動しても一括登録コマンドを復活させない
+        if bj_emoji_registration_done:
+            for bj_guild_id in BJ_EMOJI_GUILD_SPLITS:
+                bot.tree.remove_command(
+                    "bj-emoji-register",
+                    guild=discord.Object(id=bj_guild_id),
+                )
+
         for bj_guild_id in (1573260159403294793, 1573260415474073660):
             try:
                 guild_synced = await bot.tree.sync(guild=discord.Object(id=bj_guild_id))
@@ -997,7 +1005,6 @@ async def on_message(message):
         f"user={message.author} "
         f"content={message.content[:150]}"
     )
-
     # Botのメッセージはここで終了（上の大量メンション検知だけ実施）
     if message.author.bot:
         return
@@ -1997,8 +2004,7 @@ class ColorBetView(discord.ui.View):
                 f"収支：**{money_change(profit)}**\n残高：**{money(new_balance)}**"
             )
 
-            if house_result is not None:
-                description += (
+            if house_result is not None:                description += (
                     f"\n胴元の変動：**{money_change(house_result['change'])}**"
                     f"\n胴元の残高：**{money(house_result['after'])}**"
                 )
@@ -2997,7 +3003,6 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         payline_rows.extend([(0, 0, 0), (2, 2, 2)])
     if line_choice >= 3:
         payline_rows.extend([(0, 1, 2), (2, 1, 0)])
-
     for row_positions in payline_rows:
         left_symbol = grid[row_positions[0]][0]
         middle_symbol = grid[row_positions[1]][1]
@@ -3997,8 +4002,7 @@ class WeightsSettingModal(discord.ui.Modal):
         settings["weights"] = parsed
         save_server_settings(interaction.guild.id)
 
-        await interaction.response.send_message(
-            embed=discord.Embed(
+        await interaction.response.send_message(            embed=discord.Embed(
                 title="🎰 出現比率を更新したよ",
                 description=get_weights_text(parsed),
                 color=discord.Color.green(),
@@ -4997,8 +5001,7 @@ async def coinrecovery_command(interaction: discord.Interaction):
                     elif "HIGH&LOW" in title:
                         user_match = re.search(r"ユーザー：.*?`(\d+)`", description)
                         if "ベットログ" in title:
-                            balance_match = re.search(
-                                r"ベット後残高：\*\*([+-]?\$?[\d,]+)\*\*",
+                            balance_match = re.search(                                r"ベット後残高：\*\*([+-]?\$?[\d,]+)\*\*",
                                 description,
                             )
                         else:
@@ -5246,7 +5249,9 @@ BJ_EMOJI_GUILD_SPLITS = {
     1573260415474073660: range(652, 679),
 }
 BJ_EMOJI_MAP_FILE = Path(os.getenv("DATA_DIR", ".")) / "bj_emoji_map.json"
+BJ_EMOJI_DONE_FILE = Path(os.getenv("DATA_DIR", ".")) / "bj_emoji_registration_done.json"
 bj_emoji_map = load_json(BJ_EMOJI_MAP_FILE, {})
+bj_emoji_registration_done = load_json(BJ_EMOJI_DONE_FILE, False)
 
 
 def get_bj_emoji(file_number):
@@ -5374,6 +5379,10 @@ async def register_bj_emojis(interaction: discord.Interaction):
         save_json(BJ_EMOJI_MAP_FILE, new_map)
         bj_emoji_map.clear()
         bj_emoji_map.update(new_map)
+
+        # 完了フラグを永続保存。Bot再起動後に登録コマンドが復活するのを防ぐ
+        save_json(BJ_EMOJI_DONE_FILE, True)
+        bj_emoji_registration_done = True
 
         for guild_id in BJ_EMOJI_GUILD_SPLITS:
             guild_obj = discord.Object(id=guild_id)
@@ -5997,8 +6006,7 @@ class BlackjackView(discord.ui.View):
                 )
 
     # ======================================
-    # スタンド
-    # ======================================
+    # スタンド    # ======================================
 
     @discord.ui.button(
         label="STAND",
@@ -6998,7 +7006,6 @@ async def roulette_command(ctx, bet_text: str = None, target: str = None):
     if not valid_target:
         await ctx.reply("賭ける対象が正しくないよ。（数字: 0-36, 色: red/black, 奇偶: odd/even など）", mention_author=False)
         return
-
     # 🎡 自分が賭けた位置にチップが置かれたボード画像を生成
     board_image_path = generate_roulette_table_image(target_clean)
     files = []

@@ -2383,6 +2383,7 @@ class MineGameView(discord.ui.LayoutView):
         self.multiplier = 1.0
         self.inline_cashout_button = None
         self.cell_buttons = {}
+        self.cell_select = None
 
         for index in range(self.total_cells):
             button = ui.Button(
@@ -2595,6 +2596,7 @@ class MineGameView(discord.ui.LayoutView):
             return
 
         payout = int(self.bet * self.multiplier)
+        self.rebuild_container()
         await interaction.response.edit_message(view=self)
 
     async def cashout(self, interaction):

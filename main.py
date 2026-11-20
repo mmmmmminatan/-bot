@@ -7629,6 +7629,7 @@ class HighLowView(discord.ui.LayoutView):
     self.card_mode = game_settings.get("hl_card_mode", "photo")
     self.deck = deck
     self.current = current
+    self.last_comparison = None
     self.bet = bet
     self.current_prize = bet
     self.streak = 0
@@ -7657,10 +7658,17 @@ class HighLowView(discord.ui.LayoutView):
     return True
 
   def card_emoji_text(self, show_back=True):
+    # 負けた場合は、直前のカードと引いたカードを比較表示する。
+    if self.finished and self.end_status == "Lose" and self.last_comparison:
+      previous_card, revealed_card = self.last_comparison
+      previous_emoji = get_card_emoji(previous_card["suit"], previous_card["val"]) or hl_card_label(previous_card)
+      revealed_emoji = get_card_emoji(revealed_card["suit"], revealed_card["val"]) or hl_card_label(revealed_card)
+      arrow_emoji = "<:emoji_6:1573327039774195863>"
+      return f"{previous_emoji}　{arrow_emoji}　{revealed_emoji}"
+
     current_emoji = get_card_emoji(self.current["suit"], self.current["val"])
     if not current_emoji:
       current_emoji = hl_card_label(self.current)
-    # カード2枚の間に指定された中央矢印絵文字を配置する。
     if show_back:
       back_emoji = get_card_emoji("back", 0) or "🂠"
       arrow_emoji = "<:emoji_6:1573327039774195863>"
@@ -7854,6 +7862,7 @@ class HighLowView(discord.ui.LayoutView):
         return
 
       next_card = self.deck.pop()
+      self.last_comparison = (self.current.copy(), next_card.copy())
       old_rank = self.current["val"]
       next_rank = next_card["val"]
 

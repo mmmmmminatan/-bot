@@ -2526,6 +2526,11 @@ class MineGameView(discord.ui.View):
                 inline=True,
             )
             embed.add_field(name="🎲 出目内訳", value=safe_symbols, inline=False)
+            embed.add_field(
+                name="🏦 終了後残高",
+                value=f"**{money(get_balance(self.player_id))}**",
+                inline=False,
+            )
 
         embed.set_footer(text="MINES • このメッセージの盤面ボタンで操作")
         return embed
@@ -2679,19 +2684,7 @@ class MineGameView(discord.ui.View):
         self.reveal_board(exploded_index=exploded_index)
         if self.inline_cashout_button:
             self.inline_cashout_button.disabled = True
-        if result == "win":
-            result_text += f"\n払い戻し：**{money(payout)}**\n利益：**{money_change(profit)}**"
-        elif result == "timeout":
-            result_text += f"\n返金：**{money(payout)}**"
-        else:
-            result_text += f"\n損失：**{money_change(profit)}**"
-
         embed = self.make_embed(result, result_text)
-        embed.description += (
-            f"\n💰 **払戻し：{money(payout)}**"
-            f"　📊 **収支：{money_change(profit)}**"
-            f"\n🏦 **終了後残高：{money(new_balance)}**"
-        )
         try:
             if self.message:
                 await self.message.edit(embed=embed, view=self)

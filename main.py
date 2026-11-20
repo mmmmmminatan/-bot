@@ -2363,24 +2363,6 @@ async def send_mine_log(guild, embed):
         traceback.print_exc()
 
 
-class MineCashoutView(discord.ui.View):
-    def __init__(self, game):
-        super().__init__(timeout=None)
-        self.game = game
-        button = discord.ui.Button(
-            label="💰 精算",
-            style=discord.ButtonStyle.success,
-            disabled=True,
-            custom_id=f"minecashout:{game.player_id}",
-        )
-        button.callback = self.cashout_callback
-        self.add_item(button)
-        self.button = button
-
-    async def cashout_callback(self, interaction):
-        await self.game.cashout(interaction)
-
-
 class MineGameView(discord.ui.View):
     def __init__(self, ctx, bet, size, bomb_count):
         super().__init__(timeout=300)

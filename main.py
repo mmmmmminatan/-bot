@@ -4401,6 +4401,8 @@ class SimpleGameSettingView(discord.ui.View):
         super().__init__(timeout=180)
         self.game_key = game_key
         self.game_name = game_name
+        if game_key not in ("hl", "bj"):
+            self.remove_item(self.card_mode_button)
 
     @discord.ui.button(label="最低・最高賭け金を変更", emoji="🪙", style=discord.ButtonStyle.primary)
     async def bet_button(self, interaction, button):

@@ -8246,8 +8246,19 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
             )
             return
 
+    settings = get_server_settings(ctx.guild.id if ctx.guild else None)
+    hl_limit = settings.get("bet_limits", {}).get("hl", {"min": 0, "max": "inf"})
+    min_bet = int(hl_limit.get("min", 0))
+    max_bet = hl_limit.get("max", "inf")
+
     if bet_amount <= 0:
         await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
+        return
+    if bet_amount < min_bet:
+        await ctx.send(f"ハイ＆ローの最低賭け金は **{money(min_bet)}** だよ。")
+        return
+    if max_bet != "inf" and bet_amount > int(max_bet):
+        await ctx.send(f"ハイ＆ローの最高賭け金は **{money(max_bet)}** までだよ。")
         return
 
     if balance < bet_amount:

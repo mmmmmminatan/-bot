@@ -8528,9 +8528,6 @@ async def server_owner_slash_check(interaction: discord.Interaction):
 # CommandTreeの共通チェックとして登録
 bot.tree.interaction_check = server_owner_slash_check
 
-import asyncio
-import discord
-from discord.ext import commands
 
 intents = discord.Intents.default()
 intents.guilds = True

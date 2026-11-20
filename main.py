@@ -997,7 +997,8 @@ async def on_message(message):
         f"user={message.author} "
         f"content={message.content[:150]}"
     )
-    # Botのメッセージはここで終了（上の大量メンション検知だけ実施）    if message.author.bot:
+    # Botのメッセージはここで終了（上の大量メンション検知だけ実施）
+    if message.author.bot:
         return
 
     # サーバーごとの「あう」検知設定

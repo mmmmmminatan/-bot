@@ -2398,9 +2398,7 @@ class MineGameView(discord.ui.View):
         self.multiplier_adjustment = 0.0
         self.finished = False
         self.message = None
-        self.cashout_message = None
         self.multiplier = 1.0
-        self.cashout_view = None
         self.inline_cashout_button = None
         self.cell_buttons = {}
         self.cell_select = None
@@ -2455,43 +2453,81 @@ class MineGameView(discord.ui.View):
         return max(0.01, round(self.base_multiplier(opened) + self.multiplier_adjustment, 2))
 
     def make_embed(self, status="playing", result_text=None):
-        if status == "playing":
-            color = discord.Color.blurple()
-            title = "💣 MINES"
-            description = "マスを選んでね！爆弾を引くと賭け金を失うよ。"
-        elif status == "win":
-            color = discord.Color.green()
-            title = "🎉 MINES — CLEAR!"
-            description = result_text or "ゲームクリア！"
-        elif status == "lose":
-            color = discord.Color.red()
-            title = "💥 MINES — BOOM!"
-            description = result_text or "爆弾を引いてしまったよ。"
-        else:
-            color = discord.Color.orange()
-            title = "⏰ MINES — TIME UP"
-            description = result_text or "時間切れでゲーム終了。賭け金は返金したよ。"
-
-        embed = discord.Embed(title=title, description=description, color=color)
-        embed.description = (
-            f"💣 {self.ctx.author.mention} started a mines game.\n\n"
-            f"**Bet:** `{self.bet:,}`　 **Mines:** `{self.bomb_count}`\n"
-            f"**Cash Out:** `{int(self.bet * self.multiplier) if self.opened_safe else 0}` `({self.multiplier if self.opened_safe else 0:.3f}x)`\n"
-            f"**Next:** `{int(self.bet * self.next_multiplier())}` `({self.next_multiplier():.3f}x)`"
-            if status == "playing" else description
+        embed = discord.Embed(
+            title="💣 MINES" if status == "playing" else (
+                "🎉 MINES — CLEAR!" if status == "win" else
+                "💥 MINES — BOOM!" if status == "lose" else
+                "⏰ MINES — TIME UP"
+            ),
+            color=(
+                discord.Color.blurple() if status == "playing" else
+                discord.Color.green() if status == "win" else
+                discord.Color.red() if status == "lose" else
+                discord.Color.orange()
+            ),
         )
-        # 終了画面はスマホでも縦に長くならないよう、情報を短い行にまとめる。
-        if status != "playing":
+
+        opened_count = len(self.opened_safe)
+        safe_symbols = (
+            f"💵 **{sum(1 for v in self.cell_symbols.values() if v == '💵')}**　"
+            f"💍 **{sum(1 for v in self.cell_symbols.values() if v == '💍')}**　"
+            f"💎 **{sum(1 for v in self.cell_symbols.values() if v == '💎')}**"
+        )
+
+        if status == "playing":
+            current_payout = int(self.bet * self.multiplier) if opened_count else 0
+            next_multiplier = self.next_multiplier()
             embed.description = (
-                f"{description}\n\n"
-                f"👤 {self.ctx.author.mention}　💵 **{money(self.bet)}**\n"
-                f"🧩 **{self.size}×{self.size}**　💣 **{self.bomb_count}個**　"
-                f"💎 **{len(self.opened_safe)}/{self.safe_total}**\n"
-                f"📈 **{self.multiplier:.2f}倍**　"
-                f"💵 **{sum(1 for v in self.cell_symbols.values() if v == '💵')}** "
-                f"💍 **{sum(1 for v in self.cell_symbols.values() if v == '💍')}** "
-                f"💎 **{sum(1 for v in self.cell_symbols.values() if v == '💎')}**"
+                f"{self.ctx.author.mention} マスを選んでね！\n"
+                "爆弾を引く前に「💵 精算」でいつでも終了できるよ。"
             )
+            embed.add_field(name="💵 賭け金", value=f"**{money(self.bet)}**", inline=True)
+            embed.add_field(name="🧩 盤面", value=f"**{self.size}×{self.size}**", inline=True)
+            embed.add_field(name="💣 爆弾", value=f"**{self.bomb_count}個**", inline=True)
+            embed.add_field(
+                name="📈 現在の倍率",
+                value=f"**{self.multiplier:.2f}倍**",
+                inline=True,
+            )
+            embed.add_field(
+                name="💰 現在の精算額",
+                value=f"**{money(current_payout)}**",
+                inline=True,
+            )
+            embed.add_field(
+                name="➡️ 次のマスを開いた場合",
+                value=f"**{next_multiplier:.2f}倍**　/　**{money(int(self.bet * next_multiplier))}**",
+                inline=False,
+            )
+            embed.add_field(
+                name="🎲 出目",
+                value=f"{safe_symbols}\n開いた安全マス：**{opened_count}/{self.safe_total}**",
+                inline=False,
+            )
+        else:
+            payout = int(self.bet * self.multiplier) if status == "win" else (self.bet if status == "timeout" else 0)
+            profit = payout - self.bet
+            embed.description = (
+                f"{result_text or 'ゲーム終了！'}\n\n"
+                f"👤 {self.ctx.author.mention}\n"
+                f"💵 賭け金：**{money(self.bet)}**　"
+                f"💰 払戻し：**{money(payout)}**\n"
+                f"📊 収支：**{money_change(profit)}**　"
+                f"📈 最終倍率：**{self.multiplier:.2f}倍**"
+            )
+            embed.add_field(
+                name="🧩 盤面・爆弾",
+                value=f"**{self.size}×{self.size}**　/　💣 **{self.bomb_count}個**",
+                inline=True,
+            )
+            embed.add_field(
+                name="💎 安全マス",
+                value=f"**{opened_count}/{self.safe_total}**",
+                inline=True,
+            )
+            embed.add_field(name="🎲 出目内訳", value=safe_symbols, inline=False)
+
+        embed.set_footer(text="MINES • このメッセージの盤面ボタンで操作")
         return embed
 
     def reveal_board(self, exploded_index=None):
@@ -2583,14 +2619,6 @@ class MineGameView(discord.ui.View):
 
         if self.inline_cashout_button:
             self.inline_cashout_button.disabled = False
-        if self.cashout_view:
-            self.cashout_view.button.disabled = False
-            if self.cashout_message:
-                try:
-                    await self.cashout_message.edit(view=self.cashout_view)
-                except discord.HTTPException:
-                    pass
-
         if len(self.opened_safe) >= self.safe_total:
             await interaction.response.defer()
             await self.finish_game("win", "🏆 すべての安全マスを開いたよ！")
@@ -2651,13 +2679,6 @@ class MineGameView(discord.ui.View):
         self.reveal_board(exploded_index=exploded_index)
         if self.inline_cashout_button:
             self.inline_cashout_button.disabled = True
-        if self.cashout_view:
-            self.cashout_view.button.disabled = True
-            if self.cashout_message:
-                try:
-                    await self.cashout_message.edit(view=self.cashout_view)
-                except discord.HTTPException:
-                    pass
         if result == "win":
             result_text += f"\n払い戻し：**{money(payout)}**\n利益：**{money_change(profit)}**"
         elif result == "timeout":
@@ -2751,7 +2772,6 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     active_mine_users.add(ctx.author.id)
     view = MineGameView(ctx, bet, size, bomb_count)
     embed = view.make_embed()
-    embed.add_field(name="現在の精算額", value=money(bet), inline=False)
     try:
         message = await ctx.reply(embed=embed, view=view, mention_author=False)
         view.message = message

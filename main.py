@@ -7698,10 +7698,9 @@ class HighLowView(discord.ui.LayoutView):
     low_odds = calculate_odds(self.deck, self.current, False)
 
     if self.finished:
-      result_line = f"### {self.end_status}"
+      title_text = f"### {self.end_status}"
       won_value = f"+{self.final_profit:,}$" if self.final_profit > 0 else "0$"
       desc_text = (
-          f"{result_line}\n\n"
           f"**Bet** : **{self.bet:,}$**\n"
           f"**Won** : **{won_value}**"
       )
@@ -7713,8 +7712,8 @@ class HighLowView(discord.ui.LayoutView):
             f"SAME : **10x**"
         )
     else:
+      title_text = "### HIGH&LOW"
       desc_text = (
-          f"### HIGH&LOW\n\n"
           f"**Combo** : **{self.streak}**\n"
           f"**Bet** : **{self.bet:,}$**\n"
           f"**Won** : **{int(self.current_prize):,}$**\n\n"
@@ -7742,8 +7741,9 @@ class HighLowView(discord.ui.LayoutView):
     )
 
     container = ui.Container(
-        ui.TextDisplay(desc_text),
+        ui.TextDisplay(title_text),
         card_component,
+        ui.TextDisplay(desc_text),
         ui.TextDisplay(f"-# {len(self.deck)} cards"),
         ui.ActionRow(
             HighLowButton(

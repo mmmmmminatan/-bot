@@ -278,6 +278,8 @@ DEFAULT_SERVER_SETTINGS = {
     "th_green_max_multiplier": 15,
     "th_diamond_payouts": {"small": 5, "medium": 15, "big": 75},
     "th_chest_payout": 150,
+    "hl_card_mode": "photo",
+    "bj_card_mode": "emoji",
 }
 # ==================================================
 # 数字カスタム絵文字（0〜9）
@@ -727,6 +729,10 @@ def get_server_settings(guild_id):
 
     if current.get("emoji_mode") not in ("unicode", "custom"):
         current["emoji_mode"] = "unicode"
+
+    for key, default_mode in (("hl_card_mode", "photo"), ("bj_card_mode", "emoji")):
+        if current.get(key) not in ("emoji", "photo"):
+            current[key] = default_mode
 
     save_json(SETTINGS_FILE, server_settings)
     return current
@@ -3871,15 +3877,18 @@ async def slot_help_command(ctx):
 
 # --- 賭け金設定 ---
 class GameBetSettingModal(discord.ui.Modal):
-    def __init__(self, game_key, game_name):
+    def __init__(self, game_key, game_name, current_limits=None):
         self.game_key = game_key
         self.game_name = game_name
+        current_limits = current_limits or {"min": 0, "max": "inf"}
+        current_min = str(current_limits.get("min", 0))
+        current_max = str(current_limits.get("max", "inf"))
         super().__init__(title=f"{game_name}の賭け金設定")
 
         self.min_bet_input = discord.ui.TextInput(
             label="最低賭け金（0以上の整数）",
             placeholder="例：0",
-            default="0",
+            default=current_min,
             required=True,
             min_length=1,
             max_length=15,
@@ -3887,7 +3896,7 @@ class GameBetSettingModal(discord.ui.Modal):
         self.max_bet_input = discord.ui.TextInput(
             label="最高賭け金（整数 または inf で無制限）",
             placeholder="例：10000 または inf",
-            default="inf",
+            default=current_max,
             required=True,
             min_length=1,
             max_length=15,
@@ -4397,7 +4406,37 @@ class SimpleGameSettingView(discord.ui.View):
     async def bet_button(self, interaction, button):
         if not await require_owner(interaction):
             return
-        await interaction.response.send_modal(GameBetSettingModal(self.game_key, self.game_name))
+        current_limits = None
+        if interaction.guild is not None:
+            settings = get_server_settings(interaction.guild.id)
+            current_limits = settings.get("bet_limits", {}).get(
+                self.game_key, {"min": 0, "max": "inf"}
+            )
+        await interaction.response.send_modal(
+            GameBetSettingModal(self.game_key, self.game_name, current_limits)
+        )
+
+    @discord.ui.button(label="カード表示：絵文字／写真を切り替え", emoji="🃏", style=discord.ButtonStyle.secondary)
+    async def card_mode_button(self, interaction, button):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+
+        settings = get_server_settings(interaction.guild.id)
+        mode_key = f"{self.game_key}_card_mode"
+        current_mode = settings.get(mode_key, "photo" if self.game_key == "hl" else "emoji")
+        new_mode = "photo" if current_mode == "emoji" else "emoji"
+        settings[mode_key] = new_mode
+        save_server_settings(interaction.guild.id)
+
+        mode_name = "写真（カード画像）" if new_mode == "photo" else "絵文字"
+        await interaction.response.send_message(
+            f"**{self.game_name}** のカード表示を **{mode_name}** に変更したよ！\n"
+            "次に開始するゲームから反映されるよ。",
+            ephemeral=True,
+        )
 
 
 class SettingActionSelect(discord.ui.Select):
@@ -5122,7 +5161,16 @@ async def setting_command(interaction: discord.Interaction):
 
     embed.add_field(name="🎰 スロット賭け金", value=format_limit("slot"), inline=True)
     embed.add_field(name="🌝 COLOR賭け金", value=format_limit("color"), inline=True)
-    embed.add_field(name="🃏 BJ賭け金", value=format_limit("bj"), inline=True)
+    embed.add_field(
+        name="🃏 HL",
+        value=f"{format_limit('hl')}\n表示：{'写真' if settings.get('hl_card_mode', 'photo') == 'photo' else '絵文字'}",
+        inline=True,
+    )
+    embed.add_field(
+        name="♠️ BJ",
+        value=f"{format_limit('bj')}\n表示：{'写真' if settings.get('bj_card_mode', 'emoji') == 'photo' else '絵文字'}",
+        inline=True,
+    )
     embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
     embed.add_field(name="💣 MINE", value=f"盤面：{', '.join(str(x) + '×' + str(x) for x in settings.get('mine_sizes', [3, 4]))}\n基本配当係数：{settings.get('mine_base_multiplier', 0.85)}", inline=True)
     embed.add_field(name="⛏️ TH", value=f"石：{settings.get('th_rock_chance', 50)}% / ダイヤ：{settings.get('th_diamond_chance', 70)}% / 宝箱：{settings.get('th_chest_chance', 25)}%", inline=True)
@@ -5928,6 +5976,8 @@ class BlackjackView(discord.ui.View):
         self.log_sent = False
 
         self.image_path = f"cards/bj_table_{id(self)}.png"
+        game_settings = get_server_settings(ctx.guild.id if ctx.guild else None)
+        self.card_mode = game_settings.get("bj_card_mode", "emoji")
 
     # --------------------------------------
     # 勝敗決済
@@ -6502,39 +6552,56 @@ class BlackjackView(discord.ui.View):
         d_score = calculate_hand(self.dealer_hand)
 
         # ----------------------------------
-        # ディーラーのカード（カスタム絵文字）
+        # ディーラー・プレイヤーのカード表示
         # ----------------------------------
 
         if game_over:
             dealer_text = f"HAND (TOTAL: {d_score})"
+            dealer_cards = list(self.dealer_hand)
+        else:
+            dealer_text = "HAND (2ND CARD HIDDEN)"
+            dealer_cards = [self.dealer_hand[0]]
+
+        if self.card_mode == "photo":
+            dealer_paths = [
+                get_card_image_path(card["suit"], card["val"])
+                for card in dealer_cards
+            ]
+            if not game_over:
+                dealer_paths.append(get_card_image_path("back", 0))
+            player_paths = [
+                get_card_image_path(card["suit"], card["val"])
+                for card in self.player_hand
+            ]
+            table_path = create_bj_table_image(
+                dealer_paths,
+                player_paths,
+                self.image_path,
+            )
+            if table_path:
+                files = [discord.File(table_path, filename="bj_cards.png")]
+                embed.set_image(url="attachment://bj_cards.png")
+            else:
+                files = []
+            d_cards_str = "写真を確認してね。"
+            p_cards_str = "写真を確認してね。"
+        else:
             dealer_emojis = [
                 get_card_emoji(card["suit"], card["val"])
                 or f"{card['suit'].upper()} {card['val']}"
-                for card in self.dealer_hand
+                for card in dealer_cards
             ]
+            if not game_over:
+                dealer_emojis.append(get_card_emoji("back", 0) or "HIDDEN")
             d_cards_str = " ".join(dealer_emojis)
-        else:
-            dealer_text = "HAND (2ND CARD HIDDEN)"
-            first_card = self.dealer_hand[0]
-            first_emoji = (
-                get_card_emoji(first_card["suit"], first_card["val"])
-                or f"{first_card['suit'].upper()} {first_card['val']}"
-            )
-            back_emoji = get_card_emoji("back", 0) or "HIDDEN"
-            d_cards_str = f"{first_emoji} {back_emoji}"
 
-        # ----------------------------------
-        # プレイヤーのカード（カスタム絵文字）
-        # ----------------------------------
-
-        player_emojis = [
-            get_card_emoji(card["suit"], card["val"])
-            or f"{card['suit'].upper()} {card['val']}"
-            for card in self.player_hand
-        ]
-        p_cards_str = " ".join(player_emojis)
-
-        files = []
+            player_emojis = [
+                get_card_emoji(card["suit"], card["val"])
+                or f"{card['suit'].upper()} {card['val']}"
+                for card in self.player_hand
+            ]
+            p_cards_str = " ".join(player_emojis)
+            files = []
 
         # ----------------------------------
         # 手札表示
@@ -7489,6 +7556,8 @@ class HighLowView(discord.ui.LayoutView):
     super().__init__(timeout=180)
     self.owner_id = owner_id
     self.guild = guild
+    game_settings = get_server_settings(guild.id if guild else None)
+    self.card_mode = game_settings.get("hl_card_mode", "photo")
     self.deck = deck
     self.current = current
     self.bet = bet
@@ -7518,7 +7587,18 @@ class HighLowView(discord.ui.LayoutView):
       return False
     return True
 
+  def card_emoji_text(self, show_back=True):
+    current_emoji = get_card_emoji(self.current["suit"], self.current["val"])
+    if not current_emoji:
+      current_emoji = hl_card_label(self.current)
+    cards = [current_emoji]
+    if show_back:
+      cards.append(get_card_emoji("back", 0) or "🂠")
+    return "　".join(cards)
+
   def render_cards(self, show_back=True):
+    if self.card_mode == "emoji":
+      return True
     paths = [hl_card_image_path(self.current)]
     if show_back:
       paths.append(get_card_image_path("back", 0))
@@ -7581,13 +7661,19 @@ class HighLowView(discord.ui.LayoutView):
       elif self.end_status == "Cash out":
         accent_color = discord.Color.green()
 
-    container = ui.Container(
-        ui.TextDisplay(desc_text),
+    card_component = (
         ui.MediaGallery(
             discord.MediaGalleryItem(
                 media=f"attachment://{os.path.basename(self.image_path)}"
             )
-        ),
+        )
+        if self.card_mode == "photo"
+        else ui.TextDisplay(f"**CARDS**\n{self.card_emoji_text(show_back=show_back)}")
+    )
+
+    container = ui.Container(
+        ui.TextDisplay(desc_text),
+        card_component,
         ui.TextDisplay(f"-# {len(self.deck)} cards"),
         ui.ActionRow(
             HighLowButton(
@@ -7618,13 +7704,17 @@ class HighLowView(discord.ui.LayoutView):
       self, interaction, description, show_back=True, disable=False
   ):
     self.rebuild_container(show_back=show_back)
-    file = discord.File(
-        self.image_path, filename=os.path.basename(self.image_path)
-    )
+    if self.card_mode == "photo":
+      file = discord.File(
+          self.image_path, filename=os.path.basename(self.image_path)
+      )
+      attachments = [file]
+    else:
+      attachments = []
 
     await interaction.response.edit_message(
         view=self,
-        attachments=[file],
+        attachments=attachments,
     )
 
   async def finish(self, interaction, message, won=False):
@@ -8299,13 +8389,15 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
     # HighLowView は LayoutView（Components V2）なので、通常の Embed は渡さず
     # View 内の Container とカード画像ファイルをそのまま送信する。
     try:
-        if not os.path.exists(view.image_path):
-            raise FileNotFoundError(f"HIGH&LOW card image not found: {view.image_path}")
-
-        await ctx.send(
-            file=discord.File(view.image_path, filename=os.path.basename(view.image_path)),
-            view=view,
-        )
+        if view.card_mode == "photo":
+            if not os.path.exists(view.image_path):
+                raise FileNotFoundError(f"HIGH&LOW card image not found: {view.image_path}")
+            await ctx.send(
+                file=discord.File(view.image_path, filename=os.path.basename(view.image_path)),
+                view=view,
+            )
+        else:
+            await ctx.send(view=view)
     except Exception:
         # 開始画面の送信に失敗した場合は、先に徴収したベットを返金する。
         update_user_balance(ctx.author.id, bet_amount)

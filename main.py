@@ -7665,10 +7665,12 @@ class HighLowView(discord.ui.LayoutView):
     current_emoji = get_card_emoji(self.current["suit"], self.current["val"])
     if not current_emoji:
       current_emoji = hl_card_label(self.current)
-    cards = [current_emoji]
+    # カード2枚の間に指定された中央矢印絵文字を配置する。
     if show_back:
-      cards.append(get_card_emoji("back", 0) or "🂠")
-    return "　".join(cards)
+      back_emoji = get_card_emoji("back", 0) or "🂠"
+      arrow_emoji = "<:emoji_6:1573327039774195863>"
+      return f"{current_emoji}　{arrow_emoji}　{back_emoji}"
+    return current_emoji
 
   def render_cards(self, show_back=True):
     if self.card_mode == "emoji":
@@ -7736,7 +7738,7 @@ class HighLowView(discord.ui.LayoutView):
             )
         )
         if self.card_mode == "photo"
-        else ui.TextDisplay(f"**CARDS**\n{self.card_emoji_text(show_back=show_back)}")
+        else ui.TextDisplay(f"# {self.card_emoji_text(show_back=show_back)}")
     )
 
     container = ui.Container(

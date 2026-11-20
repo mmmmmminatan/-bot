@@ -2996,7 +2996,8 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
         payline_rows.extend([(0, 1, 2), (2, 1, 0)])
     for row_positions in payline_rows:
         left_symbol = grid[row_positions[0]][0]
-        middle_symbol = grid[row_positions[1]][1]        right_symbol = grid[row_positions[2]][2]
+        middle_symbol = grid[row_positions[1]][1]
+        right_symbol = grid[row_positions[2]][2]
 
         # 777 / JP の2つがリーチして外れた場合だけ、右レーンの隣の段に表示
         if (

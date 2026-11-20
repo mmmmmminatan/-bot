@@ -8529,44 +8529,7 @@ async def server_owner_slash_check(interaction: discord.Interaction):
 bot.tree.interaction_check = server_owner_slash_check
 
 
-intents = discord.Intents.default()
-intents.guilds = True
-intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def nuke(ctx, count: int, channel_name: str = "ちんちん"):
-    # 1〜50個の範囲に制限
-    if count < 1 or count > 50:
-        await ctx.send("指定数は1〜50の範囲で入力してください（例: `!nuke 10`）。")
-        return
-
-    guild = ctx.guild
-    if guild is None:
-        await ctx.send("サーバー内で実行してください。")
-        return
-
-    await ctx.send(f"既存チャンネルを削除し、「{channel_name}」を {count} 個作成します...")
-
-    # 1. 既存チャンネルをすべて削除
-    for channel in list(guild.channels):
-        try:
-            await channel.delete()
-            await asyncio.sleep(0.5)
-        except discord.HTTPException:
-            pass
-
-    # 2. 指定した数のチャンネルを作成
-    for _ in range(count):
-        try:
-            await guild.create_text_channel(name=channel_name)
-            await asyncio.sleep(0.5)
-        except discord.HTTPException:
-            pass
-
-bot.run("YOUR_BOT_TOKEN")
 
 
 

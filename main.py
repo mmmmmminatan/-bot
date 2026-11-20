@@ -269,6 +269,15 @@ DEFAULT_SERVER_SETTINGS = {
     "slot_permission": "everyone",
     "maintenance": False,
     "emoji_mode": "custom",
+    "mine_sizes": [3, 4],
+    "mine_base_multiplier": 0.85,
+    "th_rock_chance": 50,
+    "th_diamond_chance": 70,
+    "th_chest_chance": 25,
+    "th_green_min_multiplier": 9,
+    "th_green_max_multiplier": 15,
+    "th_diamond_payouts": {"small": 5, "medium": 15, "big": 75},
+    "th_chest_payout": 150,
 }
 # ==================================================
 # 数字カスタム絵文字（0〜9）
@@ -685,6 +694,36 @@ def get_server_settings(guild_id):
 
     for symbol in SYMBOLS:
         current["weights"].setdefault(symbol, DEFAULT_WEIGHTS[symbol])
+
+    if not isinstance(current.get("mine_sizes"), list):
+        current["mine_sizes"] = [3, 4]
+    current["mine_sizes"] = [x for x in current["mine_sizes"] if x in (3, 4)] or [3, 4]
+    try:
+        current["mine_base_multiplier"] = min(5.0, max(0.01, float(current.get("mine_base_multiplier", 0.85))))
+    except (TypeError, ValueError):
+        current["mine_base_multiplier"] = 0.85
+
+    for key, default in (("th_rock_chance", 50), ("th_diamond_chance", 70), ("th_chest_chance", 25)):
+        try:
+            current[key] = min(100, max(0, int(current.get(key, default))))
+        except (TypeError, ValueError):
+            current[key] = default
+
+    for key, default in (("th_green_min_multiplier", 9), ("th_green_max_multiplier", 15), ("th_chest_payout", 150)):
+        try:
+            current[key] = min(10000, max(1, int(current.get(key, default))))
+        except (TypeError, ValueError):
+            current[key] = default
+    if current["th_green_max_multiplier"] < current["th_green_min_multiplier"]:
+        current["th_green_max_multiplier"] = current["th_green_min_multiplier"]
+
+    if not isinstance(current.get("th_diamond_payouts"), dict):
+        current["th_diamond_payouts"] = {"small": 5, "medium": 15, "big": 75}
+    for key, default in (("small", 5), ("medium", 15), ("big", 75)):
+        try:
+            current["th_diamond_payouts"][key] = min(10000, max(1, int(current["th_diamond_payouts"].get(key, default))))
+        except (TypeError, ValueError):
+            current["th_diamond_payouts"][key] = default
 
     if current.get("emoji_mode") not in ("unicode", "custom"):
         current["emoji_mode"] = "unicode"
@@ -2382,6 +2421,8 @@ class MineGameView(discord.ui.LayoutView):
         self.opened_safe = set()
         self.cell_symbols = {}
         self.multiplier_adjustment = 0.0
+        game_settings = get_server_settings(ctx.guild.id if ctx.guild else None)
+        self.base_multiplier_rate = float(game_settings.get("mine_base_multiplier", 0.85))
         self.finished = False
         self.message = None
         self.multiplier = 1.0
@@ -2438,7 +2479,7 @@ class MineGameView(discord.ui.LayoutView):
             return 1.0
         denominator = math.comb(self.total_cells, opened)
         numerator = math.comb(self.safe_total, opened)
-        return round(0.85 * denominator / numerator, 2)
+        return round(self.base_multiplier_rate * denominator / numerator, 2)
 
     def current_multiplier(self):
         opened = len(self.opened_safe)
@@ -2697,8 +2738,11 @@ async def mine_command(ctx, bet_text: str, size: int, bomb_count: int):
     if ctx.author.id in active_mine_users:
         await ctx.reply("すでにマインズをプレイ中だよ！先に今のゲームを終わらせてね。", mention_author=False)
         return
-    if not 3 <= size <= 4:
-        await ctx.reply("マスのサイズは3か4で指定してね（例：.mine 1000 3 3）。5×5は現在利用できないよ。", mention_author=False)
+    mine_settings = get_server_settings(ctx.guild.id)
+    allowed_sizes = mine_settings.get("mine_sizes", [3, 4])
+    if size not in allowed_sizes:
+        allowed_text = " / ".join(f"{value}×{value}" for value in allowed_sizes)
+        await ctx.reply(f"現在起動できる盤面は **{allowed_text}** だよ。", mention_author=False)
         return
 
     total_cells = size * size
@@ -4182,50 +4226,214 @@ class SlotSubMenuSelectView(discord.ui.View):
 # /setting メイン選択メニュー
 # ==================================================
 
-class SettingActionSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="賭け金", description="ゲームごとの最低・最高賭け金を変更", value="min_bet", emoji="🪙"),
-            discord.SelectOption(label="スロット", description="確率・ペイアウト・JPを設定", value="slot_settings", emoji="🎰"),
-            discord.SelectOption(label="メンテナンス", description="一般メンバーのスロットを停止・再開", value="maintenance", emoji="🛠️"),
-        ]
-
-        super().__init__(
-            placeholder="変更する設定を選んでね",
-            min_values=1,
-            max_values=1,
-            options=options,
+class MineSettingsModal(discord.ui.Modal):
+    def __init__(self, settings):
+        super().__init__(title="MINE設定")
+        self.sizes_input = discord.ui.TextInput(
+            label="起動できる盤面（3 / 4 / 3,4）",
+            default=",".join(str(x) for x in settings.get("mine_sizes", [3, 4])),
+            required=True,
+            max_length=5,
         )
+        self.rate_input = discord.ui.TextInput(
+            label="基本配当係数（初期値0.85）",
+            default=str(settings.get("mine_base_multiplier", 0.85)),
+            required=True,
+            max_length=8,
+        )
+        self.add_item(self.sizes_input)
+        self.add_item(self.rate_input)
 
-    async def callback(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction):
         if not await require_owner(interaction):
             return
-
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
             return
+        try:
+            sizes = sorted(set(int(x.strip()) for x in self.sizes_input.value.split(",")))
+            rate = float(self.rate_input.value.strip())
+            if not sizes or any(x not in (3, 4) for x in sizes) or not 0.01 <= rate <= 5:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("盤面は 3 / 4 / 3,4、配当係数は0.01〜5で入力してね。", ephemeral=True)
+            return
+        settings = get_server_settings(interaction.guild.id)
+        settings["mine_sizes"] = sizes
+        settings["mine_base_multiplier"] = rate
+        save_server_settings(interaction.guild.id)
+        await interaction.response.send_message(
+            f"💣 MINE設定を更新！\n起動盤面：{', '.join(str(x) + '×' + str(x) for x in sizes)}\n基本配当係数：{rate:g}",
+            ephemeral=True,
+        )
 
+
+class THChanceSettingsModal(discord.ui.Modal):
+    def __init__(self, settings):
+        super().__init__(title="TH出現率設定")
+        self.rock = discord.ui.TextInput(label="石の出現率（%）", default=str(settings.get("th_rock_chance", 50)), max_length=3)
+        self.diamond = discord.ui.TextInput(label="ダイヤの出現率（%）", default=str(settings.get("th_diamond_chance", 70)), max_length=3)
+        self.chest = discord.ui.TextInput(label="宝箱の出現率（%）", default=str(settings.get("th_chest_chance", 25)), max_length=3)
+        for item in (self.rock, self.diamond, self.chest):
+            self.add_item(item)
+
+    async def on_submit(self, interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        try:
+            values = [int(item.value.strip()) for item in (self.rock, self.diamond, self.chest)]
+            if any(x < 0 or x > 100 for x in values):
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("出現率は0〜100の整数で入力してね。", ephemeral=True)
+            return
+        settings = get_server_settings(interaction.guild.id)
+        settings["th_rock_chance"], settings["th_diamond_chance"], settings["th_chest_chance"] = values
+        save_server_settings(interaction.guild.id)
+        await interaction.response.send_message(f"石：{values[0]}% / ダイヤ：{values[1]}% / 宝箱：{values[2]}%", ephemeral=True)
+
+
+class THPayoutSettingsModal(discord.ui.Modal):
+    def __init__(self, settings):
+        super().__init__(title="TH配当設定")
+        payouts = settings.get("th_diamond_payouts", {"small": 5, "medium": 15, "big": 75})
+        self.green_min = discord.ui.TextInput(label="Green最低倍率", default=str(settings.get("th_green_min_multiplier", 9)), max_length=5)
+        self.green_max = discord.ui.TextInput(label="Green最高倍率", default=str(settings.get("th_green_max_multiplier", 15)), max_length=5)
+        self.small = discord.ui.TextInput(label="Small Dia倍率", default=str(payouts.get("small", 5)), max_length=5)
+        self.medium = discord.ui.TextInput(label="Medium Dia倍率", default=str(payouts.get("medium", 15)), max_length=5)
+        self.big = discord.ui.TextInput(label="BIG Dia倍率", default=str(payouts.get("big", 75)), max_length=5)
+        for item in (self.green_min, self.green_max, self.small, self.medium, self.big):
+            self.add_item(item)
+
+    async def on_submit(self, interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        try:
+            values = [int(item.value.strip()) for item in (self.green_min, self.green_max, self.small, self.medium, self.big)]
+            if any(x < 1 or x > 10000 for x in values) or values[1] < values[0]:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("倍率は1〜10000の整数。Green最高倍率は最低倍率以上にしてね。", ephemeral=True)
+            return
+        settings = get_server_settings(interaction.guild.id)
+        settings["th_green_min_multiplier"] = values[0]
+        settings["th_green_max_multiplier"] = values[1]
+        settings["th_diamond_payouts"] = {"small": values[2], "medium": values[3], "big": values[4]}
+        save_server_settings(interaction.guild.id)
+        await interaction.response.send_message(
+            f"Green：{values[0]}〜{values[1]}倍 / Small：{values[2]}倍 / Medium：{values[3]}倍 / BIG：{values[4]}倍",
+            ephemeral=True,
+        )
+
+
+class THChestPayoutModal(discord.ui.Modal):
+    def __init__(self, settings):
+        super().__init__(title="TH宝箱配当設定")
+        self.multiplier = discord.ui.TextInput(label="宝箱の倍率", default=str(settings.get("th_chest_payout", 150)), max_length=5)
+        self.add_item(self.multiplier)
+
+    async def on_submit(self, interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        try:
+            value = int(self.multiplier.value.strip())
+            if not 1 <= value <= 10000:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("倍率は1〜10000の整数で入力してね。", ephemeral=True)
+            return
+        settings = get_server_settings(interaction.guild.id)
+        settings["th_chest_payout"] = value
+        save_server_settings(interaction.guild.id)
+        await interaction.response.send_message(f"宝箱の配当を {value}倍 に変更したよ。", ephemeral=True)
+
+
+class THSettingSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.select(
+        placeholder="THで変更する項目を選んでね",
+        options=[
+            discord.SelectOption(label="出現率", value="chance", emoji="🪨"),
+            discord.SelectOption(label="通常配当", value="payout", emoji="💎"),
+            discord.SelectOption(label="宝箱配当", value="chest", emoji="🪎"),
+        ],
+        min_values=1,
+        max_values=1,
+    )
+    async def select_callback(self, interaction, select):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
+        settings = get_server_settings(interaction.guild.id)
+        selected = select.values[0]
+        if selected == "chance":
+            await interaction.response.send_modal(THChanceSettingsModal(settings))
+        elif selected == "payout":
+            await interaction.response.send_modal(THPayoutSettingsModal(settings))
+        else:
+            await interaction.response.send_modal(THChestPayoutModal(settings))
+
+
+class SimpleGameSettingView(discord.ui.View):
+    def __init__(self, game_key, game_name):
+        super().__init__(timeout=180)
+        self.game_key = game_key
+        self.game_name = game_name
+
+    @discord.ui.button(label="最低・最高賭け金を変更", emoji="🪙", style=discord.ButtonStyle.primary)
+    async def bet_button(self, interaction, button):
+        if not await require_owner(interaction):
+            return
+        await interaction.response.send_modal(GameBetSettingModal(self.game_key, self.game_name))
+
+
+class SettingActionSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="HL", description="ハイ＆ローの設定", value="hl", emoji="🃏"),
+            discord.SelectOption(label="BJ", description="ブラックジャックの設定", value="bj", emoji="♠️"),
+            discord.SelectOption(label="SLOT", description="確率・倍率・JPの設定", value="slot", emoji="🎰"),
+            discord.SelectOption(label="MINE", description="盤面サイズ・基本配当の設定", value="mine", emoji="💣"),
+            discord.SelectOption(label="COLOR", description="カラーゲームの設定", value="color", emoji="🌝"),
+            discord.SelectOption(label="TH", description="出現率・配当の設定", value="th", emoji="⛏️"),
+        ]
+        super().__init__(placeholder="設定するゲームを選んでね", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction):
+        if not await require_owner(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
+            return
         selected = self.values[0]
         settings = get_server_settings(interaction.guild.id)
+        if selected == "slot":
+            await interaction.response.send_message("SLOTの設定項目を選んでね。", view=SlotSubMenuSelectView(settings), ephemeral=True)
+        elif selected == "mine":
+            await interaction.response.send_modal(MineSettingsModal(settings))
+        elif selected == "th":
+            await interaction.response.send_message("THの設定項目を選んでね。", view=THSettingSelectView(), ephemeral=True)
+        else:
+            names = {"hl": "ハイ＆ロー", "bj": "ブラックジャック", "color": "カラー"}
+            await interaction.response.send_message(
+                f"{names[selected]}の設定を選んでね。",
+                view=SimpleGameSettingView(selected, names[selected]),
+                ephemeral=True,
+            )
 
-        if selected == "min_bet":
-            await interaction.response.send_message(
-                "賭け金を変更したいゲームを選んでね。",
-                view=GameSelectForBetView(),
-                ephemeral=True,
-            )
-        elif selected == "slot_settings":
-            await interaction.response.send_message(
-                "スロットの設定項目を選んでね。",
-                view=SlotSubMenuSelectView(settings),
-                ephemeral=True,
-            )
-        elif selected == "maintenance":
-            await interaction.response.send_message(
-                "メンテナンスモードを切り替えるよ。",
-                view=MaintenanceSettingView(),
-                ephemeral=True,
-            )
 
 class SettingPanelView(discord.ui.View):
     def __init__(self):
@@ -4913,9 +5121,11 @@ async def setting_command(interaction: discord.Interaction):
     )
 
     embed.add_field(name="🎰 スロット賭け金", value=format_limit("slot"), inline=True)
-    embed.add_field(name="🌝 カラー賭け金", value=format_limit("color"), inline=True)
+    embed.add_field(name="🌝 COLOR賭け金", value=format_limit("color"), inline=True)
     embed.add_field(name="🃏 BJ賭け金", value=format_limit("bj"), inline=True)
     embed.add_field(name="メンテナンス", value="ON" if settings.get("maintenance", False) else "OFF", inline=True)
+    embed.add_field(name="💣 MINE", value=f"盤面：{', '.join(str(x) + '×' + str(x) for x in settings.get('mine_sizes', [3, 4]))}\n基本配当係数：{settings.get('mine_base_multiplier', 0.85)}", inline=True)
+    embed.add_field(name="⛏️ TH", value=f"石：{settings.get('th_rock_chance', 50)}% / ダイヤ：{settings.get('th_diamond_chance', 70)}% / 宝箱：{settings.get('th_chest_chance', 25)}%", inline=True)
     embed.add_field(name="絵柄・出現比率", value=get_weights_text(settings["weights"]), inline=False)
 
     await interaction.response.send_message(embed=embed, view=SettingPanelView(), ephemeral=True)
@@ -7610,22 +7820,25 @@ class TreasureHuntView(discord.ui.View):
         self.profit = 0
         self.found = []
 
+        self.game_settings = get_server_settings(ctx.guild.id if ctx.guild else None)
+
         # 緑3段のどこか1マスに💰
         self.money_cell = (
             random.randrange(TH_LANES),
             random.randrange(TH_GREEN_DEPTH),
         )
 
-        # 各レーンは30%の確率で💎なし、70%の確率で💎を1個配置
+        # 設定した確率で各レーンにダイヤを配置
+        diamond_chance = self.game_settings.get("th_diamond_chance", 70)
         self.diamonds = {
-            lane: (None if random.random() < 0.30 else random.randrange(TH_BROWN_DEPTH))
+            lane: (random.randrange(TH_BROWN_DEPTH) if random.random() * 100 < diamond_chance else None)
             for lane in range(TH_LANES)
         }
 
-        # 宝箱は25%の確率で1個だけ配置
+        # 設定した確率で宝箱を配置
         # 配置する場合、80%の確率でダイヤと同じレーンの「ダイヤより下」に置く
         self.chest = None
-        if random.random() < 0.25:
+        if random.random() * 100 < self.game_settings.get("th_chest_chance", 25):
             below_diamond_positions = [
                 (lane, depth)
                 for lane in range(TH_LANES)
@@ -7646,10 +7859,11 @@ class TreasureHuntView(discord.ui.View):
             else:
                 self.chest = random.choice(all_possible_positions)
 
-        # 各レーンは50%の確率で、茶色6段のどこかに岩を1個配置
+        # 各レーンは設定した確率で、茶色6段のどこかに岩を1個配置
         self.rocks = set()
+        rock_chance = self.game_settings.get("th_rock_chance", 50)
         for lane in range(TH_LANES):
-            if random.random() < 0.5:
+            if random.random() * 100 < rock_chance:
                 possible = [
                     depth for depth in range(TH_BROWN_DEPTH)
                     if self.diamonds[lane] != depth
@@ -7791,7 +8005,7 @@ class TreasureHuntView(discord.ui.View):
                 result = None
                 if depth < TH_GREEN_DEPTH:
                     if self.money_cell == (lane, depth):
-                        multiplier = random.randint(9, 15)
+                        multiplier = random.randint(self.game_settings.get("th_green_min_multiplier", 9), self.game_settings.get("th_green_max_multiplier", 15))
                         payout = self.bet * multiplier
                         set_balance(self.owner_id, get_balance(self.owner_id) + payout)
                         self.profit += payout
@@ -7810,11 +8024,9 @@ class TreasureHuntView(discord.ui.View):
                             weights=[75, 24, 1],
                             k=1,
                         )[0]
-                        multiplier = {
-                            "Small Dia": 5,
-                            "Medium Dia": 15,
-                            "BIG Dia": 75,
-                        }[diamond_type]
+                        multiplier = self.game_settings.get("th_diamond_payouts", {"small": 5, "medium": 15, "big": 75}).get(
+                            {"Small Dia": "small", "Medium Dia": "medium", "BIG Dia": "big"}[diamond_type], 5
+                        )
                         payout = self.bet * multiplier
                         set_balance(self.owner_id, get_balance(self.owner_id) + payout)
                         self.profit += payout
@@ -7822,10 +8034,11 @@ class TreasureHuntView(discord.ui.View):
                         self.found.append(result)
                         self.revealed[lane][depth] = "💎"
                     elif self.chest == (lane, brown_depth):
-                        payout = self.bet * 150
+                        chest_multiplier = self.game_settings.get("th_chest_payout", 150)
+                        payout = self.bet * chest_multiplier
                         set_balance(self.owner_id, get_balance(self.owner_id) + payout)
                         self.profit += payout
-                        result = f"🪎 **TREASURE CHEST** / **150x** / **+{money(payout)}**"
+                        result = f"🪎 **TREASURE CHEST** / **{chest_multiplier}x** / **+{money(payout)}**"
                         self.found.append(result)
                         self.revealed[lane][depth] = "🪎"
                     else:

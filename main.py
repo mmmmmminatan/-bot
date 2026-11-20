@@ -6682,9 +6682,9 @@ class BlackjackView(discord.ui.View):
         # ----------------------------------
 
         embed.description = (
-            f"**DEALER {dealer_text}**\\n"
-            f"# {d_cards_str}\\n\\n"
-            f"**PLAYER HAND (TOTAL: {p_score})**\\n"
+            f"**DEALER {dealer_text}**\n"
+            f"# {d_cards_str}\n\n"
+            f"**PLAYER HAND (TOTAL: {p_score})**\n"
             f"# {p_cards_str}"
         )
 

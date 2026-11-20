@@ -7232,7 +7232,6 @@ class HighLowView(discord.ui.LayoutView):
     await interaction.response.edit_message(
         view=self,
         attachments=[file],
-        flags=discord.MessageFlags(is_components_v2=True),
     )
 
   async def finish(self, interaction, message, won=False):

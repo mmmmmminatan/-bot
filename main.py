@@ -7173,7 +7173,8 @@ class HighLowView(discord.ui.LayoutView):
         desc_text += (
             f"\n\n**Odds**\n"
             f"HIGH : **{high_odds}x**\n"
-            f"LOW : **{low_odds}x**"
+            f"LOW : **{low_odds}x**\n"
+            f"SAME : **10x**"
         )
     else:
       desc_text = (
@@ -7183,7 +7184,8 @@ class HighLowView(discord.ui.LayoutView):
           f"**Won** : **{int(self.current_prize):,}$**\n\n"
           f"**Odds**\n"
           f"HIGH : **{high_odds}x**\n"
-          f"LOW : **{low_odds}x**"
+          f"LOW : **{low_odds}x**\n"
+          f"SAME : **10x**"
       )
 
     accent_color = None

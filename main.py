@@ -140,6 +140,13 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンド同期: {len(synced)}個")
+        for bj_guild_id in (1573260159403294793, 1573260415474073660):
+            try:
+                guild_synced = await bot.tree.sync(guild=discord.Object(id=bj_guild_id))
+                print(f"[BJ EMOJI] guild {bj_guild_id}: {len(guild_synced)} commands synced")
+            except Exception:
+                print(f"[BJ EMOJI] guild sync failed: {bj_guild_id}")
+                traceback.print_exc()
         await restore_au_timeout_tasks()
 
     except Exception:
@@ -5160,6 +5167,7 @@ def run_web():
 # ==========================================
 
 from PIL import Image
+from io import BytesIO
 import os
 import random
 import asyncio
@@ -5227,6 +5235,171 @@ def get_card_image_path(suit, value):
         return f"cards/IMG_{file_num:04d}.png"
 
     return "cards/IMG_0678.png"
+
+
+# ==========================================
+# ブラックジャック用カスタム絵文字
+# ==========================================
+
+BJ_EMOJI_GUILD_SPLITS = {
+    1573260159403294793: range(625, 652),
+    1573260415474073660: range(652, 679),
+}
+BJ_EMOJI_MAP_FILE = Path(os.getenv("DATA_DIR", ".")) / "bj_emoji_map.json"
+bj_emoji_map = load_json(BJ_EMOJI_MAP_FILE, {})
+
+
+def get_bj_emoji(file_number):
+    data = bj_emoji_map.get(str(int(file_number)))
+    if not isinstance(data, dict):
+        return None
+    emoji_id = data.get("id")
+    emoji_name = data.get("name")
+    if not emoji_id or not emoji_name:
+        return None
+    return f"<:{emoji_name}:{emoji_id}>"
+
+
+def get_card_emoji(suit, value):
+    path = get_card_image_path(suit, value)
+    match = re.search(r"IMG_(\d+)\.png$", path)
+    if not match:
+        return None
+    return get_bj_emoji(int(match.group(1)))
+
+
+def prepare_bj_emoji_image(path):
+    """カード全体を切らずに黒背景の128x128絵文字画像へ収める。"""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"カード画像が見つかりません: {path}")
+
+    with Image.open(path) as source:
+        card = source.convert("RGBA")
+        resampling = getattr(Image, "Resampling", Image)
+        card.thumbnail((112, 112), resampling.LANCZOS)
+        canvas = Image.new("RGBA", (128, 128), (0, 0, 0, 255))
+        x = (128 - card.width) // 2
+        y = (128 - card.height) // 2
+        canvas.alpha_composite(card, (x, y))
+        buffer = BytesIO()
+        canvas.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue()
+
+
+@app_commands.guilds(
+    discord.Object(id=1573260159403294793),
+    discord.Object(id=1573260415474073660),
+)
+@bot.tree.command(
+    name="bj-emoji-register",
+    description="ブラックジャックのカード絵文字54個を2つのサーバーに登録する（一度だけ）",
+)
+async def register_bj_emojis(interaction: discord.Interaction):
+    if interaction.guild is None or interaction.guild.id not in BJ_EMOJI_GUILD_SPLITS:
+        await interaction.response.send_message(
+            "このコマンドは指定された2つのサーバーでのみ使えます。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    target_guilds = {}
+    try:
+        prepared = {}
+        for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
+            guild = bot.get_guild(guild_id)
+            if guild is None:
+                raise RuntimeError(f"Botがサーバー {guild_id} に参加していません。")
+
+            bot_member = guild.get_member(bot.user.id) if bot.user else None
+            if bot_member is None or not bot_member.guild_permissions.manage_emojis_and_stickers:
+                raise RuntimeError(
+                    f"サーバー {guild_id} でBotに「絵文字とスタンプの管理」権限がありません。"
+                )
+
+            wanted_names = {f"bj_{number}" for number in file_numbers}
+            existing = {
+                emoji.name: emoji
+                for emoji in guild.emojis
+                if emoji.name in wanted_names
+            }
+            missing = [
+                number for number in file_numbers
+                if f"bj_{number}" not in existing
+            ]
+            available = guild.emoji_limit - len(guild.emojis)
+            if len(missing) > available:
+                raise RuntimeError(
+                    f"サーバー {guild_id} の空き枠不足。必要: {len(missing)}個 / 空き: {available}個"
+                )
+
+            target_guilds[guild_id] = (guild, existing)
+            for number in file_numbers:
+                prepared[number] = prepare_bj_emoji_image(
+                    f"cards/IMG_{number:04d}.png"
+                )
+
+    except Exception as error:
+        await interaction.followup.send(
+            f"登録前チェックで停止したよ。\n{error}",
+            ephemeral=True,
+        )
+        return
+
+    created = []
+    new_map = dict(bj_emoji_map)
+    try:
+        total = 0
+        for guild_id, file_numbers in BJ_EMOJI_GUILD_SPLITS.items():
+            guild, existing = target_guilds[guild_id]
+            for number in file_numbers:
+                name = f"bj_{number}"
+                emoji = existing.get(name)
+                if emoji is None:
+                    emoji = await guild.create_custom_emoji(
+                        name=name,
+                        image=prepared[number],
+                        reason="ブラックジャック用カード絵文字の一括登録",
+                    )
+                    created.append(emoji)
+
+                new_map[str(number)] = {
+                    "guild_id": guild_id,
+                    "id": emoji.id,
+                    "name": emoji.name,
+                }
+                total += 1
+
+        save_json(BJ_EMOJI_MAP_FILE, new_map)
+        bj_emoji_map.clear()
+        bj_emoji_map.update(new_map)
+
+        for guild_id in BJ_EMOJI_GUILD_SPLITS:
+            guild_obj = discord.Object(id=guild_id)
+            bot.tree.remove_command("bj-emoji-register", guild=guild_obj)
+            await bot.tree.sync(guild=guild_obj)
+
+        await interaction.followup.send(
+            f"登録完了！ {total}/54個\nサーバー①：27個\nサーバー②：27個\n"
+            "一括登録コマンドは両サーバーから削除したよ。",
+            ephemeral=True,
+        )
+
+    except Exception as error:
+        print("[BJ EMOJI REGISTER ERROR]")
+        traceback.print_exc()
+        rollback_errors = []
+        for emoji in reversed(created):
+            try:
+                await emoji.delete(reason="ブラックジャック絵文字登録のロールバック")
+            except Exception as rollback_error:
+                rollback_errors.append(str(rollback_error))
+
+        detail = f"登録に失敗したため、今回作成した絵文字を取り消したよ。\n{error}"
+        if rollback_errors:
+            detail += f"\n取り消せなかった絵文字: {len(rollback_errors)}個"
+        await interaction.followup.send(detail[:1900], ephemeral=True)
 
 
 # ==========================================
@@ -6036,88 +6209,39 @@ class BlackjackView(discord.ui.View):
         d_score = calculate_hand(self.dealer_hand)
 
         # ----------------------------------
-        # ディーラーのカード
+        # ディーラーのカード（カスタム絵文字）
         # ----------------------------------
 
         if game_over:
-
             dealer_text = f"HAND (TOTAL: {d_score})"
-
-            dealer_paths = [
-                get_card_image_path(
-                    c["suit"],
-                    c["val"]
-                )
-                for c in self.dealer_hand
+            dealer_emojis = [
+                get_card_emoji(card["suit"], card["val"])
+                or f"{card['suit'].upper()} {card['val']}"
+                for card in self.dealer_hand
             ]
-
-            d_cards_str = ", ".join(
-                [
-                    f"{c['suit'].upper()} {c['val']}"
-                    for c in self.dealer_hand
-                ]
-            )
-
+            d_cards_str = " ".join(dealer_emojis)
         else:
-
             dealer_text = "HAND (2ND CARD HIDDEN)"
-
-            dealer_paths = [
-                get_card_image_path(
-                    self.dealer_hand[0]["suit"],
-                    self.dealer_hand[0]["val"]
-                ),
-                get_card_image_path("back", 0)
-            ]
-
-            d_cards_str = (
-                f"{self.dealer_hand[0]['suit'].upper()} "
-                f"{self.dealer_hand[0]['val']}, HIDDEN"
+            first_card = self.dealer_hand[0]
+            first_emoji = (
+                get_card_emoji(first_card["suit"], first_card["val"])
+                or f"{first_card['suit'].upper()} {first_card['val']}"
             )
+            back_emoji = get_card_emoji("back", 0) or "HIDDEN"
+            d_cards_str = f"{first_emoji} {back_emoji}"
 
         # ----------------------------------
-        # プレイヤーのカード
+        # プレイヤーのカード（カスタム絵文字）
         # ----------------------------------
 
-        player_paths = [
-            get_card_image_path(
-                c["suit"],
-                c["val"]
-            )
-            for c in self.player_hand
+        player_emojis = [
+            get_card_emoji(card["suit"], card["val"])
+            or f"{card['suit'].upper()} {card['val']}"
+            for card in self.player_hand
         ]
-
-        p_cards_str = ", ".join(
-            [
-                f"{c['suit'].upper()} {c['val']}"
-                for c in self.player_hand
-            ]
-        )
-
-        # ----------------------------------
-        # 画像作成
-        # ----------------------------------
-
-        table_image_path = create_bj_table_image(
-            dealer_paths,
-            player_paths,
-            self.image_path
-        )
+        p_cards_str = " ".join(player_emojis)
 
         files = []
-
-        if table_image_path:
-
-            files.append(
-                discord.File(
-                    table_image_path,
-                    filename="table.png"
-                )
-            )
-
-            embed.set_image(
-                url="attachment://table.png"
-            )
 
         # ----------------------------------
         # 手札表示

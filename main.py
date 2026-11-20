@@ -8013,79 +8013,79 @@ async def treasure_hunt_command(ctx: commands.Context, bet: str, lane: str):
 
 
 @bot.command(name="hl", aliases=["highlow"])
-async def highlow_command(ctx: commands.Context, bet: str = "100"):  """ハイ＆ローを開始（例: !hl 500, !hl all）"""
-  balance = get_balance(ctx.author.id)
+async def highlow_command(ctx: commands.Context, bet: str = "100"):
+    """ハイ＆ローを開始（例: .hl 500, .hl all）"""
+    balance = get_balance(ctx.author.id)
 
-  # 「all」が指定された場合の判定
-  if bet.lower() == "all":
-    if balance <= 250000:
-      bet_amount = balance
+    # 「all」が指定された場合の判定
+    if bet.lower() == "all":
+        if balance <= 250000:
+            bet_amount = balance
+        else:
+            bet_amount = 250000
     else:
-      bet_amount = 250000
-  else:
-    try:
-      bet_amount = int(bet)
-    except ValueError:
-      await ctx.send(
-          "賭け金には数値を指定するか、`all` を指定してください。",
-          ephemeral=True,
-      )
-      return
+        try:
+            bet_amount = int(bet)
+        except ValueError:
+            await ctx.send(
+                "賭け金には数値を指定するか、`all` を指定してください。",
+                ephemeral=True,
+            )
+            return
 
-  if bet_amount <= 0:
-    await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
-    return
+    if bet_amount <= 0:
+        await ctx.send("賭け金は1以上の数値を指定してください。", ephemeral=True)
+        return
 
-  if balance < bet_amount:
-    await ctx.send(
-        f"所持金が足りません！ 現在の所持金: **{balance:,} コイン**",
-        ephemeral=True,
-    )
-    return
+    if balance < bet_amount:
+        await ctx.send(
+            f"所持金が足りません！ 現在の所持金: **{balance:,} コイン**",
+            ephemeral=True,
+        )
+        return
 
-  # 本来の残高から賭け金を差し引く
-  update_user_balance(ctx.author.id, -bet_amount)
-  balance_after_bet = get_balance(ctx.author.id)
+    # 本来の残高から賭け金を差し引く
+    update_user_balance(ctx.author.id, -bet_amount)
+    balance_after_bet = get_balance(ctx.author.id)
 
-  if ctx.guild is not None:
-    record_coin({
-        "type": "highlow_bet",
-        "guild_id": ctx.guild.id,
-        "user_id": str(ctx.author.id),
-        "balance": balance_after_bet,
-    })
-    await send_coin_log(
-        ctx.guild,
-        discord.Embed(
-            title="🃏 HIGH&LOW ベットログ",
-            description=(
-                f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
-                f"賭け金：**{money(bet_amount)}**\n"
-                f"ベット後残高：**{money(balance_after_bet)}**"
+    if ctx.guild is not None:
+        record_coin({
+            "type": "highlow_bet",
+            "guild_id": ctx.guild.id,
+            "user_id": str(ctx.author.id),
+            "balance": balance_after_bet,
+        })
+        await send_coin_log(
+            ctx.guild,
+            discord.Embed(
+                title="🃏 HIGH&LOW ベットログ",
+                description=(
+                    f"ユーザー：{ctx.author.mention} (`{ctx.author.id}`)\n"
+                    f"賭け金：**{money(bet_amount)}**\n"
+                    f"ベット後残高：**{money(balance_after_bet)}**"
+                ),
+                color=discord.Color.orange(),
             ),
-            color=discord.Color.orange(),
-        ),
-    )
+        )
 
-  deck = hl_make_deck()
-  current = deck.pop()
-  view = HighLowView(ctx.author.id, deck, current, bet_amount, ctx.guild)
+    deck = hl_make_deck()
+    current = deck.pop()
+    view = HighLowView(ctx.author.id, deck, current, bet_amount, ctx.guild)
 
-  # HighLowView は LayoutView（Components V2）なので、通常の Embed は渡さず
-  # View 内の Container とカード画像ファイルをそのまま送信する。
-  try:
-    if not os.path.exists(view.image_path):
-      raise FileNotFoundError(f"HIGH&LOW card image not found: {view.image_path}")
+    # HighLowView は LayoutView（Components V2）なので、通常の Embed は渡さず
+    # View 内の Container とカード画像ファイルをそのまま送信する。
+    try:
+        if not os.path.exists(view.image_path):
+            raise FileNotFoundError(f"HIGH&LOW card image not found: {view.image_path}")
 
-    await ctx.send(
-        file=discord.File(view.image_path, filename=os.path.basename(view.image_path)),
-        view=view,
-    )
-  except Exception:
-    # 開始画面の送信に失敗した場合は、先に徴収したベットを返金する。
-    update_user_balance(ctx.author.id, bet_amount)
-    raise
-
+        await ctx.send(
+            file=discord.File(view.image_path, filename=os.path.basename(view.image_path)),
+            view=view,
+        )
+    except Exception:
+        # 開始画面の送信に失敗した場合は、先に徴収したベットを返金する。
+        update_user_balance(ctx.author.id, bet_amount)
+        raise
 
 # ==================================================
 # 景品配布機能

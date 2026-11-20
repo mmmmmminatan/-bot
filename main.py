@@ -7871,16 +7871,21 @@ async def highlow_command(ctx: commands.Context, bet: str = "100"):
   deck = hl_make_deck()
   current = deck.pop()
   view = HighLowView(ctx.author.id, deck, current, bet_amount, ctx.guild)
-  embed = view.make_embed()
 
-  if os.path.exists(view.image_path):
+  # HighLowView は LayoutView（Components V2）なので、通常の Embed は渡さず
+  # View 内の Container とカード画像ファイルをそのまま送信する。
+  try:
+    if not os.path.exists(view.image_path):
+      raise FileNotFoundError(f"HIGH&LOW card image not found: {view.image_path}")
+
     await ctx.send(
-        embed=embed,
-        file=discord.File(view.image_path, filename="highlow.png"),
+        file=discord.File(view.image_path, filename=os.path.basename(view.image_path)),
         view=view,
     )
-  else:
-    await ctx.send(embed=embed, view=view)
+  except Exception:
+    # 開始画面の送信に失敗した場合は、先に徴収したベットを返金する。
+    update_user_balance(ctx.author.id, bet_amount)
+    raise
 
 
 # ==================================================

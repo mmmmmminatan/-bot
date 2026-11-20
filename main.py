@@ -5274,7 +5274,7 @@ def get_card_emoji(suit, value):
 
 
 def prepare_bj_emoji_image(path):
-    """カード全体を切らずに黒背景の128x128絵文字画像へ収める。"""
+    """カード全体を切らずに透明背景の128x128絵文字画像へ収める。"""
     if not os.path.exists(path):
         raise FileNotFoundError(f"カード画像が見つかりません: {path}")
 
@@ -5282,7 +5282,8 @@ def prepare_bj_emoji_image(path):
         card = source.convert("RGBA")
         resampling = getattr(Image, "Resampling", Image)
         card.thumbnail((112, 112), resampling.LANCZOS)
-        canvas = Image.new("RGBA", (128, 128), (0, 0, 0, 255))
+        # 余白は完全な透明にし、カード画像の見た目はそのまま残す。
+        canvas = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
         x = (128 - card.width) // 2
         y = (128 - card.height) // 2
         canvas.alpha_composite(card, (x, y))

@@ -26,7 +26,7 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(
-    command_prefix=".",
+    command_prefix=["!", "."],
     intents=intents,
     help_command=None,
     case_insensitive=True,
@@ -675,6 +675,55 @@ def set_balance(user_id, amount):
     balances[str(user_id)] = int(amount)
     save_json(BALANCES_FILE, balances)
 
+# ==================================================
+# オーナー専用 payment コマンド
+# !payment @ユーザー 金額 / !payment @ユーザー -金額
+# ==================================================
+
+@bot.command(name="payment")
+async def payment_command(ctx: commands.Context, member: discord.Member, amount: str):
+    if ctx.author.id != OWNER_USER_ID:
+        await ctx.send("❌ このコマンドを使えるのはBotオーナー本人だけです。")
+        return
+    if ctx.guild is None:
+        await ctx.send("サーバー内で使用してください。")
+        return
+    if member.bot:
+        await ctx.send("Botの残高は変更できません。")
+        return
+    try:
+        change = parse_money_text(amount)
+    except (TypeError, ValueError):
+        await ctx.send("金額を正しく指定してください。例：`!payment @ユーザー 1000`")
+        return
+    if change == 0:
+        await ctx.send("金額は0以外を指定してください。")
+        return
+    before = get_balance(member.id)
+    after = before + change
+    if after < 0:
+        await ctx.send(f"❌ 残高不足で減額できません。現在の残高：**{money(before)}**")
+        return
+    set_balance(member.id, after)
+    record_coin({
+        "type": "owner_payment",
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "guild_id": ctx.guild.id,
+        "user_id": str(member.id),
+        "username": str(member),
+        "amount": change,
+        "before": before,
+        "after": after,
+        "operator_id": str(ctx.author.id),
+    })
+    action = "増加" if change > 0 else "減少"
+    await ctx.send(
+        f"✅ {member.mention} の残高を **{money(abs(change))}** {action}しました。\n"
+        f"変更額：**{money_change(change)}**\n"
+        f"変更前：**{money(before)}**\n"
+        f"変更後：**{money(after)}**"
+    )
+
 def get_server_settings(guild_id):
     if guild_id is None:
         result = DEFAULT_SERVER_SETTINGS.copy()
@@ -981,7 +1030,7 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(
-    command_prefix=".",
+    command_prefix=["!", "."],
     intents=intents,
     help_command=None,
     case_insensitive=True,

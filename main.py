@@ -4859,7 +4859,7 @@ class AuPanelButton(discord.ui.Button):
             lines = [f"<@{user_id}>（{user_id}）" for user_id in user_ids[:80]]
             embed = discord.Embed(
                 title="📋 あう検知ホワイトリスト",
-                description="\\n".join(lines),
+                description="\n".join(lines),
                 color=discord.Color.blurple(),
             )
             embed.set_footer(text=f"登録者数：{len(user_ids)}人")
@@ -4890,7 +4890,7 @@ class AuPanelButton(discord.ui.Button):
                 lines.append(channel.mention if channel else f"チャンネルID: {channel_id}（見つからない）")
             embed = discord.Embed(
                 title="⏱️ あうタイムアウト対象外チャンネル",
-                description="\\n".join(lines),
+                description="\n".join(lines),
                 color=discord.Color.blurple(),
             )
             embed.set_footer(text=f"登録数：{len(channel_ids)}チャンネル")

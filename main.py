@@ -4854,7 +4854,7 @@ class AuSettingPanelView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="時間を設定", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="時間を設定", style=discord.ButtonStyle.secondary, row=0)
     async def set_time(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuTimeoutModal())
 
@@ -4870,7 +4870,7 @@ class AuSettingPanelView(discord.ui.View):
     async def set_charge_limit(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuChargeLimitModal())
 
-    @discord.ui.button(label="最高・最低表示 ON / OFF", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="最高・最低表示 ON / OFF", style=discord.ButtonStyle.primary, row=3)
     async def toggle_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
         config["show_charge_extremes"] = not config.get("show_charge_extremes", False)
@@ -4880,7 +4880,7 @@ class AuSettingPanelView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="最高・最低リセット", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="最高・最低リセット", style=discord.ButtonStyle.danger, row=3)
     async def reset_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
         config["charge_min"] = None
@@ -4918,7 +4918,7 @@ class AuSettingPanelView(discord.ui.View):
         embed.set_footer(text=f"登録数：{len(channel_ids)}チャンネル")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=1)
     async def list_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
         user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
@@ -5137,25 +5137,13 @@ async def au_setting_command(interaction: discord.Interaction):
         return
 
     config = get_au_settings(interaction.guild.id)
-    whitelist_count = len(config.get("whitelist", []))
+    whitelist_count = len(set(str(x) for x in config.get("whitelist", [])))
     timeout_text = (
         f"ON（{config.get('timeout_seconds', 60)}秒）"
         if config.get("timeout_enabled", False)
         else "OFF"
     )
-    embed = discord.Embed(
-        title="😅 あう検知設定",
-        description="下のボタンから、このサーバーの設定を変更できるよ。",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(name="あう検知", value="ON" if config.get("enabled", True) else "OFF", inline=True)
-    embed.add_field(name="自動タイムアウト", value=timeout_text, inline=True)
-    embed.add_field(name="ホワイトリスト", value=f"{whitelist_count}人", inline=True)
-    embed.add_field(
-        name="1回あたりの請求上限",
-        value=format_au_charge(config.get("charge_limit", 1000)),
-        inline=True,
-    )
+    detection_text = "ON" if config.get("enabled", True) else "OFF"
     min_charge = config.get("charge_min")
     max_charge = config.get("charge_max")
     extremes_text = (
@@ -5164,16 +5152,32 @@ async def au_setting_command(interaction: discord.Interaction):
         else "まだ記録なし"
     )
     exempt_count = len(config.get("timeout_exempt_channels", []))
-    embed.add_field(
-        name="請求額の最高・最低",
-        value=f"表示：{'ON' if config.get('show_charge_extremes', False) else 'OFF'}\n{extremes_text}",
-        inline=True,
-    )
-    embed.add_field(name="タイムアウト対象外CH", value=f"{exempt_count}チャンネル", inline=True)
-    embed.add_field(
-        name="タイムアウト仕様",
-        value="1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。",
-        inline=False,
+
+    embed = discord.Embed(
+        title="🛡️ au-spam 設定",
+        description=(
+            "自動請求・タイムアウト等の設定を管理します。"
+            "\\n\\n"
+            "**🤖 自動タイムアウト**"
+            f"\\n検知：{detection_text} ／ 状態：{timeout_text}"
+            "\\n━━━━━━━━━━━━━━━━━━"
+            "\\n**👥 ホワイトリスト**"
+            f"\\n登録数：{whitelist_count}人"
+            "\\n━━━━━━━━━━━━━━━━━━"
+            "\\n**📈 請求上限**"
+            f"\\n1回あたり：{format_au_charge(config.get('charge_limit', 1000))}"
+            "\\n━━━━━━━━━━━━━━━━━━"
+            "\\n**💰 請求額の範囲**"
+            f"\\n表示：{'ON' if config.get('show_charge_extremes', False) else 'OFF'}"
+            f"\\n{extremes_text}"
+            "\\n━━━━━━━━━━━━━━━━━━"
+            "\\n**🎯 タイムアウト対象外チャンネル**"
+            f"\\n登録数：{exempt_count}チャンネル"
+            "\\n━━━━━━━━━━━━━━━━━━"
+            "\\n**🕒 タイムアウト仕様**"
+            "\\n1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。"
+        ),
+        color=discord.Color.blurple(),
     )
     await interaction.response.send_message(embed=embed, view=AuSettingPanelView(), ephemeral=True)
 

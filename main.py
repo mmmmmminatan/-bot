@@ -4891,11 +4891,11 @@ class AuSettingPanelView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="除外CH追加", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="除外CH追加", style=discord.ButtonStyle.success, row=4)
     async def add_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuTimeoutExemptChannelModal("add"))
 
-    @discord.ui.button(label="除外CH削除", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="除外CH削除", style=discord.ButtonStyle.secondary, row=4)
     async def remove_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AuTimeoutExemptChannelModal("remove"))
 

@@ -4822,117 +4822,164 @@ class AuWhitelistModal(discord.ui.Modal):
         await interaction.response.send_message(result, ephemeral=True)
 
 
-class AuSettingPanelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
+class AuPanelButton(discord.ui.Button):
+    def __init__(self, label, style, action):
+        super().__init__(label=label, style=style)
+        self.action = action
 
-    async def interaction_check(self, interaction: discord.Interaction):
+    async def callback(self, interaction: discord.Interaction):
         if not await require_owner(interaction):
-            return False
+            return
         if interaction.guild is None:
             await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="検知 ON / OFF", style=discord.ButtonStyle.primary, row=0)
-    async def toggle_detection(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_au_settings(interaction.guild.id)
-        config["enabled"] = not config.get("enabled", True)
-        save_json(AU_SETTINGS_FILE, au_settings)
-        await interaction.response.send_message(
-            f"あう検知を **{'ON' if config['enabled'] else 'OFF'}** にしたよ。",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="タイムアウト ON / OFF", style=discord.ButtonStyle.danger, row=0)
-    async def toggle_timeout(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_au_settings(interaction.guild.id)
-        config["timeout_enabled"] = not config.get("timeout_enabled", False)
-        save_json(AU_SETTINGS_FILE, au_settings)
-        await interaction.response.send_message(
-            f"自動タイムアウトを **{'ON' if config['timeout_enabled'] else 'OFF'}** にしたよ。",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="時間を設定", style=discord.ButtonStyle.secondary, row=0)
-    async def set_time(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuTimeoutModal())
-
-    @discord.ui.button(label="WL追加", style=discord.ButtonStyle.success, row=1)
-    async def add_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuWhitelistModal("add"))
-
-    @discord.ui.button(label="WL削除", style=discord.ButtonStyle.secondary, row=1)
-    async def remove_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuWhitelistModal("remove"))
-
-    @discord.ui.button(label="請求上限を設定", style=discord.ButtonStyle.primary, row=2)
-    async def set_charge_limit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuChargeLimitModal())
-
-    @discord.ui.button(label="最高・最低表示 ON / OFF", style=discord.ButtonStyle.primary, row=3)
-    async def toggle_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_au_settings(interaction.guild.id)
-        config["show_charge_extremes"] = not config.get("show_charge_extremes", False)
-        save_json(AU_SETTINGS_FILE, au_settings)
-        await interaction.response.send_message(
-            f"請求額の最高・最低表示を **{'ON' if config['show_charge_extremes'] else 'OFF'}** にしたよ。",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="最高・最低リセット", style=discord.ButtonStyle.danger, row=3)
-    async def reset_charge_extremes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_au_settings(interaction.guild.id)
-        config["charge_min"] = None
-        config["charge_max"] = None
-        save_json(AU_SETTINGS_FILE, au_settings)
-        await interaction.response.send_message(
-            "✅ このサーバーの請求額の最高・最低記録をリセットしたよ。次の請求から新しく記録するね。",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="除外CH追加", style=discord.ButtonStyle.success, row=4)
-    async def add_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuTimeoutExemptChannelModal("add"))
-
-    @discord.ui.button(label="除外CH削除", style=discord.ButtonStyle.secondary, row=4)
-    async def remove_timeout_exempt_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AuTimeoutExemptChannelModal("remove"))
-
-    @discord.ui.button(label="除外CH一覧", style=discord.ButtonStyle.secondary, row=4)
-    async def list_timeout_exempt_channels(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_au_settings(interaction.guild.id)
-        channel_ids = config.get("timeout_exempt_channels", [])
-        if not channel_ids:
-            await interaction.response.send_message("タイムアウト対象外チャンネルはまだ登録されていないよ。", ephemeral=True)
             return
-        lines = []
-        for channel_id in channel_ids[:80]:
-            channel = interaction.guild.get_channel(int(channel_id))
-            lines.append(channel.mention if channel else f"チャンネルID: {channel_id}（見つからない）")
-        embed = discord.Embed(
-            title="⏱️ あうタイムアウト対象外チャンネル",
-            description="\n".join(lines),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text=f"登録数：{len(channel_ids)}チャンネル")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="WL一覧", style=discord.ButtonStyle.secondary, row=1)
-    async def list_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button):
         config = get_au_settings(interaction.guild.id)
-        user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
-        if not user_ids:
-            await interaction.response.send_message("このサーバーのホワイトリストは空だよ。", ephemeral=True)
-            return
-        lines = [f"<@{user_id}>（{user_id}）" for user_id in user_ids[:80]]
-        embed = discord.Embed(
-            title="📋 あう検知ホワイトリスト",
-            description="\n".join(lines),
-            color=discord.Color.blurple(),
+        action = self.action
+
+        if action == "toggle_detection":
+            config["enabled"] = not config.get("enabled", True)
+            save_json(AU_SETTINGS_FILE, au_settings)
+            await interaction.response.edit_message(view=AuSettingPanelView(interaction.guild.id))
+        elif action == "toggle_timeout":
+            config["timeout_enabled"] = not config.get("timeout_enabled", False)
+            save_json(AU_SETTINGS_FILE, au_settings)
+            await interaction.response.edit_message(view=AuSettingPanelView())
+        elif action == "set_time":
+            await interaction.response.send_modal(AuTimeoutModal())
+        elif action == "wl_add":
+            await interaction.response.send_modal(AuWhitelistModal("add"))
+        elif action == "wl_remove":
+            await interaction.response.send_modal(AuWhitelistModal("remove"))
+        elif action == "wl_list":
+            user_ids = sorted(set(str(x) for x in config.get("whitelist", [])), key=int)
+            if not user_ids:
+                await interaction.response.send_message("このサーバーのホワイトリストは空だよ。", ephemeral=True)
+                return
+            lines = [f"<@{user_id}>（{user_id}）" for user_id in user_ids[:80]]
+            embed = discord.Embed(
+                title="📋 あう検知ホワイトリスト",
+                description="\\n".join(lines),
+                color=discord.Color.blurple(),
+            )
+            embed.set_footer(text=f"登録者数：{len(user_ids)}人")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        elif action == "charge_limit":
+            await interaction.response.send_modal(AuChargeLimitModal())
+        elif action == "toggle_extremes":
+            config["show_charge_extremes"] = not config.get("show_charge_extremes", False)
+            save_json(AU_SETTINGS_FILE, au_settings)
+            await interaction.response.edit_message(view=AuSettingPanelView())
+        elif action == "reset_extremes":
+            config["charge_min"] = None
+            config["charge_max"] = None
+            save_json(AU_SETTINGS_FILE, au_settings)
+            await interaction.response.edit_message(view=AuSettingPanelView())
+        elif action == "exempt_add":
+            await interaction.response.send_modal(AuTimeoutExemptChannelModal("add"))
+        elif action == "exempt_remove":
+            await interaction.response.send_modal(AuTimeoutExemptChannelModal("remove"))
+        elif action == "exempt_list":
+            channel_ids = config.get("timeout_exempt_channels", [])
+            if not channel_ids:
+                await interaction.response.send_message("タイムアウト対象外チャンネルはまだ登録されていないよ。", ephemeral=True)
+                return
+            lines = []
+            for channel_id in channel_ids[:80]:
+                channel = interaction.guild.get_channel(int(channel_id))
+                lines.append(channel.mention if channel else f"チャンネルID: {channel_id}（見つからない）")
+            embed = discord.Embed(
+                title="⏱️ あうタイムアウト対象外チャンネル",
+                description="\\n".join(lines),
+                color=discord.Color.blurple(),
+            )
+            embed.set_footer(text=f"登録数：{len(channel_ids)}チャンネル")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class AuSettingPanelView(discord.ui.LayoutView):
+    def __init__(self, guild_id: int):
+        super().__init__(timeout=300)
+
+        config = get_au_settings(guild_id)
+        timeout_text = (
+            f"ON（{config.get('timeout_seconds', 60)}秒）"
+            if config.get("timeout_enabled", False)
+            else "OFF"
         )
-        embed.set_footer(text=f"登録者数：{len(user_ids)}人")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        detection_text = "ON" if config.get("enabled", True) else "OFF"
+        whitelist_count = len(set(str(x) for x in config.get("whitelist", [])))
+        charge_limit = format_au_charge(config.get("charge_limit", 1000))
+        min_charge = config.get("charge_min")
+        max_charge = config.get("charge_max")
+        extremes_text = (
+            f"最高：{format_au_charge(max_charge)} / 最低：{format_au_charge(min_charge)}"
+            if min_charge is not None and max_charge is not None
+            else "まだ記録なし"
+        )
+        exempt_count = len(config.get("timeout_exempt_channels", []))
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# 🛡️ au-spam 設定\n"
+                "自動請求・タイムアウト等の設定を管理します。"
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 🤖 自動タイムアウト\n"
+                f"検知：**{detection_text}** ／ 状態：**{timeout_text}**"
+            ),
+            discord.ui.ActionRow(
+                AuPanelButton("検知 ON / OFF", discord.ButtonStyle.primary, "toggle_detection"),
+                AuPanelButton("タイムアウト ON / OFF", discord.ButtonStyle.danger, "toggle_timeout"),
+                AuPanelButton("時間を設定", discord.ButtonStyle.secondary, "set_time"),
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 👥 ホワイトリスト\n"
+                f"登録数：**{whitelist_count}人**"
+            ),
+            discord.ui.ActionRow(
+                AuPanelButton("WL追加", discord.ButtonStyle.success, "wl_add"),
+                AuPanelButton("WL削除", discord.ButtonStyle.secondary, "wl_remove"),
+                AuPanelButton("WL一覧", discord.ButtonStyle.secondary, "wl_list"),
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 📈 請求上限\n"
+                f"1回あたりの請求上限：**{charge_limit}**"
+            ),
+            discord.ui.ActionRow(
+                AuPanelButton("請求上限を設定", discord.ButtonStyle.primary, "charge_limit"),
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 💰 請求額の範囲\n"
+                f"表示：**{'ON' if config.get('show_charge_extremes', False) else 'OFF'}**\n"
+                f"{extremes_text}"
+            ),
+            discord.ui.ActionRow(
+                AuPanelButton("最高・最低表示 ON / OFF", discord.ButtonStyle.primary, "toggle_extremes"),
+                AuPanelButton("最高・最低リセット", discord.ButtonStyle.danger, "reset_extremes"),
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 🎯 タイムアウト対象外チャンネル\n"
+                f"登録数：**{exempt_count}チャンネル**"
+            ),
+            discord.ui.ActionRow(
+                AuPanelButton("除外CH追加", discord.ButtonStyle.success, "exempt_add"),
+                AuPanelButton("除外CH削除", discord.ButtonStyle.secondary, "exempt_remove"),
+                AuPanelButton("除外CH一覧", discord.ButtonStyle.secondary, "exempt_list"),
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "### 🕒 タイムアウト仕様\n"
+                "1〜86400秒で指定可能。Discord側は1時間に設定し、指定時間後に自動解除するよ。"
+            ),
+            accent_color=discord.Color.blurple(),
+        )
+        self.add_item(container)
 
 
 au_group = app_commands.Group(name="au", description="あう検知の設定")
@@ -5179,7 +5226,7 @@ async def au_setting_command(interaction: discord.Interaction):
         ),
         color=discord.Color.blurple(),
     )
-    await interaction.response.send_message(embed=embed, view=AuSettingPanelView(), ephemeral=True)
+    await interaction.response.send_message(embed=embed, view=AuSettingPanelView(interaction.guild.id), ephemeral=True)
 
 
 bot.tree.add_command(au_group)

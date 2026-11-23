@@ -167,11 +167,10 @@ class VideoRoleSaveButton(discord.ui.Button):
         video_role_config[gid] = {"role_id": view.selected_role_id}
         save_config()
         role = interaction.guild.get_role(view.selected_role_id) if view.selected_role_id else None
-        view.status_text.content = (
-            f"**利用可能ロール：** {role.mention if role else '未設定（Botオーナーのみ）'}\n"
-            "設定を保存したよ。"
+        await interaction.response.send_message(
+            f"✅ 設定を保存したよ。\n利用可能ロール：{role.mention if role else '未設定（Botオーナーのみ）'}",
+            ephemeral=True,
         )
-        await interaction.response.edit_message(view=view)
 
 
 class VideoSettingsView(discord.ui.LayoutView):

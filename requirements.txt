@@ -1,6 +1,7 @@
-discord.py
+discord.py>=2.6.0
 python-dotenv
 flask
 gunicorn
 pillow
 psycopg2-binary
+yt-dlp

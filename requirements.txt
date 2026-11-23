@@ -4,4 +4,3 @@ flask
 gunicorn
 pillow
 psycopg2-binary
-yt-dlp

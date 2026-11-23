@@ -563,6 +563,3 @@ def setup_giveaway(bot, get_balance, set_balance, giveaway_logger, owner_user_id
 
     bot.add_listener(giveaway_on_ready, "on_ready")
 
-    # MINATANN動画保存機能
-    from video_feature import setup_video
-    setup_video(bot, owner_user_id)

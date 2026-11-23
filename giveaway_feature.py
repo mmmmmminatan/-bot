@@ -177,8 +177,7 @@ def make_embed(data):
 async def send_currency_receive_log(bot, data, user_id, amount):
     """通貨を受け取ったユーザーごとに個別の付与ログを出す"""
     logger = globals().get("giveaway_logger")
-    if logger is None:
-        print("[GIVEAWAY RECEIVE LOG] logger is not configured")
+    if logger is None:        print("[GIVEAWAY RECEIVE LOG] logger is not configured")
         return
     guild = bot.get_guild(int(data["guild_id"]))
     if guild is None:
@@ -357,8 +356,7 @@ class GiveawayJoinView(discord.ui.View):
                 if len(data["participants"]) >= int(data["winner_count"]):
                     data["status"] = "finished"
                     data["finished_at"] = datetime.now(timezone.utc).isoformat()
-            save_data()
-        await interaction.response.send_message(
+            save_data()        await interaction.response.send_message(
             ("🎉 通貨を受け取ったよ！" if data["kind"] == "early_coin" else "🎉 景品を獲得したよ！")
             if is_early(data) else "参加を受け付けたよ！",
             ephemeral=True,
@@ -537,8 +535,7 @@ async def restore(bot):
                 save_data()
                 await update_message(bot, gid)
         except Exception:
-            print(f"[GIVEAWAY RESTORE ERROR] {gid}")
-            traceback.print_exc()
+            print(f"[GIVEAWAY RESTORE ERROR] {gid}")            traceback.print_exc()
 
 
 def setup_giveaway(bot, get_balance, set_balance, giveaway_logger, owner_user_id):
@@ -562,3 +559,7 @@ def setup_giveaway(bot, get_balance, set_balance, giveaway_logger, owner_user_id
         await restore(bot)
 
     bot.add_listener(giveaway_on_ready, "on_ready")
+
+    # MINATANN動画保存機能
+    from video_feature import setup_video
+    setup_video(bot, owner_user_id)

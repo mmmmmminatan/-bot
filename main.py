@@ -266,6 +266,8 @@ DEFAULT_WEIGHTS = {
 DEFAULT_SERVER_SETTINGS = {
     "min_bet": 1,
     "weights": DEFAULT_WEIGHTS.copy(),
+    "payouts": PAYOUTS.copy(),
+    "bet_limits": {},
     "slot_permission": "everyone",
     "maintenance": False,
     "emoji_mode": "custom",
@@ -724,27 +726,68 @@ async def payment_command(ctx: commands.Context, member: discord.Member, amount:
         f"変更後：**{money(after)}**"
     )
 
-def get_server_settings(guild_id):
-    if guild_id is None:
-        result = DEFAULT_SERVER_SETTINGS.copy()
-        result["weights"] = DEFAULT_WEIGHTS.copy()
-        return result
+GLOBAL_GAME_SETTINGS_KEY = "__global_game_settings__"
 
-    guild_key = str(guild_id)
-    if guild_key not in server_settings:
-        server_settings[guild_key] = {}
 
-    current = server_settings[guild_key]
+def get_server_settings(guild_id=None):
+    """
+    全サーバー共通のゲーム設定を返す。
+    旧server_settings.jsonのサーバー別設定は初回だけ共通設定へ移行する。
+    """
+    current = server_settings.get(GLOBAL_GAME_SETTINGS_KEY)
+
+    if not isinstance(current, dict):
+        current = json.loads(json.dumps(DEFAULT_SERVER_SETTINGS, ensure_ascii=False))
+        migrated_keys = set()
+
+        # 既存のサーバー別設定から、初期値ではない値を共通設定へ移行する。
+        # 同じ項目が複数サーバーで異なる場合は、先に保存されていた値を採用する。
+        for legacy_key, legacy_settings in server_settings.items():
+            if legacy_key == GLOBAL_GAME_SETTINGS_KEY or not isinstance(legacy_settings, dict):
+                continue
+
+            for key, value in legacy_settings.items():
+                if key in DEFAULT_SERVER_SETTINGS:
+                    if value != DEFAULT_SERVER_SETTINGS[key] and key not in migrated_keys:
+                        current[key] = value
+                        migrated_keys.add(key)
+                elif isinstance(value, dict):
+                    target = current.setdefault(key, {})
+                    if isinstance(target, dict):
+                        for nested_key, nested_value in value.items():
+                            target.setdefault(nested_key, nested_value)
+                    else:
+                        current[key] = value
+                else:
+                    current.setdefault(key, value)
+
+        server_settings[GLOBAL_GAME_SETTINGS_KEY] = current
 
     for key, value in DEFAULT_SERVER_SETTINGS.items():
         if key not in current:
-            current[key] = value.copy() if isinstance(value, dict) else value
+            current[key] = json.loads(json.dumps(value, ensure_ascii=False))
 
     if not isinstance(current.get("weights"), dict):
         current["weights"] = DEFAULT_WEIGHTS.copy()
-
     for symbol in SYMBOLS:
         current["weights"].setdefault(symbol, DEFAULT_WEIGHTS[symbol])
+
+    if not isinstance(current.get("payouts"), dict):
+        current["payouts"] = PAYOUTS.copy()
+    for symbol in SYMBOLS:
+        try:
+            current["payouts"][symbol] = max(0, int(current["payouts"].get(symbol, PAYOUTS.get(symbol, 0))))
+        except (TypeError, ValueError):
+            current["payouts"][symbol] = PAYOUTS.get(symbol, 0)
+    PAYOUTS.update(current["payouts"])
+
+    if not isinstance(current.get("bet_limits"), dict):
+        current["bet_limits"] = {}
+
+    try:
+        current["min_bet"] = max(0, int(current.get("min_bet", 1)))
+    except (TypeError, ValueError):
+        current["min_bet"] = 1
 
     if not isinstance(current.get("mine_sizes"), list):
         current["mine_sizes"] = [3, 4]
@@ -786,9 +829,10 @@ def get_server_settings(guild_id):
     save_json(SETTINGS_FILE, server_settings)
     return current
 
-def save_server_settings(guild_id):
-    if guild_id is not None:
-        save_json(SETTINGS_FILE, server_settings)
+
+def save_server_settings(guild_id=None):
+    # guild_idは互換性のため受け取るが、保存先は常に全サーバー共通。
+    save_json(SETTINGS_FILE, server_settings)
 
 # ==================================================
 # 賭け金の入力処理
@@ -3056,7 +3100,7 @@ async def execute_slot(ctx, base_bet, line_choice, interaction=None):
     for line in paylines:
         if line[0] == line[1] == line[2]:
             sym = line[0]
-            mult = PAYOUTS.get(sym, 0)
+            mult = settings.get("payouts", PAYOUTS).get(sym, PAYOUTS.get(sym, 0))
             total_payout += base_bet * mult
             winning_symbol = sym
             if sym == "JP":
@@ -5428,6 +5472,9 @@ async def coinrecovery_command(interaction: discord.Interaction):
 
 @bot.tree.command(name="settinginfo", description="現在のBot設定を表示する")
 async def setting_info_command(interaction: discord.Interaction):
+    if not await require_owner(interaction):
+        return
+
     if interaction.guild is None:
         await interaction.response.send_message("サーバー内で使ってね。", ephemeral=True)
         return

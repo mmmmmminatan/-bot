@@ -3926,7 +3926,7 @@ def register_minatann_features(bot):
         await refresh_count_channels(role.guild)
     
     
-    @bot.tree.command(name="servers", description="MINATANNが参加しているサーバー数を表示")
+    @bot.tree.command(name="minatann_servers", description="移行元MINATANNのサーバー数を表示")
     async def servers_command(interaction: discord.Interaction):
         server_count = len(bot.guilds)
         embed = discord.Embed(

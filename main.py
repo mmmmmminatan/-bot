@@ -8601,9 +8601,20 @@ setup_race(bot, get_balance, set_balance, money)
 # ==================================================
 
 async def server_owner_slash_check(interaction: discord.Interaction):
-    # 既存のBot所有者専用コマンドは、従来の require_owner 判定に任せる
+    # MINATANNから移行した便利機能は、サーバーオーナーまたは管理者が利用可能
     command = interaction.command
     if command is not None:
+        callback_module = getattr(command.callback, "__module__", "")
+        if callback_module in {"minatann_features", "video_feature"}:
+            return (
+                interaction.guild is not None
+                and (
+                    interaction.user.id == interaction.guild.owner_id
+                    or interaction.user.guild_permissions.administrator
+                )
+            )
+
+        # 既存のBot所有者専用コマンドは、従来の require_owner 判定に任せる
         try:
             callback_source = inspect.getsource(command.callback)
         except (OSError, TypeError):

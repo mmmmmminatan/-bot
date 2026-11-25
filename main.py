@@ -8634,6 +8634,10 @@ async def server_owner_slash_check(interaction: discord.Interaction):
 # CommandTreeの共通チェックとして登録
 bot.tree.interaction_check = server_owner_slash_check
 
+# MINATANNの便利機能をMbotへ統合（元のMINATANNリポジトリは変更しない）
+from minatann_features import register_minatann_features
+register_minatann_features(bot)
+
 
 
 # ==================================================

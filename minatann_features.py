@@ -6865,4 +6865,31 @@ def register_minatann_features(bot):
     
     
     
+    async def _utility_prefix_owner_or_admin(ctx: commands.Context) -> bool:
+        guild = ctx.guild
+        return bool(
+            guild is not None
+            and (
+                ctx.author.id == guild.owner_id
+                or ctx.author.guild_permissions.administrator
+            )
+        )
+
+    # Prefix形式の便利機能だけに権限チェックを付け、Mbot本体のゲームコマンドには影響させない。
+    for utility_command_name in (
+        "nicck",
+        "au_debt_rank",
+        "au_debt_total_rank",
+        "au_debt_me",
+        "exchange_panel",
+        "giverole",
+        "role",
+    ):
+        utility_command = bot.get_command(utility_command_name)
+        if utility_command is not None:
+            utility_command.add_check(_utility_prefix_owner_or_admin)
+            if isinstance(utility_command, commands.Group):
+                for child_command in utility_command.commands:
+                    child_command.add_check(_utility_prefix_owner_or_admin)
+
     return True

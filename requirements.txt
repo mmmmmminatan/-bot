@@ -4,3 +4,6 @@ flask
 gunicorn
 pillow
 psycopg2-binary
+aiohttp
+asyncpg
+yt-dlp

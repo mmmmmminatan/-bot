@@ -1138,7 +1138,7 @@ def register_minatann_features(bot):
     
     
     guess_group = app_commands.Group(
-        name="guess",
+        name="utility_guess",
         description="賞金なしの数字・言葉当てゲーム",
     )
     
@@ -2947,7 +2947,7 @@ def register_minatann_features(bot):
             self.add_item(container)
     
     
-    au_group = app_commands.Group(name="au", description="あう検知の設定")
+    au_group = app_commands.Group(name="au_tools", description="あう検知の設定")
     
     
     @au_group.command(name="debt", description="請求額・支払い済み・未払いの集計を確認")
